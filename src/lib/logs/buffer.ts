@@ -33,9 +33,24 @@ if (!g.__kdustLogs) {
 }
 const state = g.__kdustLogs!;
 
+/**
+ * Patterns we silently drop from the buffer. Mostly benign noise from
+ * 3rd-party libraries that would otherwise pollute the in-app log viewer.
+ * Add entries here when a noisy and harmless message is identified.
+ */
+const NOISE_PATTERNS: RegExp[] = [
+  // event-source-polyfill heartbeat timeout (Dust MCP transport reconnects on its own)
+  /No activity within \d+ milliseconds\..*Reconnecting\./i,
+];
+
+function isNoise(text: string): boolean {
+  return NOISE_PATTERNS.some((re) => re.test(text));
+}
+
 function push(level: LogEntry['level'], text: string) {
   const trimmed = text.replace(/\n$/, '');
   if (!trimmed) return;
+  if (isNoise(trimmed)) return;
   const entry: LogEntry = { id: state.nextId++, ts: Date.now(), level, text: trimmed };
   state.entries.push(entry);
   if (state.entries.length > state.max) {

@@ -39,6 +39,11 @@ function ChatPageInner() {
   const [currentProject, setCurrentProject] = useState<string | null>(null);
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
   const [mcpStatus, setMcpStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
+  // `serverStreaming` reflects server-side knowledge of an in-flight agent
+  // reply. It stays true even if the user navigated away and came back,
+  // as long as the Dust call is still producing tokens in the background.
+  const [serverStreaming, setServerStreaming] = useState(false);
+  const [serverStreamingSince, setServerStreamingSince] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
 
@@ -58,6 +63,10 @@ function ChatPageInner() {
     const c = j.conversation;
     setMessages(c?.messages ?? []);
     setAgentSId(c?.agentSId ?? '');
+    // Reflect server-side stream status so users who navigated away
+    // mid-answer can still see that the reply is being produced.
+    setServerStreaming(!!j.streaming);
+    setServerStreamingSince(j.streamingSince ?? null);
 
     // Sync the current-project cookie + ProjectSwitcher with the conversation's project
     const convProject: string | null = c?.projectName ?? null;
@@ -153,6 +162,32 @@ function ChatPageInner() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamedText]);
 
+  // When the server reports a stream in progress for the current conv
+  // but THIS tab is not the one consuming it (e.g. user reopened the
+  // conv after navigating away), poll the conv every 3s. When the
+  // server clears the flag, fetch messages once more to pick up the
+  // freshly-persisted agent reply.
+  useEffect(() => {
+    if (!currentId || !serverStreaming || streaming) return;
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/conversations/${currentId}`);
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!j.streaming) {
+          // stream has finished elsewhere — reload messages (includes the
+          // newly-persisted agent reply) and clear the banner.
+          setMessages(j.conversation?.messages ?? []);
+          setServerStreaming(false);
+          setServerStreamingSince(null);
+        }
+      } catch {
+        /* transient */
+      }
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [currentId, serverStreaming, streaming]);
+
   const newChat = () => {
     setCurrentId(null);
     setMessages([]);
@@ -163,6 +198,11 @@ function ChatPageInner() {
 
   const consumeStream = async (convId: string, userMessageSId: string) => {
     setStreaming(true);
+    // This tab is actively consuming the stream → mirror the server
+    // flag so the banner/dot stays visible if the user briefly scrolls
+    // up past the live bubble.
+    setServerStreaming(true);
+    setServerStreamingSince(new Date().toISOString());
     setStreamedText('');
     setCotText('');
     setToolCalls([]);
@@ -211,6 +251,11 @@ function ChatPageInner() {
       setError(e?.message ?? String(e));
     } finally {
       setStreaming(false);
+      // loadConv() above will refresh serverStreaming from the API; if the
+      // stream wrapped up before we finished consuming, we still want the
+      // banner gone immediately.
+      setServerStreaming(false);
+      setServerStreamingSince(null);
     }
   };
 
@@ -266,9 +311,17 @@ function ChatPageInner() {
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
 
   return (
-    <div className="grid grid-cols-[260px_1fr] gap-4 h-[calc(100vh-8rem)]">
+    // Height math:
+    //   - sticky <Nav/> is h-14 (3.5rem) at the top of <body>
+    //   - RootLayout wraps children in <main class="py-6"> → 3rem vertical
+    // So the chat surface must be calc(100dvh - 6.5rem) to fit exactly on
+    // screen without producing a page-level scrollbar. dvh (vs vh) keeps it
+    // stable on mobile browsers that resize the viewport with their
+    // address bar. min-h-0 lets flex children shrink so only the inner
+    // messages pane scrolls, never the page.
+    <div className="grid grid-cols-[260px_1fr] gap-4 h-[calc(100dvh-6.5rem)] min-h-0">
       {/* Sidebar conversations */}
-      <aside className="flex flex-col border border-slate-200 dark:border-slate-800 rounded-lg">
+      <aside className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg">
         <div className="p-3 border-b border-slate-200 dark:border-slate-800">
           <Button onClick={newChat} className="w-full justify-center">
             <Plus size={14} /> New chat
@@ -308,7 +361,7 @@ function ChatPageInner() {
       </aside>
 
       {/* Main chat pane */}
-      <section className="flex flex-col border border-slate-200 dark:border-slate-800 rounded-lg">
+      <section className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg">
         <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
           <MessageSquare size={18} className="text-slate-400" />
           <select
@@ -362,7 +415,43 @@ function ChatPageInner() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+        {serverStreaming && !streaming && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 text-xs border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+            <span>
+              Agent is still replying in the background
+              {serverStreamingSince && (
+                <>
+                  {' '}· started{' '}
+                  {new Date(serverStreamingSince).toLocaleTimeString()}
+                </>
+              )}
+              . The reply will appear automatically when it’s ready.
+            </span>
+          </div>
+        )}
+        {streaming && (
+          <div
+            className="flex items-center gap-2 px-3 py-2 text-xs border-b border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+            </span>
+            <span>Streaming live…</span>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {messages.map((m) => (
             <div
               key={m.id}

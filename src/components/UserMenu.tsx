@@ -13,16 +13,30 @@ import {
   ScrollText,
 } from 'lucide-react';
 
-type Status = { region: string | null; workspaceId: string | null };
+type Status = {
+  region: string | null;
+  workspaceId: string | null;
+  email: string | null;
+  name: string | null;
+};
 
 export function UserMenu() {
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<Status>({ region: null, workspaceId: null });
+  const [status, setStatus] = useState<Status>({
+    region: null,
+    workspaceId: null,
+    email: null,
+    name: null,
+  });
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void fetch('/api/dust/region')
-      .then((r) => (r.ok ? r.json() : { region: null, workspaceId: null }))
+      .then((r) =>
+        r.ok
+          ? r.json()
+          : { region: null, workspaceId: null, email: null, name: null },
+      )
       .then(setStatus)
       .catch(() => {});
   }, [open]);
@@ -37,6 +51,8 @@ export function UserMenu() {
   }, [open]);
 
   const connected = !!status.workspaceId;
+  const displayName =
+    status.name ?? status.email ?? (connected ? 'Signed in' : 'Not signed in');
   const item =
     'flex items-center gap-2 px-3 py-2 text-sm rounded-md hover:bg-slate-100 dark:hover:bg-slate-800';
 
@@ -49,12 +65,18 @@ export function UserMenu() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
-        title="User menu"
+        className="flex items-center gap-2 px-2 py-1.5 rounded-full border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 max-w-[220px]"
+        title={displayName}
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <CircleUser size={22} className={connected ? 'text-green-600' : 'text-slate-400'} />
+        <CircleUser
+          size={22}
+          className={connected ? 'text-green-600 shrink-0' : 'text-slate-400 shrink-0'}
+        />
+        <span className="hidden sm:inline text-sm font-medium truncate">
+          {displayName}
+        </span>
       </button>
 
       {open && (
@@ -66,6 +88,14 @@ export function UserMenu() {
             <div className="text-xs uppercase tracking-wider text-slate-500 mb-1">Dust</div>
             {connected ? (
               <div className="space-y-0.5">
+                {(status.name || status.email) && (
+                  <div className="text-sm font-medium truncate" title={status.email ?? ''}>
+                    {status.name ?? status.email}
+                  </div>
+                )}
+                {status.email && status.name && (
+                  <div className="text-xs text-slate-500 truncate">{status.email}</div>
+                )}
                 <div className="text-sm flex items-center gap-1.5 text-green-600 dark:text-green-400">
                   <Link2 size={14} /> Connected
                 </div>

@@ -14,20 +14,38 @@ const STATUS_CLASS: Record<string, string> = {
   skipped: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400',
 };
 
-type SearchProps = { searchParams?: Promise<{ status?: string; cron?: string; limit?: string }> };
+type SearchProps = {
+  searchParams?: Promise<{ status?: string; cron?: string; q?: string; limit?: string }>;
+};
 
 export default async function RunsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const statusFilter = sp.status && sp.status !== 'all' ? sp.status : undefined;
   const cronFilter = sp.cron || undefined;
+  const q = (sp.q ?? '').trim();
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
   const currentProject = await getCurrentProjectName();
+
+  // Free-text search across the fields users most commonly want to find
+  // runs by: cron name, git branch, commit sha, or the live status
+  // message. SQLite `contains` is case-insensitive by default.
+  const qClause = q
+    ? {
+        OR: [
+          { cronJob: { is: { name: { contains: q } } } },
+          { branch: { contains: q } },
+          { phaseMessage: { contains: q } },
+          { commitSha: { contains: q } },
+        ],
+      }
+    : {};
 
   const runs = await db.cronRun.findMany({
     where: {
       ...(statusFilter ? { status: statusFilter } : {}),
       ...(cronFilter ? { cronJobId: cronFilter } : {}),
-      ...(currentProject ? { cronJob: { projectPath: currentProject } } : {}),
+      ...(currentProject ? { cronJob: { is: { projectPath: currentProject } } } : {}),
+      ...qClause,
     },
     orderBy: { startedAt: 'desc' },
     take: limit,
@@ -47,12 +65,40 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         <span className="text-sm text-slate-500 ml-auto">{runs.length} shown</span>
       </div>
 
+      {/* Search */}
+      <form method="get" action="/runs" className="mb-4 flex gap-2">
+        <input
+          type="search"
+          name="q"
+          defaultValue={q}
+          placeholder="Search cron name, branch, commit, status message…"
+          className="flex-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm"
+        />
+        {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
+        {cronFilter && <input type="hidden" name="cron" value={cronFilter} />}
+        <button
+          type="submit"
+          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
+        >
+          Search
+        </button>
+        {(q || statusFilter || cronFilter) && (
+          <Link
+            href="/runs"
+            className="px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
+          >
+            Clear filters
+          </Link>
+        )}
+      </form>
+
       <div className="flex flex-wrap gap-2 mb-4 text-xs">
         {statuses.map((s) => {
           const active = (sp.status ?? 'all') === s;
           const qs = new URLSearchParams();
           if (s !== 'all') qs.set('status', s);
           if (cronFilter) qs.set('cron', cronFilter);
+          if (q) qs.set('q', q);
           return (
             <Link
               key={s}
@@ -70,7 +116,17 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         })}
         {cronFilter && (
           <Link
-            href={`/runs${statusFilter ? `?status=${statusFilter}` : ''}`}
+            href={`/runs${
+              new URLSearchParams({
+                ...(statusFilter ? { status: statusFilter } : {}),
+                ...(q ? { q } : {}),
+              }).toString()
+                ? '?' + new URLSearchParams({
+                    ...(statusFilter ? { status: statusFilter } : {}),
+                    ...(q ? { q } : {}),
+                  })
+                : ''
+            }`}
             className="px-2 py-1 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
           >
             × clear cron filter

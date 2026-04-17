@@ -55,8 +55,50 @@ function ChatPageInner() {
     setError(null);
     const r = await fetch(`/api/conversations/${id}`);
     const j = await r.json();
-    setMessages(j.conversation?.messages ?? []);
-    setAgentSId(j.conversation?.agentSId ?? '');
+    const c = j.conversation;
+    setMessages(c?.messages ?? []);
+    setAgentSId(c?.agentSId ?? '');
+
+    // Sync the current-project cookie + ProjectSwitcher with the conversation's project
+    const convProject: string | null = c?.projectName ?? null;
+    if (convProject !== currentProject) {
+      try {
+        await fetch('/api/current-project', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: convProject }),
+        });
+      } catch {
+        /* ignore */
+      }
+      setCurrentProject(convProject);
+      window.dispatchEvent(
+        new CustomEvent('kdust:project-changed', { detail: { name: convProject } }),
+      );
+      // Re-ensure MCP fs server for the new project
+      if (convProject) {
+        setMcpStatus('starting');
+        try {
+          const rr = await fetch('/api/mcp/ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: convProject }),
+          });
+          const jj = await rr.json();
+          if (rr.ok && jj.serverId) {
+            setMcpServerId(jj.serverId);
+            setMcpStatus('ready');
+          } else {
+            setMcpStatus('error');
+          }
+        } catch {
+          setMcpStatus('error');
+        }
+      } else {
+        setMcpServerId(null);
+        setMcpStatus('idle');
+      }
+    }
   };
 
   useEffect(() => {

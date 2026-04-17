@@ -6,7 +6,7 @@ export interface StartMessageResult {
   conversation: any; // ConversationPublicType (pour streamAgentAnswerEvents)
 }
 
-function userContext() {
+function userContext(mcpServerIds?: string[] | null) {
   return {
     username: 'kdust',
     timezone: 'Europe/Paris',
@@ -14,7 +14,7 @@ function userContext() {
     fullName: 'KDust',
     profilePictureUrl: null,
     origin: 'api' as const,
-    clientSideMCPServerIds: null,
+    clientSideMCPServerIds: mcpServerIds && mcpServerIds.length > 0 ? mcpServerIds : null,
     selectedMCPServerViewIds: null,
     lastTriggerRunAt: null,
   };
@@ -25,6 +25,7 @@ export async function createDustConversation(
   agentSId: string,
   content: string,
   title?: string | null,
+  mcpServerIds?: string[] | null,
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
@@ -35,7 +36,7 @@ export async function createDustConversation(
     message: {
       content,
       mentions: [{ configurationId: agentSId }],
-      context: userContext(),
+      context: userContext(mcpServerIds),
     },
     blocking: false,
   });
@@ -53,6 +54,7 @@ export async function postUserMessage(
   dustConversationSId: string,
   agentSId: string,
   content: string,
+  mcpServerIds?: string[] | null,
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
@@ -62,7 +64,7 @@ export async function postUserMessage(
     message: {
       content,
       mentions: [{ configurationId: agentSId }],
-      context: userContext(),
+      context: userContext(mcpServerIds),
     },
   });
   if (res.isErr()) throw new Error(`Dust postUserMessage: ${res.error.message}`);

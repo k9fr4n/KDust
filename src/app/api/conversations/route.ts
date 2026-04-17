@@ -29,6 +29,7 @@ const CreateSchema = z.object({
   agentName: z.string().optional(),
   content: z.string().min(1),
   title: z.string().optional(),
+  mcpServerIds: z.array(z.string()).optional(),
 });
 
 export async function POST(req: Request) {
@@ -36,9 +37,9 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
 
   const project = await getCurrentProjectName();
-  const { agentSId, agentName, content, title } = parsed.data;
+  const { agentSId, agentName, content, title, mcpServerIds } = parsed.data;
 
-  const dust = await createDustConversation(agentSId, content, title);
+  const dust = await createDustConversation(agentSId, content, title, mcpServerIds);
 
   const derivedTitle = title && title.trim().length > 0
     ? title

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/Button';
-import { MessageSquare, Plus, Send, Trash2 } from 'lucide-react';
+import { MessageSquare, Plus, Send, Trash2, Wrench } from 'lucide-react';
 
 type Agent = { sId: string; name: string };
 type ConvSummary = {
@@ -25,6 +25,9 @@ export default function ChatPage() {
   const [streamedText, setStreamedText] = useState('');
   const [cotText, setCotText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [currentProject, setCurrentProject] = useState<string | null>(null);
+  const [mcpServerId, setMcpServerId] = useState<string | null>(null);
+  const [mcpStatus, setMcpStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const refreshConvs = async () => {
@@ -54,6 +57,35 @@ export default function ChatPage() {
       })
       .catch(() => setError('Cannot list agents — are you connected to Dust?'));
     void refreshConvs();
+    // Detect current project from cookie and start MCP fs server for it
+    void fetch('/api/projects/current')
+      .then((r) => (r.ok ? r.json() : { name: null }))
+      .then(async (j) => {
+        const name = j?.name ?? null;
+        setCurrentProject(name);
+        if (name) {
+          setMcpStatus('starting');
+          try {
+            const r = await fetch('/api/mcp/ensure', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectName: name }),
+            });
+            const jj = await r.json();
+            if (r.ok && jj.serverId) {
+              setMcpServerId(jj.serverId);
+              setMcpStatus('ready');
+            } else {
+              setMcpStatus('error');
+              setError(jj.error ?? 'Failed to start MCP fs server');
+            }
+          } catch (e: any) {
+            setMcpStatus('error');
+            setError(e?.message ?? String(e));
+          }
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -123,12 +155,13 @@ export default function ChatPage() {
     ]);
 
     try {
+      const mcpServerIds = mcpServerId ? [mcpServerId] : undefined;
       if (!currentId) {
         const agentName = agents.find((a) => a.sId === agentSId)?.name;
         const r = await fetch('/api/conversations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentSId, agentName, content }),
+          body: JSON.stringify({ agentSId, agentName, content, mcpServerIds }),
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
@@ -138,7 +171,7 @@ export default function ChatPage() {
         const r = await fetch(`/api/conversations/${currentId}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, mcpServerIds }),
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
@@ -276,6 +309,29 @@ export default function ChatPage() {
         </div>
 
         <form onSubmit={send} className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
+          <textarea
+            className={field + ' resize-none'}
+            rows={2}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                (e.target as HTMLTextAreaElement).form?.requestSubmit();
+              }
+            }}
+            placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
+            disabled={streaming || !agentSId}
+          />
+          <Button type="submit" disabled={streaming || !draft.trim() || !agentSId}>
+            <Send size={14} /> {streaming ? 'Streaming…' : 'Send'}
+          </Button>
+        </form>
+      </section>
+    </div>
+  );
+}
+   <form onSubmit={send} className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
           <textarea
             className={field + ' resize-none'}
             rows={2}

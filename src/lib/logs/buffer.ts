@@ -34,19 +34,23 @@ if (!g.__kdustLogs) {
 const state = g.__kdustLogs!;
 
 /**
- * Patterns we silently drop from the buffer. Mostly benign noise from
- * 3rd-party libraries that would otherwise pollute the in-app log viewer.
- * Add entries here when a noisy and harmless message is identified.
+ * Patterns we silently drop from BOTH the in-app buffer and the underlying
+ * stdout/stderr (so `docker logs` is also clean). Pure 3rd-party noise.
  */
 const NOISE_PATTERNS: RegExp[] = [
-  // event-source-polyfill heartbeat timeout (Dust MCP transport reconnects on its own)
-  /No activity within \d+ milliseconds\..*Reconnecting\./i,
-  // 401 retry storm on expired Dust token. We detect it in fs-server.onerror
-  // and trigger a one-shot recovery warn, so the raw repeated lines are noise.
+  // event-source-polyfill heartbeat timeout (Dust MCP transport auto-reconnects)
+  /No activity within \d+ milliseconds.*Reconnecting/i,
+  // Stack frame of the heartbeat above (next.js compiled chunk)
+  /at V \(\.next\/server\/chunks\/.*Timeout\._onTimeout/i,
+  /at Timeout\._onTimeout \(\.next\/server\/chunks\//i,
+  // 401 retry storm on expired Dust token (we detect & recover in fs-server.onerror)
   /EventSource'?s response has a status 401 Unauthorized/i,
+  // SSE connection errors surfaced by our own onerror with non-Error payloads;
+  // they correspond to heartbeat reconnects and are already absorbed.
+  /\[mcp\/fs-server\] transport error project=.*SSE connection error/i,
 ];
 
-function isNoise(text: string): boolean {
+export function isNoise(text: string): boolean {
   return NOISE_PATTERNS.some((re) => re.test(text));
 }
 
@@ -74,6 +78,12 @@ export function installLogCapture() {
   process.stdout.write = function patchedStdout(chunk: any, ...rest: any[]) {
     try {
       const s = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+      if (isNoise(s)) {
+        // Drop both from buffer and from the underlying stream (docker logs).
+        const cb = rest.find((a) => typeof a === 'function');
+        if (cb) (cb as any)();
+        return true;
+      }
       push('log', s);
     } catch { /* ignore */ }
     return (origStdout as any)(chunk, ...rest);
@@ -82,6 +92,11 @@ export function installLogCapture() {
   process.stderr.write = function patchedStderr(chunk: any, ...rest: any[]) {
     try {
       const s = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+      if (isNoise(s)) {
+        const cb = rest.find((a) => typeof a === 'function');
+        if (cb) (cb as any)();
+        return true;
+      }
       push('error', s);
     } catch { /* ignore */ }
     return (origStderr as any)(chunk, ...rest);

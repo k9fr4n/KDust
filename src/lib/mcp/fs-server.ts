@@ -69,8 +69,17 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     );
 
     // Catch transport errors so auth failures don't silently loop for hours.
-    transport.onerror = (err: Error) => {
-      const msg = err?.message ?? String(err);
+    transport.onerror = (err: any) => {
+      // err is sometimes a real Error, sometimes the raw EventSource event with
+      // no usable .message (yields "[object Object]" if you concat it).
+      let msg = '';
+      if (err instanceof Error) msg = err.message;
+      else if (typeof err === 'string') msg = err;
+      else if (err && typeof err === 'object') {
+        msg = err.message ?? err.type ?? '';
+        try { msg = msg || JSON.stringify(err); } catch { /* circular */ }
+      }
+
       if (/401\s+Unauthorized/i.test(msg)) {
         console.warn(
           `[mcp/fs-server] 401 on SSE stream for project="${projectName}" — access token likely expired, invalidating cache so the next call re-registers with a fresh token`,
@@ -78,9 +87,16 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
         void invalidate();
         return;
       }
-      // Heartbeat timeout etc. are handled by the polyfill's auto-reconnect.
-      if (/No activity within \d+ milliseconds/i.test(msg)) return;
-      console.error(`[mcp/fs-server] transport error project="${projectName}":`, msg);
+      // Heartbeat / generic SSE drops are absorbed silently — the polyfill
+      // auto-reconnects. Surfacing them was just noise.
+      if (
+        !msg ||
+        /No activity within \d+ milliseconds/i.test(msg) ||
+        /SSE connection error/i.test(msg)
+      ) {
+        return;
+      }
+      console.error(`[mcp/fs-server] transport error project="${projectName}": ${msg}`);
     };
 
     transport.onclose = () => {

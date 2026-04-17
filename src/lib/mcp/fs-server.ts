@@ -116,13 +116,30 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
         void invalidate();
         return;
       }
-      // Heartbeat / generic SSE drops are absorbed silently — the polyfill
-      // auto-reconnects. Surfacing them was just noise.
-      if (
-        !msg ||
-        /No activity within \d+ milliseconds/i.test(msg) ||
-        /SSE connection error/i.test(msg)
-      ) {
+      // Heartbeat drops are benign: the SDK pings on HEARTBEAT_MS and if a
+      // round-trip is missed we get this message, the polyfill reconnects
+      // with the current token, and all is well. Keep this one silent.
+      if (!msg || /No activity within \d+ milliseconds/i.test(msg)) {
+        return;
+      }
+      // "SSE connection error" is the SDK wrapper around an EventSource
+      // failure (new Error(`SSE connection error: ${error}`) drops the
+      // original .status=401 property, so we can't do isAuthFailure detection
+      // on it directly). In practice these errors are caused by:
+      //   a) the bearer token expiring mid-session — the polyfill keeps
+      //      reconnecting every RECONNECT_DELAY_MS with the now-stale token,
+      //      leaking a zombie transport that never recovers
+      //   b) a transient network blip — the polyfill reconnects fine
+      // The cheapest, most robust fix is to invalidate on ANY SSE connection
+      // error. Our invalidate() is idempotent (guarded by `invalidated` flag)
+      // and the next API request re-registers a fresh transport with a
+      // freshly-refreshed token. A lost conversation's serverId is an
+      // acceptable cost vs. letting a zombie loop forever.
+      if (/SSE connection error/i.test(msg)) {
+        console.warn(
+          `[mcp/fs-server] SSE connection error for project="${projectName}" — tearing down transport so next request re-registers with a fresh token`,
+        );
+        void invalidate();
         return;
       }
       console.error(`[mcp/fs-server] transport error project="${projectName}": ${msg}`);

@@ -108,6 +108,24 @@ model CronJob {
   mandatory Boolean  @default(false)
 }
 
+// Catalog of advice categories. Each entry is a "template" that gets
+// materialized into a CronJob when a project is created (or when an
+// admin adds a new template via /settings/advice). Built-in entries
+// (builtIn=true) cannot be deleted — only disabled.
+model AdviceCategoryDefault {
+  id         String   @id @default(cuid())
+  key        String   @unique   // slug, ex: 'security', 'code_coverage'
+  label      String              // FR display name
+  emoji      String   @default("📋")
+  prompt     String               // category-specific body; JSON contract appended at build time
+  schedule   String               // cron expression (eg. '0 3 * * 1')
+  enabled    Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  builtIn    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 // Latest advice points produced by weekly advisory crons, one row per
 // (projectName, category). Overwritten on each successful advice run.
 // Displayed in the "Conseils" section of the Projects dashboard.
@@ -119,6 +137,11 @@ model ProjectAdvice {
   // Parsing is deferred to the read path so a malformed response in
   // rawOutput doesn't kill the row — see cron runner advice parser.
   points      String
+  // Overall category score in [0..100]. The agent grades the whole
+  // category (not a single point); we parse it from the same JSON
+  // block. Null when the agent didn't provide one (legacy rows or
+  // parser failure on the score field alone).
+  score       Int?
   rawOutput   String?  // full agent text, for debugging / copy-paste
   cronJobId   String?  // link back to the job that produced this
   cronRunId   String?  // link back to the exact run (nullable: manual re-runs)

@@ -59,7 +59,7 @@ export function CronForm({
     void fetch('/api/agents')
       .then((r) => r.json())
       .then((j) => setAgents(j.agents ?? []))
-      .catch(() => setErr('Impossible de charger les agents : es-tu connecté à Dust ?'));
+      .catch(() => setErr('Unable to load agents — are you connected to Dust?'));
     void fetch('/api/projects')
       .then((r) => r.json())
       .then((j) => setProjects(j.projects ?? []));

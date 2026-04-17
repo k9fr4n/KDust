@@ -22,7 +22,7 @@ export default function SshDebugPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">SSH debug</h1>
       <p className="text-sm text-slate-500">
-        Teste la connectivité SSH (clefs copiées dans le container + agent forwardé).
+        Test SSH connectivity (keys baked into the container + forwarded agent).
       </p>
 
       <div className="flex gap-2 items-center">
@@ -33,7 +33,7 @@ export default function SshDebugPage() {
           placeholder="github.com"
         />
         <Button onClick={run} disabled={loading}>
-          {loading ? 'Test…' : 'Tester'}
+          {loading ? 'Testing…' : 'Test'}
         </Button>
         {['github.com', 'gitlab.ecritel.net', 'gitlab.com'].map((h) => (
           <button
@@ -49,7 +49,7 @@ export default function SshDebugPage() {
       {data && (
         <div className="space-y-3">
           <section>
-            <h2 className="font-semibold text-sm">Identité &amp; env</h2>
+            <h2 className="font-semibold text-sm">Identity &amp; env</h2>
             <pre className="text-xs bg-slate-100 dark:bg-slate-900 rounded p-2 overflow-x-auto">
               {data.who}
               {JSON.stringify(data.env, null, 2)}

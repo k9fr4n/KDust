@@ -12,9 +12,35 @@ export type AdvicePoint = {
   refs?: string[];
 };
 
+/**
+ * Parsed advice payload. `score` is in [0..100], or null if the agent
+ * omitted it / the value was out of range. Legacy agent output that
+ * predates the score contract still parses successfully with score=null.
+ */
+export type AdvicePayload = {
+  points: AdvicePoint[];
+  score: number | null;
+};
+
 const VALID_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
 
-export function parseAdviceOutput(raw: string): AdvicePoint[] | null {
+/**
+ * Coerce arbitrary JSON input to a [0..100] integer score, or null.
+ * Accepts numbers, numeric strings, and clamps out-of-range values
+ * with a console.warn so we don't silently drop a bad agent response.
+ */
+function coerceScore(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n)) return null;
+  const clamped = Math.max(0, Math.min(100, Math.round(n)));
+  if (clamped !== n) {
+    console.warn(`[advice/parser] score ${n} clamped to ${clamped}`);
+  }
+  return clamped;
+}
+
+export function parseAdviceOutput(raw: string): AdvicePayload | null {
   if (!raw) return null;
 
   // Try fenced block first — the prompt asks for it. Fall back to the
@@ -61,7 +87,12 @@ export function parseAdviceOutput(raw: string): AdvicePoint[] | null {
         if (!title || !description) continue;
         normalised.push({ title, description, severity, refs });
       }
-      if (normalised.length > 0) return normalised.slice(0, 3);
+      if (normalised.length > 0) {
+        return {
+          points: normalised.slice(0, 3),
+          score: coerceScore(obj.score),
+        };
+      }
     } catch {
       /* try next candidate */
     }

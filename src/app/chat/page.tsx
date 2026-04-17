@@ -132,6 +132,21 @@ function ChatPageInner() {
     // If ?id=... is present, open that conversation on mount
     const requested = searchParams.get('id');
     if (requested) void loadConv(requested);
+
+    // If ?prompt=<base64> is present, prefill the draft with the
+    // decoded text (UTF-8 safe). Used by deep-links from the advice
+    // panel: each point has a "Chat" shortcut that opens a new empty
+    // conversation with the point description already typed in the
+    // textarea so the user just has to hit Send.
+    const rawPrompt = searchParams.get('prompt');
+    if (rawPrompt && !requested) {
+      try {
+        const decoded = decodeURIComponent(escape(atob(rawPrompt)));
+        setDraft(decoded);
+      } catch {
+        // malformed base64 — ignore rather than crash the page
+      }
+    }
     // Detect current project from cookie and start MCP fs server for it
     void fetch('/api/projects/current')
       .then((r) => (r.ok ? r.json() : { name: null }))

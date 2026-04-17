@@ -1,8 +1,8 @@
 'use client';
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/Button';
-import { RefreshCw, Trash2, Plus, Folder, ChevronRight, ChevronDown, Lightbulb } from 'lucide-react';
-import { AdviceSection } from '@/components/AdviceSection';
+import { RefreshCw, Trash2, Plus, Folder, LayoutDashboard } from 'lucide-react';
 
 type P = {
   id: string;
@@ -20,10 +20,6 @@ export default function ProjectsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
-  // Per-project expanded state for the "Conseils" accordion row.
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const toggleAdvice = (id: string) =>
-    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const refresh = async () => {
     const r = await fetch('/api/projects');
@@ -84,11 +80,45 @@ export default function ProjectsPage() {
   };
 
   const remove = async (id: string, name: string) => {
-    const deleteFiles = confirm(`Supprimer aussi les fichiers /projects/${name} ?`);
+    // Two-step confirmation: first the destructive cascade (always runs),
+    // then the optional on-disk purge. Both prompts spell out exactly what
+    // gets deleted so the user isn't surprised by gone conversations/crons.
+    if (
+      !confirm(
+        `Delete project "${name}"?\n\n` +
+          `This will permanently remove:\n` +
+          `  • all conversations and messages linked to this project\n` +
+          `  • all cron jobs (advice + automation) and their run history\n` +
+          `  • all stored advice points\n\n` +
+          `This cannot be undone.`,
+      )
+    )
+      return;
+    const deleteFiles = confirm(
+      `Also delete the working copy at /projects/${name}?\n\n` +
+        `OK  = remove files from disk (irreversible)\n` +
+        `Cancel = keep the folder (you can recover by re-adding the project)`,
+    );
     const r = await fetch(`/api/projects/${id}?deleteFiles=${deleteFiles ? 1 : 0}`, {
       method: 'DELETE',
     });
-    if (r.ok) await refresh();
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const d = j.deleted ?? {};
+      setMsg({
+        kind: 'ok',
+        text:
+          `Deleted "${name}": ${d.conversations ?? 0} conversation(s), ` +
+          `${d.crons ?? 0} cron(s), ${d.advices ?? 0} advice row(s)` +
+          (d.filesDeleted ? ', files removed from disk.' : ', files kept on disk.'),
+      });
+      await refresh();
+    } else {
+      setMsg({
+        kind: 'err',
+        text: `Delete failed: ${typeof j.error === 'string' ? j.error : `HTTP ${r.status}`}`,
+      });
+    }
   };
 
   const field =
@@ -96,21 +126,21 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Projets git</h1>
+      <h1 className="text-2xl font-bold">Git projects</h1>
 
       <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto_auto] gap-2 items-end">
         <label className="block">
-          <span className="text-sm">Nom (dossier)</span>
+          <span className="text-sm">Name (folder)</span>
           <input
             className={field}
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="mon-projet"
+            placeholder="my-project"
             required
           />
         </label>
         <label className="block">
-          <span className="text-sm">URL git (SSH)</span>
+          <span className="text-sm">Git URL (SSH)</span>
           <input
             className={field}
             value={form.gitUrl}
@@ -120,7 +150,7 @@ export default function ProjectsPage() {
           />
         </label>
         <label className="block">
-          <span className="text-sm">Branche</span>
+          <span className="text-sm">Branch</span>
           <input
             className={field}
             value={form.branch}
@@ -129,7 +159,7 @@ export default function ProjectsPage() {
           />
         </label>
         <Button type="submit" className="h-[38px]" disabled={creating}>
-          <Plus size={16} /> {creating ? 'Clonage…' : 'Ajouter'}
+          <Plus size={16} /> {creating ? 'Cloning…' : 'Add'}
         </Button>
       </form>
 
@@ -147,88 +177,92 @@ export default function ProjectsPage() {
       )}
 
       {projects.length === 0 ? (
-        <p className="text-slate-500 text-sm">Aucun projet git déclaré.</p>
+        <p className="text-slate-500 text-sm">No git project registered.</p>
       ) : (
-        <table className="w-full text-sm">
-          <thead className="text-left text-slate-500">
-            <tr>
-              <th className="py-2 w-6"></th>
-              <th>Nom</th>
-              <th>URL</th>
-              <th>Branche</th>
-              <th>Dernière sync</th>
-              <th>Statut</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {projects.map((p) => (
-              <Fragment key={p.id}>
-              <tr className="border-t border-slate-200 dark:border-slate-800">
-                <td className="py-2">
-                  <button
-                    onClick={() => toggleAdvice(p.id)}
-                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                    title={expanded[p.id] ? 'Masquer les conseils' : 'Voir les conseils'}
-                  >
-                    {expanded[p.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </button>
-                </td>
-                <td className="py-2 font-medium">
-                  <span className="inline-flex items-center gap-2">
-                    <Folder size={14} /> {p.name}
-                  </span>
-                </td>
-                <td className="text-xs font-mono break-all">{p.gitUrl}</td>
-                <td className="text-xs">{p.branch}</td>
-                <td className="text-xs">
-                  {p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : '—'}
-                </td>
-                <td className="text-xs">
-                  {p.lastSyncStatus === 'success' ? (
-                    <span className="text-green-600">success</span>
-                  ) : p.lastSyncStatus === 'failed' ? (
-                    <span className="text-red-500" title={p.lastSyncError ?? ''}>
-                      failed
-                    </span>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-                <td className="flex gap-2 py-2">
-                  <button
-                    className="px-2 py-1 rounded border text-xs inline-flex items-center gap-1 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-                    disabled={busyId === p.id}
-                    onClick={() => sync(p.id)}
-                  >
-                    <RefreshCw size={12} className={busyId === p.id ? 'animate-spin' : ''} />
-                    Sync
-                  </button>
-                  <button
-                    className="px-2 py-1 rounded border text-xs inline-flex items-center gap-1 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600"
-                    onClick={() => remove(p.id, p.name)}
-                  >
-                    <Trash2 size={12} /> Suppr
-                  </button>
-                </td>
+        // table-fixed + explicit col widths so long project names / URLs
+        // truncate with an ellipsis instead of blowing up the row layout.
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm table-fixed">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[34%]" />
+              <col className="w-[10%]" />
+              <col className="w-[14%]" />
+              <col className="w-[8%]" />
+              <col className="w-[12%]" />
+            </colgroup>
+            <thead className="text-left text-slate-500">
+              <tr>
+                <th className="py-2">Name</th>
+                <th>URL</th>
+                <th>Branch</th>
+                <th>Last sync</th>
+                <th>Status</th>
+                <th></th>
               </tr>
-              {expanded[p.id] && (
-                <tr className="border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
-                  <td></td>
-                  <td colSpan={6}>
-                    <div className="text-xs text-slate-500 flex items-center gap-1.5 px-3 pt-3">
-                      <Lightbulb size={12} className="text-amber-500" />
-                      <span className="font-semibold uppercase tracking-wide">Conseils</span>
-                      <span>— analyses hebdomadaires automatiques</span>
+            </thead>
+            <tbody>
+              {projects.map((p) => (
+                <tr key={p.id} className="border-t border-slate-200 dark:border-slate-800 align-middle">
+                  <td className="py-2 font-medium">
+                    <Link
+                      href={`/projects/${p.id}`}
+                      className="flex items-center gap-2 hover:underline min-w-0"
+                      title={p.name}
+                    >
+                      <Folder size={14} className="shrink-0 text-slate-400" />
+                      <span className="truncate">{p.name}</span>
+                    </Link>
+                  </td>
+                  <td className="text-xs font-mono text-slate-500">
+                    <span className="block truncate" title={p.gitUrl}>{p.gitUrl}</span>
+                  </td>
+                  <td className="text-xs">
+                    <span className="block truncate" title={p.branch}>{p.branch}</span>
+                  </td>
+                  <td className="text-xs">
+                    {p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : '—'}
+                  </td>
+                  <td className="text-xs">
+                    {p.lastSyncStatus === 'success' ? (
+                      <span className="text-green-600">success</span>
+                    ) : p.lastSyncStatus === 'failed' ? (
+                      <span className="text-red-500" title={p.lastSyncError ?? ''}>failed</span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="py-2">
+                    <div className="flex gap-1 justify-end flex-wrap">
+                      <Link
+                        href={`/projects/${p.id}`}
+                        className="px-2 py-1 rounded border text-xs inline-flex items-center gap-1 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        title="Open project dashboard"
+                      >
+                        <LayoutDashboard size={12} />
+                      </Link>
+                      <button
+                        className="px-2 py-1 rounded border text-xs inline-flex items-center gap-1 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                        disabled={busyId === p.id}
+                        onClick={() => sync(p.id)}
+                        title="Sync (git pull)"
+                      >
+                        <RefreshCw size={12} className={busyId === p.id ? 'animate-spin' : ''} />
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded border text-xs inline-flex items-center gap-1 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600"
+                        onClick={() => remove(p.id, p.name)}
+                        title="Delete project"
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </div>
-                    <AdviceSection projectId={p.id} />
                   </td>
                 </tr>
-              )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

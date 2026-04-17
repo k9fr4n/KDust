@@ -80,37 +80,37 @@ export default function DustConnect() {
 
   return (
     <div className="max-w-xl">
-      <h1 className="text-2xl font-bold mb-4">Se connecter à Dust</h1>
+      <h1 className="text-2xl font-bold mb-4">Connect to Dust</h1>
 
       {step === 'idle' && (
         <>
           <p className="mb-4 text-slate-600 dark:text-slate-400">
-            Utilise le Device Flow WorkOS (même mécanisme que <code>dust-cli</code>).
-            Tu vas être redirigé vers ton navigateur pour approuver.
+            Uses the WorkOS Device Flow (same mechanism as <code>dust-cli</code>).
+            You will be redirected to your browser to approve.
           </p>
-          <Button onClick={start}>Démarrer la connexion</Button>
+          <Button onClick={start}>Start connection</Button>
         </>
       )}
 
       {step === 'polling' && device && (
         <div className="space-y-3">
-          <p>Code à saisir&nbsp;: <span className="font-mono text-xl font-bold">{device.user_code}</span></p>
+          <p>Enter this code:&nbsp;<span className="font-mono text-xl font-bold">{device.user_code}</span></p>
           <p>
-            Si la page ne s'est pas ouverte :{' '}
+            If the page didn&apos;t open:{' '}
             <a className="underline text-brand-600" href={device.verification_uri_complete} target="_blank" rel="noreferrer">
-              ouvrir manuellement
+              open manually
             </a>
           </p>
-          <p className="text-sm text-slate-500">Polling en cours...</p>
+          <p className="text-sm text-slate-500">Polling…</p>
         </div>
       )}
 
       {step === 'ok' && (
         <div className="space-y-3">
-          <p className="text-green-600">✓ Authentifié.</p>
+          <p className="text-green-600">✓ Authenticated.</p>
 
           <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-sm">
-            <p className="font-medium mb-2">Aucun workspace ? Vérifie la région :</p>
+            <p className="font-medium mb-2">No workspace? Check the region:</p>
             <div className="flex gap-2">
               <button
                 className="px-3 py-1 rounded border hover:bg-white dark:hover:bg-slate-900"
@@ -125,7 +125,7 @@ export default function DustConnect() {
                   else setErr(JSON.stringify(await wsRes.json()));
                 }}
               >
-                Forcer EU
+                Force EU
               </button>
               <button
                 className="px-3 py-1 rounded border hover:bg-white dark:hover:bg-slate-900"
@@ -145,7 +145,7 @@ export default function DustConnect() {
             </div>
           </div>
 
-          <p className="text-sm text-slate-500 pt-2">Choisis un workspace :</p>
+          <p className="text-sm text-slate-500 pt-2">Pick a workspace:</p>
           <ul className="space-y-2">
             {(workspaces ?? []).map((w: any) => (
               <li key={w.sId}>
@@ -159,13 +159,13 @@ export default function DustConnect() {
               </li>
             ))}
             {workspaces && workspaces.length === 0 && (
-              <li className="text-sm text-slate-500">Aucun workspace trouvé.</li>
+              <li className="text-sm text-slate-500">No workspace found.</li>
             )}
           </ul>
         </div>
       )}
 
-      {step === 'error' && <p className="text-red-500">Erreur : {err}</p>}
+      {step === 'error' && <p className="text-red-500">Error: {err}</p>}
     </div>
   );
 }

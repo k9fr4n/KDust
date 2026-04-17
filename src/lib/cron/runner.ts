@@ -4,7 +4,7 @@ import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
 import { getFsServerId } from '../mcp/registry';
 import { parseAdviceOutput } from '../advice/parser';
-import { CATEGORY_LABELS, type AdviceCategory } from '../advice/categories';
+import { getAdviceDefaultByKey } from '../advice/defaults';
 import {
   parseGitRepo,
   buildGitLinks,
@@ -205,7 +205,9 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       // so the user can see the malformed response and iterate on the
       // prompt. We do NOT overwrite the previous ProjectAdvice row in that
       // case — stale-but-valid is better than empty.
-      const points = parseAdviceOutput(agentText);
+      const parsed = parseAdviceOutput(agentText);
+      const points = parsed?.points ?? null;
+      const score = parsed?.score ?? null;
       const durationMs = Date.now() - startedAt;
 
       if (!points) {
@@ -236,12 +238,14 @@ export async function runCronJob(cronJobId: string): Promise<void> {
           projectName: project.name,
           category: job.category,
           points: JSON.stringify(points),
+          score,
           rawOutput: agentText,
           cronJobId: job.id,
           cronRunId: run.id,
         },
         update: {
           points: JSON.stringify(points),
+          score,
           rawOutput: agentText,
           cronJobId: job.id,
           cronRunId: run.id,
@@ -266,9 +270,14 @@ export async function runCronJob(cronJobId: string): Promise<void> {
         `[cron/advice] success job="${job.name}" category=${job.category} points=${points.length} duration=${durationMs}ms`,
       );
       if (webhook) {
+        // Look up the human-readable label from the DB template so
+        // custom (user-added) categories render nicely too. Fall back
+        // to the slug if the template has since been deleted.
+        const tpl = await getAdviceDefaultByKey(job.category);
+        const categoryLabel = tpl?.label ?? job.category;
         await postToTeams(webhook, {
-          title: `📋 KDust advice : ${CATEGORY_LABELS[job.category as AdviceCategory] ?? job.category} — ${project.name}`,
-          summary: `${points.length} recommandation(s) générée(s)`,
+          title: `📋 KDust advice : ${categoryLabel} — ${project.name}`,
+          summary: `${points.length} recommendation(s) generated`,
           status: 'success',
           details: points
             .map(

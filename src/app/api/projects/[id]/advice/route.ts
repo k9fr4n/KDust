@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { ADVICE_CATEGORIES, type AdviceCategory } from '@/lib/advice/categories';
+import { listEnabledAdviceDefaults } from '@/lib/advice/defaults';
 
 export const runtime = 'nodejs';
 
@@ -19,7 +19,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const [advices, crons] = await Promise.all([
+  const [defaults, advices, crons] = await Promise.all([
+    listEnabledAdviceDefaults(),
     db.projectAdvice.findMany({ where: { projectName: project.name } }),
     db.cronJob.findMany({
       where: { projectPath: project.name, kind: 'advice' },
@@ -35,10 +36,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     }),
   ]);
 
-  const byCategory: Record<string, unknown> = {};
-  for (const cat of ADVICE_CATEGORIES) {
-    const adv = advices.find((a) => a.category === cat);
-    const cron = crons.find((c) => c.category === cat);
+  // Return one slot per enabled template, ordered by template.sortOrder
+  // so the dashboard is consistent across projects. Each slot carries
+  // the template's label/emoji so the UI doesn't need to join client-side.
+  const slots = defaults.map((def) => {
+    const adv = advices.find((a) => a.category === def.key);
+    const cron = crons.find((c) => c.category === def.key);
     let points: unknown = null;
     if (adv) {
       try {
@@ -47,9 +50,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
         points = null;
       }
     }
-    byCategory[cat] = {
-      category: cat as AdviceCategory,
+    return {
+      category: def.key,
+      label: def.label,
+      emoji: def.emoji,
       points,
+      score: adv?.score ?? null,
       generatedAt: adv?.generatedAt ?? null,
       cron: cron
         ? {
@@ -62,7 +68,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
           }
         : null,
     };
-  }
+  });
 
-  return NextResponse.json({ projectName: project.name, advice: byCategory });
+  return NextResponse.json({ projectName: project.name, slots });
 }

@@ -31,7 +31,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
   if (!cron) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (cron.mandatory) {
     return NextResponse.json(
-      { error: 'cron obligatoire: suppression interdite (vous pouvez le désactiver)' },
+      { error: 'mandatory cron: cannot be deleted (you may disable it)' },
       { status: 403 },
     );
   }

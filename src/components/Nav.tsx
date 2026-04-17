@@ -1,23 +1,37 @@
-import Link from 'next/link';
-import { MessageSquare, Clock, LayoutDashboard, Lock } from 'lucide-react';
 import { UserMenu } from './UserMenu';
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { HomeLogo } from './HomeLogo';
-import { getCurrentProjectName } from '@/lib/current-project';
+import { NavItem } from './NavItem';
+import { getCurrentProject } from '@/lib/current-project';
 
 export async function Nav() {
-  const projectScoped = !!(await getCurrentProjectName());
+  const current = await getCurrentProject();
+  const projectScoped = !!current;
 
-  // Project-scoped routes are disabled when no project is selected.
+  // "Advice" shortcut:
+  //   - with a current project scoped \u2192 jump straight to that project's
+  //     advice panel (/projects/:id#advice)
+  //   - with no project scoped ("All projects") \u2192 open the cross-project
+  //     digest (/advice) which ranks the most critical advice from
+  //     every tracked project.
+  // Either way the link is enabled (advice is no longer project-gated).
+  const adviceHref = current ? `/projects/${current.id}#advice` : '/advice';
+
+  // Order (per product ask): Dashboard, Conversations, Chat, Runs,
+  // Crons, Advice. Project-scoped routes are locked when no project
+  // is selected.
   const main: Array<{
     href: string;
     label: string;
-    icon: typeof LayoutDashboard;
+    iconName: string;
     requiresProject?: boolean;
   }> = [
-    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/chat', label: 'Chat', icon: MessageSquare, requiresProject: true },
-    { href: '/crons', label: 'Crons', icon: Clock },
+    { href: '/', label: 'Dashboard', iconName: 'LayoutDashboard' },
+    { href: '/conversations', label: 'Conversations', iconName: 'MessageSquare' },
+    { href: '/chat', label: 'Chat', iconName: 'MessageSquare', requiresProject: true },
+    { href: '/runs', label: 'Runs', iconName: 'Activity' },
+    { href: '/crons', label: 'Crons', iconName: 'Clock' },
+    { href: adviceHref, label: 'Advice', iconName: 'Lightbulb' },
   ];
 
   return (
@@ -26,34 +40,15 @@ export async function Nav() {
         <HomeLogo />
         <ProjectSwitcher />
         <nav className="flex items-center gap-1 flex-1">
-          {main.map(({ href, label, icon: Icon, requiresProject }) => {
-            const disabled = requiresProject && !projectScoped;
-            const base =
-              'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm';
-            if (disabled) {
-              return (
-                <span
-                  key={href}
-                  title="Select a project first"
-                  className={`${base} text-slate-400 dark:text-slate-600 cursor-not-allowed`}
-                >
-                  <Icon size={16} />
-                  <span>{label}</span>
-                  <Lock size={12} className="opacity-60" />
-                </span>
-              );
-            }
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={`${base} hover:bg-slate-100 dark:hover:bg-slate-800`}
-              >
-                <Icon size={16} />
-                <span>{label}</span>
-              </Link>
-            );
-          })}
+          {main.map((item) => (
+            <NavItem
+              key={item.label}
+              href={item.href}
+              label={item.label}
+              iconName={item.iconName}
+              disabled={item.requiresProject && !projectScoped}
+            />
+          ))}
         </nav>
         <UserMenu />
       </div>

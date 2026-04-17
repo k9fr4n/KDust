@@ -101,7 +101,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <SectionLink href="/chat" icon={<MessageSquare size={16} />} label="Recent conversations" />
+            <SectionLink href="/conversations" icon={<MessageSquare size={16} />} label="Recent conversations" />
             <RecentConvs items={recentConvs} />
           </div>
           <div>
@@ -155,7 +155,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div>
-          <SectionLink href="/chat" icon={<MessageSquare size={16} />} label="Recent conversations" />
+          <SectionLink href="/conversations" icon={<MessageSquare size={16} />} label="Recent conversations" />
           <RecentConvs items={recentConvs} />
         </div>
         <div>

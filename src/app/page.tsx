@@ -15,6 +15,8 @@ import { nextRunAt } from '@/lib/cron/validator';
 
 export const dynamic = 'force-dynamic';
 
+type DashboardProps = { searchParams?: Promise<{ reason?: string }> };
+
 function fmtRel(d: Date) {
   const diff = (Date.now() - new Date(d).getTime()) / 1000;
   if (diff < 60) return `${Math.floor(diff)}s ago`;
@@ -23,7 +25,9 @@ function fmtRel(d: Date) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: DashboardProps) {
+  const sp = (await searchParams) ?? {};
+  const reason = sp.reason;
   const current = await getCurrentProject();
 
   if (current) {
@@ -167,6 +171,12 @@ export default async function Dashboard() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
 
+      {reason === 'select-a-project' && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
+          Chat is project-scoped. Pick a project from the top selector to start chatting.
+        </div>
+      )}
+
       <section className="grid grid-cols-2 gap-4">
         <Link
           href="/chat"
@@ -252,11 +262,19 @@ function RecentConvs({ items }: { items: Array<any> }) {
           >
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium truncate flex-1">{c.title}</span>
+              {c.projectName ? (
+                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-brand-300 text-brand-700 dark:text-brand-300 dark:border-brand-700 bg-brand-50 dark:bg-brand-950/30 font-mono">
+                  <FolderGit2 size={10} /> {c.projectName}
+                </span>
+              ) : (
+                <span className="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 italic">
+                  no project
+                </span>
+              )}
               <span className="text-xs text-slate-400 shrink-0">{fmtRel(c.updatedAt)}</span>
             </div>
             <div className="text-xs text-slate-500 truncate">
               {c.agentName ?? c.agentSId}
-              {c.projectName && <span className="ml-1">· {c.projectName}</span>}
             </div>
           </Link>
         </li>

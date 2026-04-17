@@ -106,12 +106,20 @@ export async function streamAgentReply(
     throw new Error(`Dust streamAgentAnswerEvents: ${(streamRes.error as any).message}`);
 
   let finalContent = '';
+  const seenTypes = new Map<string, number>();
 
   for await (const event of streamRes.value.eventStream) {
     if (signal.aborted) break;
     if (!event) continue;
 
-    switch ((event as any).type) {
+    const et = (event as any).type;
+    seenTypes.set(et, (seenTypes.get(et) ?? 0) + 1);
+    // Debug: log every event type once (and tool-related events always) to diagnose MCP wiring
+    if (et?.startsWith('tool_') || et === 'agent_action_success' || seenTypes.get(et) === 1) {
+      console.log(`[chat/stream] event=${et}`, JSON.stringify(event).slice(0, 500));
+    }
+
+    switch (et) {
       case 'generation_tokens': {
         const ev: any = event;
         if (ev.classification === 'tokens') {
@@ -153,6 +161,10 @@ export async function streamAgentReply(
       case 'agent_message_success': {
         const ev: any = event;
         if (ev.message?.content) finalContent = ev.message.content;
+        console.log(
+          '[chat/stream] done. event counts:',
+          Object.fromEntries(seenTypes.entries()),
+        );
         onEvent('done', finalContent);
         return finalContent;
       }

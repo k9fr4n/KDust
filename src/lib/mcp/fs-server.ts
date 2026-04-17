@@ -42,19 +42,23 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
   }
 
   let serverId: string | null = null;
-  const ready = new Promise<string>((resolve) => {
+  const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
       dust.client,
       (id: string) => {
         serverId = id;
+        console.log(`[mcp/fs-server] registered fs-cli for project="${projectName}" root="${root}" serverId=${id}`);
         resolve(id);
       },
       'fs-cli',
       false,
     );
-    // store on outer scope via closure below
     (server as any).__transport = transport;
-    void server.connect(transport);
+    server.connect(transport).catch((err) => {
+      console.error('[mcp/fs-server] connect failed:', err);
+      reject(err);
+    });
+    setTimeout(() => reject(new Error('MCP server registration timed out after 15s')), 15000);
   });
 
   const id = await ready;

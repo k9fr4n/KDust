@@ -98,7 +98,7 @@ export async function streamAgentReply(
   userMessageSId: string,
   signal: AbortSignal,
   onEvent: (
-    kind: 'token' | 'cot' | 'error' | 'done' | 'tool_call',
+    kind: 'token' | 'cot' | 'error' | 'done' | 'tool_call' | 'agent_message_id',
     data: string,
   ) => void,
 ): Promise<string> {
@@ -114,7 +114,16 @@ export async function streamAgentReply(
     throw new Error(`Dust streamAgentAnswerEvents: ${(streamRes.error as any).message}`);
 
   let finalContent = '';
+  let agentMessageSIdEmitted = false;
   const seenTypes = new Map<string, number>();
+  const maybeEmitAgentMessageId = (ev: any) => {
+    if (agentMessageSIdEmitted) return;
+    const mid = ev?.messageId ?? ev?.message?.sId;
+    if (typeof mid === 'string' && mid.length > 0) {
+      agentMessageSIdEmitted = true;
+      onEvent('agent_message_id', mid);
+    }
+  };
 
   for await (const event of streamRes.value.eventStream) {
     if (signal.aborted) break;
@@ -126,6 +135,10 @@ export async function streamAgentReply(
     if (et?.startsWith('tool_') || et === 'agent_action_success' || seenTypes.get(et) === 1) {
       console.log(`[chat/stream] event=${et}`, JSON.stringify(event).slice(0, 500));
     }
+
+    // Any event that references the agent message gives us its sId.
+    // Emit once so the client/cancel endpoint can target it.
+    maybeEmitAgentMessageId(event);
 
     switch (et) {
       case 'generation_tokens': {

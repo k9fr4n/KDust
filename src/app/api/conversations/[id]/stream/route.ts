@@ -4,6 +4,7 @@ import { getDustClient } from '@/lib/dust/client';
 import {
   markStreamStart,
   markStreamEnd,
+  markStreamAgentMessage,
   isStreaming,
 } from '@/lib/chat/active-streams';
 
@@ -69,7 +70,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           convRes.value,
           userMessageSId,
           abortCtrl.signal,
-          (kind, data) => send(kind, data),
+          (kind, data) => {
+            // Register the agent message sId server-side so the cancel
+            // endpoint can target it without needing a round-trip via
+            // the client. Still forward the event so the client can
+            // display per-message UX (e.g. Stop button tooltip).
+            if (kind === 'agent_message_id') {
+              markStreamAgentMessage(id, data);
+            }
+            send(kind, data);
+          },
         );
         await db.message.create({
           data: { conversationId: id, role: 'agent', content: finalContent },

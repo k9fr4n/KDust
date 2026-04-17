@@ -11,12 +11,24 @@
 export type ActiveStream = {
   startedAt: Date;
   userMessageSId: string;
+  /** The agent message sId being produced by Dust. Populated as soon as
+   *  the first event carrying a messageId is observed (usually within a
+   *  few hundred ms of stream start). Needed to call
+   *  cancelMessageGeneration when the user hits Stop. */
+  agentMessageSId?: string;
 };
 
 const active = new Map<string, ActiveStream>();
 
 export function markStreamStart(conversationId: string, userMessageSId: string) {
   active.set(conversationId, { startedAt: new Date(), userMessageSId });
+}
+
+export function markStreamAgentMessage(conversationId: string, agentMessageSId: string) {
+  const s = active.get(conversationId);
+  if (s && !s.agentMessageSId) {
+    active.set(conversationId, { ...s, agentMessageSId });
+  }
 }
 
 export function markStreamEnd(conversationId: string) {

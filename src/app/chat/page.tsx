@@ -2,7 +2,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { MessageSquare, Plus, Send, Trash2, Wrench } from 'lucide-react';
+import { MessageSquare, Plus, Send, Square, Trash2, Wrench } from 'lucide-react';
 
 type Agent = { sId: string; name: string };
 type ConvSummary = {
@@ -44,6 +44,11 @@ function ChatPageInner() {
   // as long as the Dust call is still producing tokens in the background.
   const [serverStreaming, setServerStreaming] = useState(false);
   const [serverStreamingSince, setServerStreamingSince] = useState<string | null>(null);
+  // AbortController for the current SSE fetch so the Stop button can
+  // tear the client read loop down immediately, in addition to asking
+  // Dust (via /cancel) to stop generating server-side.
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const [stopping, setStopping] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
 
@@ -226,6 +231,10 @@ function ChatPageInner() {
           const data = dataLine.replace(/\\n/g, '\n');
           if (ev === 'token') setStreamedText((t) => t + data);
           else if (ev === 'cot') setCotText((t) => t + data);
+          else if (ev === 'agent_message_id') {
+            // Server tracks the sId itself for the /cancel endpoint.
+            // We receive it purely for forward-compat / debugging.
+          }
           else if (ev === 'tool_call') {
             try {
               const p = JSON.parse(data);
@@ -256,6 +265,23 @@ function ChatPageInner() {
       // banner gone immediately.
       setServerStreaming(false);
       setServerStreamingSince(null);
+    }
+  };
+
+  // Stop the in-flight agent reply. Two concurrent actions:
+  //   1) POST /cancel so Dust stops generating tokens server-side
+  //      (also clears the active-streams tracker so isStreaming() flips false)
+  //   2) Abort the local SSE fetch so the UI unfreezes immediately,
+  //      regardless of Dust's response latency.
+  const stopStream = async () => {
+    if (!currentId || stopping) return;
+    setStopping(true);
+    try {
+      void fetch(`/api/conversations/${currentId}/cancel`, { method: 'POST' }).catch(
+        () => {/* best-effort */},
+      );
+    } finally {
+      streamAbortRef.current?.abort();
     }
   };
 
@@ -415,42 +441,6 @@ function ChatPageInner() {
           )}
         </div>
 
-        {serverStreaming && !streaming && (
-          <div
-            className="flex items-center gap-2 px-3 py-2 text-xs border-b border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-            </span>
-            <span>
-              Agent is still replying in the background
-              {serverStreamingSince && (
-                <>
-                  {' '}· started{' '}
-                  {new Date(serverStreamingSince).toLocaleTimeString()}
-                </>
-              )}
-              . The reply will appear automatically when it’s ready.
-            </span>
-          </div>
-        )}
-        {streaming && (
-          <div
-            className="flex items-center gap-2 px-3 py-2 text-xs border-b border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-            </span>
-            <span>Streaming live…</span>
-          </div>
-        )}
-
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {messages.map((m) => (
             <div
@@ -511,6 +501,65 @@ function ChatPageInner() {
 
           <div ref={bottomRef} />
         </div>
+
+        {/* Status strip — sits directly above the Reply textarea so users
+            immediately see why the form is disabled and can hit Stop
+            without hunting for context. Two mutually exclusive states:
+              - `streaming`       : this tab is actively consuming the SSE
+              - `serverStreaming` : another tab/no tab owns the stream
+            Both show a Stop button; the handler is idempotent. */}
+        {(streaming || serverStreaming) && (
+          <div
+            className={`flex items-center gap-2 px-3 py-2 text-xs border-t ${
+              streaming
+                ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300'
+                : 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300'
+            }`}
+            role="status"
+            aria-live="polite"
+          >
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span
+                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                  streaming ? 'bg-blue-400' : 'bg-amber-400'
+                }`}
+              />
+              <span
+                className={`relative inline-flex rounded-full h-2 w-2 ${
+                  streaming ? 'bg-blue-500' : 'bg-amber-500'
+                }`}
+              />
+            </span>
+            <span className="flex-1">
+              {streaming ? (
+                'Streaming live…'
+              ) : (
+                <>
+                  Agent is still replying in the background
+                  {serverStreamingSince && (
+                    <>
+                      {' '}· started{' '}
+                      {new Date(serverStreamingSince).toLocaleTimeString()}
+                    </>
+                  )}
+                  . The reply will appear automatically when it’s ready.
+                </>
+              )}
+            </span>
+            {currentId && (
+              <button
+                type="button"
+                onClick={stopStream}
+                disabled={stopping}
+                title="Stop the agent's reply"
+                className="inline-flex items-center gap-1 rounded border border-red-400 px-2 py-0.5 text-red-700 hover:bg-red-100 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-900/40 disabled:opacity-50"
+              >
+                <Square size={12} />
+                {stopping ? 'Stopping…' : 'Stop'}
+              </button>
+            )}
+          </div>
+        )}
 
         <form onSubmit={send} className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
           <textarea

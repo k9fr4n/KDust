@@ -23,6 +23,9 @@ export function ProjectSwitcher() {
 
   useEffect(() => {
     void refresh();
+    const onChanged = () => void refresh();
+    window.addEventListener('kdust:project-changed', onChanged);
+    return () => window.removeEventListener('kdust:project-changed', onChanged);
   }, []);
 
   useEffect(() => {

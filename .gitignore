@@ -11,3 +11,4 @@ data/*.db-journal
 prisma/migrations/dev.db*
 projects/
 data/
+tsconfig.tsbuildinfo

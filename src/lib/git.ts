@@ -187,29 +187,54 @@ export function composeBranchName(
 }
 
 /** Reset the working copy to the tip of origin/<baseBranch>.
- *  Handles projects cloned with --single-branch by ensuring the remote is
- *  configured to fetch the requested base branch before pulling it. */
+ *  Handles projects cloned with --single-branch by widening the remote's
+ *  fetch config to include the base branch, then fetching + checking out.
+ *
+ *  NB: we deliberately avoid `--prune` and explicit refspecs here: combined
+ *  with set-branches they can mis-fire and DELETE the very ref we need
+ *  (witnessed in the wild: "[deleted] (none) -> origin/main"). Using plain
+ *  `git fetch origin <base>` is both simpler and robust. */
 export async function resetToBase(
   projectName: string,
   baseBranch: string,
 ): Promise<GitSyncResult> {
   const cwd = join(PROJECTS_ROOT, projectName);
-  const steps = [
-    // Widen the set of tracked remote branches so single-branch clones can
-    // fetch other branches (base branch may differ from the one used at clone).
-    ['remote', 'set-branches', '--add', 'origin', baseBranch],
-    ['fetch', '--prune', 'origin', `${baseBranch}:refs/remotes/origin/${baseBranch}`],
-    ['checkout', '-B', baseBranch, `refs/remotes/origin/${baseBranch}`],
-    ['reset', '--hard', `refs/remotes/origin/${baseBranch}`],
-    ['clean', '-fd'],
-  ];
   let combined = '';
-  for (const args of steps) {
+
+  const exec = async (args: string[], failOnError = true): Promise<boolean> => {
     const r = await runGit(args, cwd);
     combined += `$ git ${args.join(' ')}\n${r.out}\n`;
-    if (r.code !== 0) {
-      return { ok: false, output: combined, error: `git ${args[0]} exited ${r.code}` };
-    }
+    if (r.code !== 0 && failOnError) return false;
+    return true;
+  };
+
+  // Best-effort: drop any stale lock file from a previous crash.
+  // (git errors with "fatal: Unable to create '…/index.lock': File exists" otherwise)
+  await exec(['gc', '--prune=now'], false);
+
+  // Ensure the base branch is in the remote's fetch config (safe if already there).
+  if (!(await exec(['remote', 'set-branches', '--add', 'origin', baseBranch]))) {
+    return { ok: false, output: combined, error: 'remote set-branches failed' };
+  }
+  // Plain fetch: updates refs/remotes/origin/<base> with no surprises.
+  if (!(await exec(['fetch', 'origin', baseBranch]))) {
+    return { ok: false, output: combined, error: `git fetch origin ${baseBranch} failed (does the branch exist upstream?)` };
+  }
+  // Verify the remote ref actually exists locally now.
+  const verify = await runGit(['rev-parse', '--verify', `refs/remotes/origin/${baseBranch}`], cwd);
+  combined += `$ git rev-parse --verify refs/remotes/origin/${baseBranch}\n${verify.out}\n`;
+  if (verify.code !== 0) {
+    return { ok: false, output: combined, error: `origin/${baseBranch} not found after fetch — branch does not exist upstream` };
+  }
+
+  if (!(await exec(['checkout', '-B', baseBranch, `origin/${baseBranch}`]))) {
+    return { ok: false, output: combined, error: 'checkout failed' };
+  }
+  if (!(await exec(['reset', '--hard', `origin/${baseBranch}`]))) {
+    return { ok: false, output: combined, error: 'reset --hard failed' };
+  }
+  if (!(await exec(['clean', '-fd']))) {
+    return { ok: false, output: combined, error: 'clean failed' };
   }
   return { ok: true, output: combined };
 }

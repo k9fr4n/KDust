@@ -56,16 +56,25 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     }
   };
 
+  // verbose=true ⇒ the SDK logs SSE request/response traffic to console — invaluable
+  // when diagnosing why Dust says "could not list tools for fs-cli".
+  // heartbeat = 300000ms (5min) so the polyfill doesn't drop the connection between
+  // user actions; default 45s caused windows where Dust requests went into the void.
+  // KDUST_MCP_VERBOSE=0 in env disables it once things are stable.
+  const VERBOSE = process.env.KDUST_MCP_VERBOSE !== '0';
+  const HEARTBEAT_MS = 5 * 60 * 1000;
+
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
       dust.client,
       (id: string) => {
         serverId = id;
-        console.log(`[mcp/fs-server] registered fs-cli for project="${projectName}" root="${root}" serverId=${id}`);
+        console.log(`[mcp/fs-server] registered fs-cli for project="${projectName}" root="${root}" serverId=${id} verbose=${VERBOSE} heartbeatMs=${HEARTBEAT_MS}`);
         resolve(id);
       },
       'fs-cli',
-      false,
+      VERBOSE,
+      HEARTBEAT_MS,
     );
 
     // Catch transport errors so auth failures don't silently loop for hours.
@@ -106,10 +115,46 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     };
 
     (server as any).__transport = transport;
-    server.connect(transport).catch((err) => {
-      console.error('[mcp/fs-server] connect failed:', err);
-      reject(err);
-    });
+    server
+      .connect(transport)
+      .then(() => {
+        // Monkey-patch onmessage / send AFTER connect so we log both directions.
+        // McpServer sets transport.onmessage during connect; we wrap it to trace.
+        const origOnMessage = transport.onmessage;
+        transport.onmessage = (m: any) => {
+          try {
+            console.log(
+              `[mcp/fs-server] <- project=${projectName} method=${m?.method ?? '?'} id=${m?.id ?? '?'} params=${JSON.stringify(m?.params ?? {}).slice(0, 200)}`,
+            );
+          } catch {
+            /* ignore */
+          }
+          return origOnMessage?.(m);
+        };
+        const origSend = transport.send.bind(transport);
+        transport.send = async (m: any) => {
+          try {
+            const summary =
+              m?.result
+                ? `result(keys=${Object.keys(m.result).join(',')})`
+                : m?.error
+                ? `error(${m.error.code}:${m.error.message})`
+                : m?.method
+                ? `req(${m.method})`
+                : 'msg';
+            console.log(
+              `[mcp/fs-server] -> project=${projectName} id=${m?.id ?? '?'} ${summary}`,
+            );
+          } catch {
+            /* ignore */
+          }
+          return origSend(m);
+        };
+      })
+      .catch((err) => {
+        console.error('[mcp/fs-server] connect failed:', err);
+        reject(err);
+      });
     setTimeout(() => reject(new Error('MCP server registration timed out after 15s')), 15000);
   });
 

@@ -4,10 +4,12 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 
 type Agent = { sId: string; name: string; description?: string };
+type Project = { id: string; name: string; gitUrl: string; branch: string };
 
 export default function NewCronPage() {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [form, setForm] = useState({
     name: '',
     schedule: '0 9 * * 1-5',
@@ -26,6 +28,14 @@ export default function NewCronPage() {
       .then((r) => r.json())
       .then((j) => setAgents(j.agents ?? []))
       .catch(() => setErr('Impossible de charger les agents : es-tu connecté à Dust ?'));
+    void fetch('/api/projects')
+      .then((r) => r.json())
+      .then((j) => setProjects(j.projects ?? []));
+    void fetch('/api/current-project')
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.current) setForm((f) => ({ ...f, projectPath: j.current }));
+      });
   }, []);
 
   const submit = async (e: React.FormEvent) => {
@@ -50,7 +60,9 @@ export default function NewCronPage() {
     router.push('/crons');
   };
 
-  const field = 'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2';
+  const field =
+    'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
+  const optCls = 'bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100';
 
   return (
     <form onSubmit={submit} className="max-w-2xl space-y-4">
@@ -74,19 +86,37 @@ export default function NewCronPage() {
 
       <label className="block">
         <span className="text-sm">Agent</span>
-        <select className={field} value={form.agentSId} onChange={(e) => setForm({ ...form, agentSId: e.target.value })} required>
-          <option value="">— choisir un agent —</option>
+        <select
+          className={field}
+          value={form.agentSId}
+          onChange={(e) => setForm({ ...form, agentSId: e.target.value })}
+          required
+        >
+          <option value="" className={optCls}>— choisir un agent —</option>
           {agents.map((a) => (
-            <option key={a.sId} value={a.sId}>
-              {a.name}
-            </option>
+            <option key={a.sId} value={a.sId} className={optCls}>{a.name}</option>
           ))}
         </select>
       </label>
 
       <label className="block">
-        <span className="text-sm">Chemin du projet (relatif à /projects)</span>
-        <input className={field} value={form.projectPath} onChange={(e) => setForm({ ...form, projectPath: e.target.value })} placeholder="mon-projet" required />
+        <span className="text-sm">Projet</span>
+        <select
+          className={field}
+          value={form.projectPath}
+          onChange={(e) => setForm({ ...form, projectPath: e.target.value })}
+          required
+        >
+          <option value="" className={optCls}>— choisir un projet —</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.name} className={optCls}>{p.name} ({p.branch})</option>
+          ))}
+        </select>
+        {projects.length === 0 && (
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            Aucun projet déclaré. Ajoute-en un dans l'onglet <a href="/projects" className="underline">Projects</a>.
+          </span>
+        )}
       </label>
 
       <label className="block">

@@ -1,8 +1,8 @@
 import { DustAPI } from '@dust-tt/client';
 import { jwtDecode } from 'jwt-decode';
-import { getAppConfig } from '../config';
 import { loadTokens, saveTokens } from './tokens';
 import { refreshTokens } from './workos';
+import { resolveDustUrl } from './region';
 
 /**
  * Returns a valid access token, refreshing if needed.
@@ -44,14 +44,15 @@ export async function getDustClient(): Promise<{
   client: DustAPI;
   workspaceId: string;
 } | null> {
-  const [cfg, stored] = await Promise.all([getAppConfig(), loadTokens()]);
+  const stored = await loadTokens();
   if (!stored || !stored.workspaceId) return null;
 
   const token = await getValidAccessToken();
   if (!token) return null;
 
+  const url = await resolveDustUrl(stored.region);
   const client = new DustAPI(
-    { url: cfg.dustBaseUrl },
+    { url },
     { workspaceId: stored.workspaceId, apiKey: token },
     // logger
     { error: console.error, info: console.log } as any,

@@ -52,6 +52,18 @@ model Message {
   @@index([conversationId])
 }
 
+model Project {
+  id             String    @id @default(cuid())
+  name           String    @unique  // utilis\u00e9 comme dossier dans /projects
+  gitUrl         String               // ex: git@gitlab.ecritel.net:group/repo.git
+  branch         String    @default("main")
+  lastSyncAt     DateTime?
+  lastSyncStatus String?              // 'success' | 'failed'
+  lastSyncError  String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
 model CronJob {
   id             String    @id @default(cuid())
   name           String

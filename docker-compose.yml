@@ -7,9 +7,18 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     env_file: .env
+    environment:
+      # Si ssh-agent est lancé sur l'hôte et SSH_AUTH_SOCK exporté,
+      # l'agent sera utilisé en priorité sur les clés copiées.
+      - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
     volumes:
       - ./data:/data
       - ./projects:/projects
+      # Clefs SSH de l'hôte en read-only. L'entrypoint les copie ensuite
+      # dans /home/kdust/.ssh avec les bonnes perms / ownership.
+      - ${HOME}/.ssh:/host-ssh:ro
+      # Socket ssh-agent (optionnel ; s'évapore si SSH_AUTH_SOCK vide)
+      - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

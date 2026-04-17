@@ -27,7 +27,8 @@ export default function SettingsPage() {
     setMsg(res.ok ? 'Sauvegardé.' : 'Erreur de sauvegarde.');
   };
 
-  const field = 'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2';
+  const field =
+    'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
   const bind = (k: string) => ({
     value: cfg[k] ?? '',
     onChange: (e: any) => setCfg({ ...cfg, [k]: e.target.value }),

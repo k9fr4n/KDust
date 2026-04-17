@@ -49,7 +49,10 @@ export default function DustConnect() {
         const wsRes = await fetch('/api/dust/workspaces');
         if (wsRes.ok) {
           const data = await wsRes.json();
-          setWorkspaces(data?.user?.workspaces ?? data?.workspaces ?? []);
+          setWorkspaces(data?.workspaces ?? []);
+        } else {
+          const j = await wsRes.json().catch(() => ({}));
+          setErr(`Workspaces fetch failed: ${j.error ?? wsRes.status}`);
         }
         return;
       }
@@ -104,7 +107,45 @@ export default function DustConnect() {
 
       {step === 'ok' && (
         <div className="space-y-3">
-          <p className="text-green-600">✓ Authentifié. Choisis un workspace :</p>
+          <p className="text-green-600">✓ Authentifié.</p>
+
+          <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-sm">
+            <p className="font-medium mb-2">Aucun workspace ? Vérifie la région :</p>
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-1 rounded border hover:bg-white dark:hover:bg-slate-900"
+                onClick={async () => {
+                  await fetch('/api/dust/region', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ region: 'europe-west1' }),
+                  });
+                  const wsRes = await fetch('/api/dust/workspaces');
+                  if (wsRes.ok) setWorkspaces((await wsRes.json()).workspaces ?? []);
+                  else setErr(JSON.stringify(await wsRes.json()));
+                }}
+              >
+                Forcer EU
+              </button>
+              <button
+                className="px-3 py-1 rounded border hover:bg-white dark:hover:bg-slate-900"
+                onClick={async () => {
+                  await fetch('/api/dust/region', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ region: 'us-central1' }),
+                  });
+                  const wsRes = await fetch('/api/dust/workspaces');
+                  if (wsRes.ok) setWorkspaces((await wsRes.json()).workspaces ?? []);
+                  else setErr(JSON.stringify(await wsRes.json()));
+                }}
+              >
+                Forcer US
+              </button>
+            </div>
+          </div>
+
+          <p className="text-sm text-slate-500 pt-2">Choisis un workspace :</p>
           <ul className="space-y-2">
             {(workspaces ?? []).map((w: any) => (
               <li key={w.sId}>

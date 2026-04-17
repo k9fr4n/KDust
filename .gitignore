@@ -9,3 +9,5 @@ data/*.db-journal
 *.log
 .DS_Store
 prisma/migrations/dev.db*
+projects/
+data/

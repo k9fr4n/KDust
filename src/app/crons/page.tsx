@@ -1,16 +1,26 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { nextRunAt } from '@/lib/cron/validator';
+import { getCurrentProjectName } from '@/lib/current-project';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CronsPage() {
-  const crons = await db.cronJob.findMany({ orderBy: { createdAt: 'desc' } });
+  const current = await getCurrentProjectName();
+  const crons = await db.cronJob.findMany({
+    where: current ? { projectPath: current } : undefined,
+    orderBy: { createdAt: 'desc' },
+  });
 
   return (
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Crons</h1>
+        <h1 className="text-2xl font-bold">
+          Crons
+          {current && (
+            <span className="ml-2 text-base font-normal text-slate-500">· {current}</span>
+          )}
+        </h1>
         <Link
           href="/crons/new"
           className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"

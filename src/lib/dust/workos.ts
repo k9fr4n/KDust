@@ -58,14 +58,33 @@ export async function pollDeviceToken(deviceCode: string): Promise<
   const tok = data as TokenResponse;
   const expiresAt = tok.expires_in ? new Date(Date.now() + tok.expires_in * 1000) : null;
 
-  // Decode region from access token
+  // Decode region from access token.
   let region = 'us-central1';
   try {
-    const decoded = jwtDecode<any>(tok.access_token);
-    const claim = `${cfg.claimNamespace}region`;
-    if (decoded?.[claim]) region = decoded[claim];
-  } catch {
-    /* ignore */
+    const decoded = jwtDecode<Record<string, unknown>>(tok.access_token);
+    console.log('[workos] decoded JWT keys:', Object.keys(decoded));
+    const candidates = [
+      `${cfg.claimNamespace}region`,
+      'https://dust.tt/region',
+      'https://eu.dust.tt/region',
+      'region',
+    ];
+    for (const k of candidates) {
+      const v = decoded?.[k];
+      if (typeof v === 'string' && v.length > 0) {
+        region = v;
+        console.log('[workos] region claim found via', k, '=', v);
+        break;
+      }
+    }
+    if (region === 'us-central1') {
+      console.warn(
+        '[workos] no region claim found, defaulting to us-central1. Full JWT payload:',
+        JSON.stringify(decoded),
+      );
+    }
+  } catch (err) {
+    console.error('[workos] failed to decode JWT:', err);
   }
 
   await saveTokens(tok.access_token, tok.refresh_token, { region, expiresAt });

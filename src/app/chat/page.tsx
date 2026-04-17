@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { MessageSquare, Plus, Send, Trash2, Wrench } from 'lucide-react';
@@ -16,6 +16,15 @@ type ConvSummary = {
 type Msg = { id: string; role: 'user' | 'agent' | 'system'; content: string; createdAt?: string };
 
 export default function ChatPage() {
+  // Suspense boundary required by Next.js 15 because ChatPageInner calls useSearchParams().
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading chat…</div>}>
+      <ChatPageInner />
+    </Suspense>
+  );
+}
+
+function ChatPageInner() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [convs, setConvs] = useState<ConvSummary[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);

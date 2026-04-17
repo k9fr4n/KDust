@@ -41,6 +41,9 @@ const state = g.__kdustLogs!;
 const NOISE_PATTERNS: RegExp[] = [
   // event-source-polyfill heartbeat timeout (Dust MCP transport reconnects on its own)
   /No activity within \d+ milliseconds\..*Reconnecting\./i,
+  // 401 retry storm on expired Dust token. We detect it in fs-server.onerror
+  // and trigger a one-shot recovery warn, so the raw repeated lines are noise.
+  /EventSource'?s response has a status 401 Unauthorized/i,
 ];
 
 function isNoise(text: string): boolean {

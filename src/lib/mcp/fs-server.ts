@@ -42,6 +42,20 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
   }
 
   let serverId: string | null = null;
+  let invalidated = false;
+
+  // Late-bound to avoid import cycle (registry imports this module).
+  const invalidate = async () => {
+    if (invalidated) return;
+    invalidated = true;
+    try {
+      const { invalidateFsServer } = await import('./registry');
+      await invalidateFsServer(projectName);
+    } catch {
+      /* ignore */
+    }
+  };
+
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
       dust.client,
@@ -53,6 +67,28 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       'fs-cli',
       false,
     );
+
+    // Catch transport errors so auth failures don't silently loop for hours.
+    transport.onerror = (err: Error) => {
+      const msg = err?.message ?? String(err);
+      if (/401\s+Unauthorized/i.test(msg)) {
+        console.warn(
+          `[mcp/fs-server] 401 on SSE stream for project="${projectName}" — access token likely expired, invalidating cache so the next call re-registers with a fresh token`,
+        );
+        void invalidate();
+        return;
+      }
+      // Heartbeat timeout etc. are handled by the polyfill's auto-reconnect.
+      if (/No activity within \d+ milliseconds/i.test(msg)) return;
+      console.error(`[mcp/fs-server] transport error project="${projectName}":`, msg);
+    };
+
+    transport.onclose = () => {
+      // If the transport was closed externally and we still hold a handle,
+      // invalidate so the next request rebuilds from scratch.
+      void invalidate();
+    };
+
     (server as any).__transport = transport;
     server.connect(transport).catch((err) => {
       console.error('[mcp/fs-server] connect failed:', err);

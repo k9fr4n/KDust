@@ -29,3 +29,20 @@ export async function getFsServerId(projectName: string): Promise<string> {
     throw e;
   }
 }
+
+/**
+ * Drops the cached handle for a project so the next getFsServerId will
+ * re-register a new transport with a freshly refreshed Dust access token.
+ * Called from fs-server when the SSE stream errors out with 401 Unauthorized.
+ */
+export async function invalidateFsServer(projectName: string): Promise<void> {
+  const entry = cache.get(projectName);
+  cache.delete(projectName);
+  if (!entry) return;
+  try {
+    const handle = await entry;
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}

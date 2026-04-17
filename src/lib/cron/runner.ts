@@ -159,13 +159,37 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     activeRuns.set(run.id, ac);
     const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
     let streamErr: string | null = null;
+
+    // Periodically flush the partial agent output to DB so the /crons/:id
+    // page can show real-time streaming text (without needing an SSE route
+    // of its own). Throttled to ~500ms to avoid hammering SQLite.
+    let partial = '';
+    let lastFlush = Date.now();
+    const flushPartial = () => {
+      db.cronRun
+        .update({ where: { id: run.id }, data: { output: partial } })
+        .catch(() => { /* ignore */ });
+    };
     try {
       agentText = await streamAgentReply(
         conv.conversation,
         conv.userMessageSId,
         ac.signal,
-        (kind, payload) => { if (kind === 'error') streamErr = String(payload); },
+        (kind, payload) => {
+          if (kind === 'error') streamErr = String(payload);
+          if (kind === 'token') {
+            partial += payload;
+            const now = Date.now();
+            if (now - lastFlush > 500) {
+              lastFlush = now;
+              flushPartial();
+            }
+          }
+        },
       );
+      // Final flush so the last tokens are visible before we move to [6].
+      partial = agentText;
+      flushPartial();
     } finally {
       clearTimeout(killTimer);
       activeRuns.delete(run.id);

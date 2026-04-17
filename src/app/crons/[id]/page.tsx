@@ -53,28 +53,6 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         {cron.agentName ?? cron.agentSId}
       </p>
 
-      <CronLiveStatus
-        cronId={cron.id}
-        initialRun={
-          cron.runs[0]
-            ? {
-                id: cron.runs[0].id,
-                status: cron.runs[0].status,
-                phase: cron.runs[0].phase,
-                phaseMessage: cron.runs[0].phaseMessage,
-                startedAt: cron.runs[0].startedAt.toISOString(),
-                finishedAt: cron.runs[0].finishedAt ? cron.runs[0].finishedAt.toISOString() : null,
-                branch: cron.runs[0].branch,
-                commitSha: cron.runs[0].commitSha,
-                filesChanged: cron.runs[0].filesChanged,
-                linesAdded: cron.runs[0].linesAdded,
-                linesRemoved: cron.runs[0].linesRemoved,
-                dryRun: cron.runs[0].dryRun,
-              }
-            : null
-        }
-      />
-
       <section className="mb-6 grid grid-cols-2 gap-3 text-sm">
         <div><span className="text-slate-500">Project:</span> <span className="font-mono">{cron.projectPath}</span></div>
         <div><span className="text-slate-500">Base branch:</span> <span className="font-mono">{cron.baseBranch}</span></div>
@@ -91,12 +69,38 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       </section>
 
       <section>
-        <h2 className="font-semibold mb-2">Derniers runs</h2>
+        <h2 className="font-semibold mb-2">Recent runs</h2>
         {cron.runs.length === 0 ? (
-          <p className="text-slate-500 text-sm">Pas encore de run.</p>
+          <p className="text-slate-500 text-sm">No runs yet.</p>
         ) : (
           <ul className="space-y-2">
             {cron.runs.map((r) => {
+              // Running rows get the live-polling CronLiveStatus component instead
+              // of the static list item; it renders the same <li> framing but with
+              // phase stepper, live output and a Cancel button.
+              if (r.status === 'running') {
+                return (
+                  <CronLiveStatus
+                    key={r.id}
+                    cronId={cron.id}
+                    initialRun={{
+                      id: r.id,
+                      status: r.status,
+                      phase: r.phase,
+                      phaseMessage: r.phaseMessage,
+                      startedAt: r.startedAt.toISOString(),
+                      finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+                      branch: r.branch,
+                      commitSha: r.commitSha,
+                      filesChanged: r.filesChanged,
+                      linesAdded: r.linesAdded,
+                      linesRemoved: r.linesRemoved,
+                      dryRun: r.dryRun,
+                      output: r.output,
+                    }}
+                  />
+                );
+              }
               const links = repo && r.branch ? buildGitLinks(repo, r.branch, r.baseBranch ?? cron.baseBranch, r.commitSha) : null;
               const duration = r.finishedAt ? Math.round((r.finishedAt.getTime() - r.startedAt.getTime()) / 1000) : null;
               return (
@@ -148,14 +152,14 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
                       )}
                       {links?.newMr && r.status === 'success' && !r.dryRun && (
                         <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">
-                          🚀 Open MR/PR
+                          🚀 Open MR / PR
                         </a>
                       )}
                     </div>
                   )}
                   {r.output && (
                     <details className="mt-2">
-                      <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700">Agent output</summary>
+                      <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700">Agent output ({r.output.length.toLocaleString()} chars)</summary>
                       <pre className="mt-1 whitespace-pre-wrap text-xs opacity-80 max-h-96 overflow-auto">{r.output}</pre>
                     </details>
                   )}

@@ -110,13 +110,13 @@ export function CronForm({
       <h1 className="text-2xl font-bold">{isEdit ? 'Edit cron' : 'New cron'}</h1>
 
       <label className="block">
-        <span className="text-sm">Nom</span>
+        <span className="text-sm">Name</span>
         <input className={field} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
       </label>
 
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
-          <span className="text-sm">Expression cron</span>
+          <span className="text-sm">Cron expression</span>
           <input className={`${field} font-mono`} value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value })} required />
         </label>
         <label className="block">
@@ -128,7 +128,7 @@ export function CronForm({
       <label className="block">
         <span className="text-sm">Agent</span>
         <select className={field} value={form.agentSId} onChange={(e) => setForm({ ...form, agentSId: e.target.value })} required>
-          <option value="" className={optCls}>— choisir un agent —</option>
+          <option value="" className={optCls}>— select an agent —</option>
           {agents.map((a) => (
             <option key={a.sId} value={a.sId} className={optCls}>{a.name}</option>
           ))}
@@ -136,16 +136,16 @@ export function CronForm({
       </label>
 
       <label className="block">
-        <span className="text-sm">Projet</span>
+        <span className="text-sm">Project</span>
         <select className={field} value={form.projectPath} onChange={(e) => setForm({ ...form, projectPath: e.target.value })} required>
-          <option value="" className={optCls}>— choisir un projet —</option>
+          <option value="" className={optCls}>— select a project —</option>
           {projects.map((p) => (
             <option key={p.id} value={p.name} className={optCls}>{p.name} ({p.branch})</option>
           ))}
         </select>
         {projects.length === 0 && (
           <span className="text-xs text-amber-600 dark:text-amber-400">
-            Aucun projet déclaré. Ajoute-en un dans l'onglet <a href="/projects" className="underline">Projects</a>.
+            No project declared. Add one in the <a href="/projects" className="underline">Projects</a> tab.
           </span>
         )}
       </label>
@@ -156,13 +156,13 @@ export function CronForm({
       </label>
 
       <label className="block">
-        <span className="text-sm">Webhook Teams (override, sinon global)</span>
+        <span className="text-sm">Teams webhook (override, otherwise global)</span>
         <input className={field} type="url" value={form.teamsWebhook} onChange={(e) => setForm({ ...form, teamsWebhook: e.target.value })} placeholder="https://..." />
       </label>
 
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-        <span>Activé</span>
+        <span>Enabled</span>
       </label>
 
       {/* ----- Automation push settings ----- */}
@@ -170,8 +170,8 @@ export function CronForm({
         <legend className="px-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Automation push</legend>
 
         <p className="text-xs text-slate-500">
-          Le runner synchronise la branche de base, crée une branche dédiée, laisse l'agent modifier les fichiers,
-          puis commit &amp; push automatiquement. Les branches protégées ne seront jamais touchées.
+          The runner syncs the base branch, creates a dedicated work branch, lets the agent modify files,
+          then auto-commits &amp; pushes. Protected branches are never touched.
         </p>
 
         <div className="grid grid-cols-2 gap-3">
@@ -214,7 +214,7 @@ export function CronForm({
 
       <div className="flex items-center gap-2">
         <Button type="submit" disabled={loading}>
-          {loading ? (isEdit ? 'Enregistrement…' : 'Création…') : isEdit ? 'Enregistrer' : 'Créer'}
+          {loading ? (isEdit ? 'Saving…' : 'Creating…') : isEdit ? 'Save' : 'Create'}
         </Button>
         {isEdit && (
           <button
@@ -222,7 +222,7 @@ export function CronForm({
             onClick={() => router.push(`/crons/${cronId}`)}
             className="px-4 py-2 rounded border border-slate-300 dark:border-slate-700"
           >
-            Annuler
+            Cancel
           </button>
         )}
       </div>

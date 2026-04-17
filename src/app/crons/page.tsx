@@ -39,21 +39,21 @@ export default async function CronsPage() {
           href="/crons/new"
           className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"
         >
-          + Nouveau cron
+          + New cron
         </Link>
       </div>
 
       {crons.length === 0 ? (
-        <p className="text-slate-500">Aucun cron configuré.</p>
+        <p className="text-slate-500">No cron configured.</p>
       ) : (
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
             <tr>
-              <th className="py-2">Nom</th>
+              <th className="py-2">Name</th>
               <th>Schedule</th>
               <th>Agent</th>
-              <th>Projet</th>
-              <th>Prochaine</th>
+              <th>Project</th>
+              <th>Next run</th>
               <th>Enabled</th>
               <th>Running</th>
               <th>Last result</th>

@@ -29,6 +29,7 @@ export default function ChatPage() {
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
   const [mcpStatus, setMcpStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const searchParams = useSearchParams();
 
   const refreshConvs = async () => {
     const r = await fetch('/api/conversations');

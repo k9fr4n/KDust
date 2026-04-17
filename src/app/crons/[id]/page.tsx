@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Pencil } from 'lucide-react';
 import { db } from '@/lib/db';
 import { CronDeleteButton } from '@/components/CronDeleteButton';
+import { CronRunButton } from '@/components/CronRunButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,7 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       <div className="flex items-start justify-between gap-4 mb-2">
         <h1 className="text-2xl font-bold">{cron.name}</h1>
         <div className="flex items-center gap-2 shrink-0">
+          <CronRunButton id={cron.id} name={cron.name} />
           <Link
             href={`/crons/${cron.id}/edit`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"

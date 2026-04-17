@@ -107,7 +107,11 @@ function ChatPageInner() {
       .then((j) => {
         const list = j.agents ?? [];
         setAgents(list);
-        if (list.length && !agentSId) setAgentSId(list[0].sId);
+        // Use the functional setter form: only fall back to the first agent
+        // if loadConv hasn't already set one. The closure captures the initial
+        // empty agentSId from mount, so a plain `!agentSId` check would race
+        // with loadConv and silently overwrite the conv's actual agent.
+        if (list.length) setAgentSId((prev) => prev || list[0].sId);
       })
       .catch(() => setError('Cannot list agents — are you connected to Dust?'));
     void refreshConvs();

@@ -30,6 +30,10 @@ export async function createDustConversation(
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
 
+  console.log(
+    `[chat] createConversation agentSId=${agentSId} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
+  );
+
   const res = await ctx.client.createConversation({
     title: title ?? null,
     visibility: 'unlisted',
@@ -58,6 +62,10 @@ export async function postUserMessage(
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
+
+  console.log(
+    `[chat] postUserMessage conv=${dustConversationSId} agentSId=${agentSId} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
+  );
 
   const res = await ctx.client.postUserMessage({
     conversationId: dustConversationSId,
@@ -122,7 +130,16 @@ export async function streamAgentReply(
     switch (et) {
       case 'generation_tokens': {
         const ev: any = event;
-        if (ev.classification === 'tokens') {
+        // Dust streams 4 classifications: tokens, chain_of_thought,
+        // opening_delimiter, closing_delimiter. The delimiters also carry text
+        // (typically markdown wrappers around tool calls / citations) and must
+        // be appended to the output, otherwise word boundaries get merged
+        // ("le README" -> "leREADME").
+        if (
+          ev.classification === 'tokens' ||
+          ev.classification === 'opening_delimiter' ||
+          ev.classification === 'closing_delimiter'
+        ) {
           finalContent += ev.text;
           onEvent('token', ev.text);
         } else if (ev.classification === 'chain_of_thought') {

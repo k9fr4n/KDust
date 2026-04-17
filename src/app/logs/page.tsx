@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Trash2, ScrollText, Pause, Play, Filter } from 'lucide-react';
+import { Trash2, ScrollText, Pause, Play, Filter, Copy, Check } from 'lucide-react';
 
 type LogEntry = {
   id: number;
@@ -21,6 +21,7 @@ export default function LogsPage() {
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState('');
   const [autoscroll, setAutoscroll] = useState(true);
+  const [copied, setCopied] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
 
@@ -68,6 +69,34 @@ export default function LogsPage() {
     setEntries([]);
   };
 
+  const copy = async () => {
+    const text = filtered
+      .map(
+        (e) =>
+          `${new Date(e.ts).toISOString().substring(11, 23)} [${e.level}] ${e.text}`,
+      )
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback: create a textarea, select and execCommand('copy')
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } catch {
+        /* ignore */
+      }
+      document.body.removeChild(ta);
+    }
+  };
+
   const filtered = filter
     ? entries.filter((e) => e.text.toLowerCase().includes(filter.toLowerCase()))
     : entries;
@@ -108,6 +137,15 @@ export default function LogsPage() {
           >
             {paused ? <Play size={14} /> : <Pause size={14} />}
             {paused ? 'Resume' : 'Pause'}
+          </button>
+
+          <button
+            onClick={copy}
+            title={`Copy ${filtered.length} line(s) to clipboard`}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+            {copied ? 'Copied!' : 'Copy'}
           </button>
 
           <button

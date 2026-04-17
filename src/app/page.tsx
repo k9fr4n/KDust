@@ -12,7 +12,6 @@ import { listProjects, PROJECTS_ROOT } from '@/lib/projects';
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
 import { ConversationCard } from '@/components/ConversationCard';
-import { nextRunAt } from '@/lib/cron/validator';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,23 +32,18 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
   if (current) {
     // --- Project-scoped dashboard ---
-    const [nbCrons, recentRuns, recentConvs, recentCrons] = await Promise.all([
+    const [nbCrons, recentRuns, recentConvs] = await Promise.all([
       db.cronJob.count({ where: { projectPath: current.name } }),
       db.cronRun.findMany({
         where: { cronJob: { projectPath: current.name } },
         orderBy: { startedAt: 'desc' },
-        take: 10,
+        take: 8,
         include: { cronJob: { select: { name: true } } },
       }),
       db.conversation.findMany({
         where: { projectName: current.name },
         orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
-        take: 5,
-      }),
-      db.cronJob.findMany({
-        where: { projectPath: current.name },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
+        take: 8,
       }),
     ]);
 
@@ -106,66 +100,30 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Recent conversations */}
           <div>
-            <h2 className="font-semibold mb-3 flex items-center gap-2">
-              <MessageSquare size={16} /> Recent conversations
-            </h2>
+            <SectionLink href="/chat" icon={<MessageSquare size={16} />} label="Recent conversations" />
             <RecentConvs items={recentConvs} />
           </div>
-          {/* Recent crons */}
           <div>
-            <h2 className="font-semibold mb-3 flex items-center gap-2">
-              <Clock size={16} /> Recent crons
-            </h2>
-            <RecentCrons items={recentCrons} />
+            <SectionLink href="/runs" icon={<Clock size={16} />} label="Recent runs" />
+            <RecentRuns items={recentRuns} />
           </div>
-        </section>
-
-        <section>
-          <h2 className="font-semibold mb-3">Recent runs</h2>
-          {recentRuns.length === 0 ? (
-            <p className="text-sm text-slate-500">No runs yet.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="text-left text-slate-500">
-                <tr>
-                  <th className="py-1">Cron</th>
-                  <th>Started</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentRuns.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-200 dark:border-slate-800">
-                    <td className="py-2">{r.cronJob?.name}</td>
-                    <td className="text-xs">{new Date(r.startedAt).toLocaleString()}</td>
-                    <td>
-                      <span
-                        className={
-                          r.status === 'success' ? 'text-green-600' : r.status === 'failed' ? 'text-red-500' : 'text-slate-500'
-                        }
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
         </section>
       </div>
     );
   }
 
   // --- Global dashboard (no project selected) ---
-  const [nbCrons, nbConv, projects, recentConvs, recentCrons] = await Promise.all([
+  const [nbCrons, nbConv, projects, recentConvs, recentRuns] = await Promise.all([
     db.cronJob.count(),
     db.conversation.count(),
     listProjects(),
-    db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 5 }),
-    db.cronJob.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),
+    db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 8 }),
+    db.cronRun.findMany({
+      orderBy: { startedAt: 'desc' },
+      take: 8,
+      include: { cronJob: { select: { name: true, projectPath: true } } },
+    }),
   ]);
 
   return (
@@ -197,16 +155,12 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div>
-          <h2 className="font-semibold mb-3 flex items-center gap-2">
-            <MessageSquare size={16} /> Recent conversations
-          </h2>
+          <SectionLink href="/chat" icon={<MessageSquare size={16} />} label="Recent conversations" />
           <RecentConvs items={recentConvs} />
         </div>
         <div>
-          <h2 className="font-semibold mb-3 flex items-center gap-2">
-            <Clock size={16} /> Recent crons
-          </h2>
-          <RecentCrons items={recentCrons} />
+          <SectionLink href="/runs" icon={<Clock size={16} />} label="Recent runs" />
+          <RecentRuns items={recentRuns} />
         </div>
       </section>
 
@@ -273,34 +227,72 @@ function RecentConvs({ items }: { items: Array<any> }) {
   );
 }
 
-function RecentCrons({ items }: { items: Array<any> }) {
+/** Clickable section heading linking to the full list page. */
+function SectionLink({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
+  return (
+    <h2 className="font-semibold mb-3">
+      <Link
+        href={href}
+        className="inline-flex items-center gap-2 hover:text-brand-600 dark:hover:text-brand-400 hover:underline"
+      >
+        {icon} {label}
+        <span className="text-xs text-slate-400">→</span>
+      </Link>
+    </h2>
+  );
+}
+
+const STATUS_CLASS: Record<string, string> = {
+  success: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400',
+  failed:  'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400',
+  aborted: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400',
+  running: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400',
+  'no-op': 'bg-slate-100 dark:bg-slate-800 text-slate-600',
+  skipped: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400',
+};
+
+function RecentRuns({ items }: { items: Array<any> }) {
   if (items.length === 0)
     return (
       <p className="text-sm text-slate-500 italic rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-4">
-        No crons yet.
+        No runs yet.
       </p>
     );
   return (
     <ul className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-200 dark:divide-slate-800">
-      {items.map((c) => {
-        const next = c.enabled ? nextRunAt(c.schedule, c.timezone) : null;
+      {items.map((r) => {
+        const statusCls = STATUS_CLASS[r.status] ?? 'bg-slate-100 text-slate-600';
         return (
-          <li key={c.id}>
+          <li key={r.id}>
             <Link
-              href={`/crons/${c.id}`}
+              href={`/crons/${r.cronJobId}`}
               className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
             >
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium truncate flex-1">{c.name}</span>
-                <span className="text-xs text-slate-400 shrink-0">
-                  {c.enabled ? 'enabled' : 'disabled'}
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs shrink-0 ${statusCls}`}>
+                  {r.status === 'running' && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                    </span>
+                  )}
+                  {r.status}
                 </span>
+                <span className="text-sm font-medium truncate flex-1">
+                  {r.cronJob?.name ?? '(deleted cron)'}
+                </span>
+                <span className="text-xs text-slate-400 shrink-0">{fmtRel(r.startedAt)}</span>
               </div>
-              <div className="text-xs text-slate-500 truncate font-mono">
-                {c.schedule}
-                {c.projectPath && <span className="ml-2">· {c.projectPath}</span>}
-                {next && <span className="ml-2">· next {next.toLocaleString()}</span>}
-              </div>
+              {(r.filesChanged !== null && r.filesChanged !== undefined) || r.cronJob?.projectPath ? (
+                <div className="text-xs text-slate-500 truncate">
+                  {r.cronJob?.projectPath && <span className="font-mono">{r.cronJob.projectPath}</span>}
+                  {r.filesChanged !== null && r.filesChanged !== undefined && (
+                    <span className="ml-2 font-mono">
+                      {r.filesChanged} file(s), +{r.linesAdded ?? 0}/-{r.linesRemoved ?? 0}
+                    </span>
+                  )}
+                </div>
+              ) : null}
             </Link>
           </li>
         );

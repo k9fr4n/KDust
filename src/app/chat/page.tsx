@@ -360,7 +360,7 @@ function ChatPageInner() {
     // stable on mobile browsers that resize the viewport with their
     // address bar. min-h-0 lets flex children shrink so only the inner
     // messages pane scrolls, never the page.
-    <div className="grid grid-cols-[260px_1fr] gap-4 h-[calc(100dvh-6.5rem)] min-h-0">
+    <div className="grid grid-cols-[260px_minmax(0,1fr)] gap-4 h-[calc(100dvh-6.5rem)] min-h-0 max-w-full">
       {/* Sidebar conversations */}
       <aside className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg">
         <div className="p-3 border-b border-slate-200 dark:border-slate-800">
@@ -401,8 +401,13 @@ function ChatPageInner() {
         </ul>
       </aside>
 
-      {/* Main chat pane */}
-      <section className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg">
+      {/* Main chat pane. min-w-0 lets this grid track actually shrink
+          when a message bubble contains unwrappable content (long URL,
+          code line with no spaces). Without it, the track grows to fit
+          the content and the whole grid overflows horizontally, which
+          in turn pushes the body past 100dvh and creates a page-level
+          scrollbar on the right. */}
+      <section className="flex flex-col min-h-0 min-w-0 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
         <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
           <MessageSquare size={18} className="text-slate-400" />
           <select

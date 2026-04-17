@@ -89,7 +89,10 @@ export async function streamAgentReply(
   conversation: any,
   userMessageSId: string,
   signal: AbortSignal,
-  onEvent: (kind: 'token' | 'cot' | 'error' | 'done', data: string) => void,
+  onEvent: (
+    kind: 'token' | 'cot' | 'error' | 'done' | 'tool_call',
+    data: string,
+  ) => void,
 ): Promise<string> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
@@ -116,6 +119,34 @@ export async function streamAgentReply(
           onEvent('token', ev.text);
         } else if (ev.classification === 'chain_of_thought') {
           onEvent('cot', ev.text);
+        }
+        break;
+      }
+      case 'tool_approve_execution': {
+        // Auto-approve MCP tool calls so the agent can actually use the fs tools.
+        // Without this, the agent waits for approval forever and aborts.
+        const ev: any = event;
+        onEvent(
+          'tool_call',
+          JSON.stringify({
+            tool: ev.metadata?.toolName ?? ev.toolName ?? 'tool',
+            params: ev.inputs ?? ev.metadata?.inputs ?? null,
+          }),
+        );
+        try {
+          await ctx.client.validateAction({
+            conversationId: ev.conversationId,
+            messageId: ev.messageId,
+            actionId: ev.actionId,
+            approved: 'approved',
+          });
+        } catch (err) {
+          onEvent(
+            'error',
+            `Failed to approve tool action: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
         break;
       }

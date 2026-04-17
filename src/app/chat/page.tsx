@@ -34,6 +34,7 @@ function ChatPageInner() {
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [cotText, setCotText] = useState('');
+  const [toolCalls, setToolCalls] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<string | null>(null);
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
@@ -118,6 +119,7 @@ function ChatPageInner() {
     setStreaming(true);
     setStreamedText('');
     setCotText('');
+    setToolCalls([]);
     try {
       const r = await fetch(
         `/api/conversations/${convId}/stream?userMessageSId=${encodeURIComponent(userMessageSId)}`,
@@ -138,10 +140,21 @@ function ChatPageInner() {
           const data = dataLine.replace(/\\n/g, '\n');
           if (ev === 'token') setStreamedText((t) => t + data);
           else if (ev === 'cot') setCotText((t) => t + data);
-          else if (ev === 'error') setError(data);
+          else if (ev === 'tool_call') {
+            try {
+              const p = JSON.parse(data);
+              const summary = `${p.tool}(${
+                p.params ? JSON.stringify(p.params).slice(0, 140) : ''
+              })`;
+              setToolCalls((arr) => [...arr, summary]);
+            } catch {
+              setToolCalls((arr) => [...arr, data]);
+            }
+          } else if (ev === 'error') setError(data);
           else if (ev === 'done') {
             setStreamedText('');
             setCotText('');
+            setToolCalls([]);
             // reload conv from server (agent message now persisted)
             await loadConv(convId);
             await refreshConvs();
@@ -320,6 +333,20 @@ function ChatPageInner() {
               </div>
             </div>
           ))}
+
+          {toolCalls.length > 0 && (
+            <div className="flex flex-col gap-1">
+              {toolCalls.map((t, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2 text-xs text-slate-500 font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-fit"
+                >
+                  <Wrench size={12} className="text-amber-500" />
+                  {t}
+                </div>
+              ))}
+            </div>
+          )}
 
           {cotText && (
             <div className="flex justify-start">

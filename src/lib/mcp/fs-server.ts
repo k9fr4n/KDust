@@ -23,8 +23,10 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
   const dust = await getDustClient();
   if (!dust) throw new Error('Dust client not available (login required)');
 
+  // IMPORTANT: the server name MUST be "fs-cli" so that Dust agents configured
+  // for the official dust-cli file-system MCP pick up our tools.
   const server = new McpServer({
-    name: `kdust-fs-${projectName}`,
+    name: 'fs-cli',
     version: '0.1.0',
   });
 
@@ -47,7 +49,7 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
         serverId = id;
         resolve(id);
       },
-      `kdust-fs-${projectName}`,
+      'fs-cli',
       false,
     );
     // store on outer scope via closure below

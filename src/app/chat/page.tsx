@@ -228,35 +228,49 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
           {messages.map((m) => (
             <div
               key={m.id}
-              className={
-                m.role === 'user'
-                  ? 'ml-auto max-w-[75%] bg-brand-100 dark:bg-brand-900/40 px-3 py-2 rounded-lg text-sm whitespace-pre-wrap'
-                  : 'mr-auto max-w-[85%] bg-slate-100 dark:bg-slate-800 px-3 py-2 rounded-lg text-sm whitespace-pre-wrap'
-              }
+              className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              {m.content}
+              <div
+                className={
+                  m.role === 'user'
+                    ? 'max-w-[80%] px-3 py-2 rounded-2xl rounded-br-sm text-sm whitespace-pre-wrap bg-blue-600 text-white shadow-sm'
+                    : 'max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm whitespace-pre-wrap bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
+                }
+              >
+                {m.content}
+              </div>
             </div>
           ))}
 
           {cotText && (
-            <details className="mr-auto max-w-[85%] text-xs text-slate-500">
-              <summary className="cursor-pointer">thinking…</summary>
-              <pre className="whitespace-pre-wrap">{cotText}</pre>
-            </details>
-          )}
-
-          {streamedText && (
-            <div className="mr-auto max-w-[85%] bg-slate-100 dark:bg-slate-800 px-3 py-2 rounded-lg text-sm whitespace-pre-wrap">
-              {streamedText}
-              <span className="animate-pulse">▋</span>
+            <div className="flex justify-start">
+              <details className="max-w-[85%] text-xs text-slate-500 italic">
+                <summary className="cursor-pointer select-none">thinking…</summary>
+                <pre className="whitespace-pre-wrap mt-1 pl-3 border-l-2 border-slate-300 dark:border-slate-700">
+                  {cotText}
+                </pre>
+              </details>
             </div>
           )}
 
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {streamedText && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm whitespace-pre-wrap bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
+                {streamedText}
+                <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="flex justify-start">
+              <p className="text-red-500 text-sm">{error}</p>
+            </div>
+          )}
 
           <div ref={bottomRef} />
         </div>

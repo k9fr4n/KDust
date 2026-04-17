@@ -12,6 +12,13 @@ export type CronFormValues = {
   projectPath: string;
   teamsWebhook: string;
   enabled: boolean;
+  // automation-push
+  baseBranch: string;
+  branchMode: 'timestamped' | 'stable';
+  branchPrefix: string;
+  dryRun: boolean;
+  maxDiffLines: number;
+  protectedBranches: string;
 };
 
 type Agent = { sId: string; name: string; description?: string };
@@ -38,6 +45,12 @@ export function CronForm({
     projectPath: initial?.projectPath ?? '',
     teamsWebhook: initial?.teamsWebhook ?? '',
     enabled: initial?.enabled ?? true,
+    baseBranch: initial?.baseBranch ?? 'main',
+    branchMode: initial?.branchMode ?? 'timestamped',
+    branchPrefix: initial?.branchPrefix ?? 'kdust',
+    dryRun: initial?.dryRun ?? false,
+    maxDiffLines: initial?.maxDiffLines ?? 2000,
+    protectedBranches: initial?.protectedBranches ?? 'main,master,develop,production,prod',
   });
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -151,6 +164,51 @@ export function CronForm({
         <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
         <span>Activé</span>
       </label>
+
+      {/* ----- Automation push settings ----- */}
+      <fieldset className="border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3">
+        <legend className="px-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Automation push</legend>
+
+        <p className="text-xs text-slate-500">
+          Le runner synchronise la branche de base, crée une branche dédiée, laisse l'agent modifier les fichiers,
+          puis commit &amp; push automatiquement. Les branches protégées ne seront jamais touchées.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-sm">Base branch</span>
+            <input className={`${field} font-mono`} value={form.baseBranch} onChange={(e) => setForm({ ...form, baseBranch: e.target.value })} required />
+          </label>
+          <label className="block">
+            <span className="text-sm">Branch mode</span>
+            <select className={field} value={form.branchMode} onChange={(e) => setForm({ ...form, branchMode: e.target.value as 'timestamped' | 'stable' })}>
+              <option value="timestamped" className={optCls}>timestamped (new branch per run)</option>
+              <option value="stable" className={optCls}>stable (reuse + force-push)</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-sm">Branch prefix</span>
+            <input className={`${field} font-mono`} value={form.branchPrefix} onChange={(e) => setForm({ ...form, branchPrefix: e.target.value })} placeholder="kdust" required />
+          </label>
+          <label className="block">
+            <span className="text-sm">Max diff lines (abort if exceeded)</span>
+            <input type="number" min={1} className={field} value={form.maxDiffLines} onChange={(e) => setForm({ ...form, maxDiffLines: parseInt(e.target.value, 10) || 2000 })} required />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="text-sm">Protected branches (comma-separated)</span>
+          <input className={`${field} font-mono`} value={form.protectedBranches} onChange={(e) => setForm({ ...form, protectedBranches: e.target.value })} required />
+        </label>
+
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={form.dryRun} onChange={(e) => setForm({ ...form, dryRun: e.target.checked })} />
+          <span>Dry-run (commit locally, no push)</span>
+        </label>
+      </fieldset>
 
       {err && <p className="text-red-500 text-sm">{err}</p>}
 

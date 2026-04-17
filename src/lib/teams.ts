@@ -3,12 +3,17 @@
  * Les webhooks "Workflow / Power Automate" utilisent un payload Adaptive Card
  * légèrement différent : ce helper gère les deux formats par un fallback.
  */
+export interface TeamsCardFact {
+  name: string;
+  value: string;
+}
+
 export interface TeamsReport {
   title: string;
   summary: string;
   status: 'success' | 'failed';
   details?: string;
-  facts?: Array<{ name: string; value: string }>;
+  facts?: TeamsCardFact[];
 }
 
 export async function postToTeams(webhookUrl: string, r: TeamsReport): Promise<void> {

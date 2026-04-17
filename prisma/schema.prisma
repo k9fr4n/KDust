@@ -85,6 +85,14 @@ model CronJob {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   runs           CronRun[]
+
+  // --- automation push settings ---
+  baseBranch         String   @default("main")            // sync & base new branches on this
+  branchMode         String   @default("timestamped")     // 'timestamped' | 'stable'
+  branchPrefix       String   @default("kdust")           // prefix in generated branch names
+  dryRun             Boolean  @default(false)             // agent runs & commits locally, no push
+  maxDiffLines       Int      @default(2000)              // abort push if +/- lines exceed
+  protectedBranches  String   @default("main,master,develop,production,prod") // csv, never push to these
 }
 
 model CronRun {
@@ -92,10 +100,19 @@ model CronRun {
   cronJobId  String
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
-  status     String    // 'running' | 'success' | 'failed'
+  status     String    // 'running' | 'success' | 'no-op' | 'skipped' | 'aborted' | 'failed'
   output     String?
   error      String?
   cronJob    CronJob   @relation(fields: [cronJobId], references: [id], onDelete: Cascade)
+
+  // --- push metadata ---
+  branch        String?
+  baseBranch    String?
+  commitSha     String?
+  filesChanged  Int?
+  linesAdded    Int?
+  linesRemoved  Int?
+  dryRun        Boolean  @default(false)
 
   @@index([cronJobId])
 }

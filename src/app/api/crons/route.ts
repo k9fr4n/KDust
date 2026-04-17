@@ -16,6 +16,13 @@ const CronInput = z.object({
   projectPath: z.string().min(1),
   teamsWebhook: z.string().url().optional().nullable(),
   enabled: z.boolean().default(true),
+  // automation-push settings
+  baseBranch: z.string().min(1).default('main'),
+  branchMode: z.enum(['timestamped', 'stable']).default('timestamped'),
+  branchPrefix: z.string().min(1).default('kdust'),
+  dryRun: z.boolean().default(false),
+  maxDiffLines: z.number().int().positive().default(2000),
+  protectedBranches: z.string().default('main,master,develop,production,prod'),
 });
 
 export async function GET() {

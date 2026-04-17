@@ -4,8 +4,20 @@ import { Pencil } from 'lucide-react';
 import { db } from '@/lib/db';
 import { CronDeleteButton } from '@/components/CronDeleteButton';
 import { CronRunButton } from '@/components/CronRunButton';
+import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
+
+function badgeClass(status: string) {
+  switch (status) {
+    case 'success': return 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border-green-300 dark:border-green-800';
+    case 'failed':  return 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border-red-300 dark:border-red-800';
+    case 'no-op':   return 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 border-slate-300 dark:border-slate-700';
+    case 'skipped': return 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800';
+    case 'running': return 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 animate-pulse';
+    default:        return 'text-slate-600 border-slate-300';
+  }
+}
 
 export default async function CronDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -14,6 +26,11 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 20 } },
   });
   if (!cron) return notFound();
+
+  const project = cron.projectPath
+    ? await db.project.findFirst({ where: { name: cron.projectPath } })
+    : null;
+  const repo = project ? parseGitRepo(project.gitUrl) : null;
 
   return (
     <div className="max-w-3xl">
@@ -35,6 +52,16 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         {cron.agentName ?? cron.agentSId}
       </p>
 
+      <section className="mb-6 grid grid-cols-2 gap-3 text-sm">
+        <div><span className="text-slate-500">Project:</span> <span className="font-mono">{cron.projectPath}</span></div>
+        <div><span className="text-slate-500">Base branch:</span> <span className="font-mono">{cron.baseBranch}</span></div>
+        <div><span className="text-slate-500">Branch mode:</span> <span className="font-mono">{cron.branchMode}</span></div>
+        <div><span className="text-slate-500">Branch prefix:</span> <span className="font-mono">{cron.branchPrefix}</span></div>
+        <div><span className="text-slate-500">Max diff lines:</span> <span className="font-mono">{cron.maxDiffLines}</span></div>
+        <div><span className="text-slate-500">Dry-run:</span> <span className="font-mono">{cron.dryRun ? 'yes' : 'no'}</span></div>
+        <div className="col-span-2"><span className="text-slate-500">Protected:</span> <span className="font-mono text-xs">{cron.protectedBranches}</span></div>
+      </section>
+
       <section className="mb-6">
         <h2 className="font-semibold mb-2">Prompt</h2>
         <pre className="whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">{cron.prompt}</pre>
@@ -46,18 +73,73 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
           <p className="text-slate-500 text-sm">Pas encore de run.</p>
         ) : (
           <ul className="space-y-2">
-            {cron.runs.map((r) => (
-              <li key={r.id} className="rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
-                <div className="flex justify-between">
-                  <span className={r.status === 'success' ? 'text-green-600' : r.status === 'failed' ? 'text-red-500' : ''}>
-                    {r.status}
-                  </span>
-                  <span className="text-xs text-slate-500">{r.startedAt.toISOString()}</span>
-                </div>
-                {r.output && <pre className="mt-2 whitespace-pre-wrap text-xs opacity-80">{r.output}</pre>}
-                {r.error && <pre className="mt-2 whitespace-pre-wrap text-xs text-red-500">{r.error}</pre>}
-              </li>
-            ))}
+            {cron.runs.map((r) => {
+              const links = repo && r.branch ? buildGitLinks(repo, r.branch, r.baseBranch ?? cron.baseBranch, r.commitSha) : null;
+              const duration = r.finishedAt ? Math.round((r.finishedAt.getTime() - r.startedAt.getTime()) / 1000) : null;
+              return (
+                <li key={r.id} className="rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs uppercase tracking-wide ${badgeClass(r.status)}`}>
+                      {r.status}
+                    </span>
+                    {r.dryRun && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded border border-purple-300 text-purple-700 dark:text-purple-400 dark:border-purple-800 text-xs">
+                        dry-run
+                      </span>
+                    )}
+                    {r.filesChanged !== null && r.filesChanged !== undefined && (
+                      <span className="text-xs font-mono text-slate-500">
+                        {r.filesChanged} file(s), +{r.linesAdded ?? 0}/-{r.linesRemoved ?? 0}
+                      </span>
+                    )}
+                    {duration !== null && (
+                      <span className="text-xs text-slate-500">{duration}s</span>
+                    )}
+                    <span className="text-xs text-slate-400 ml-auto">{r.startedAt.toISOString()}</span>
+                  </div>
+                  {(r.branch || r.commitSha) && (
+                    <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                      {r.branch && (
+                        <span>
+                          🌿{' '}
+                          {links?.branch ? (
+                            <a href={links.branch} target="_blank" rel="noreferrer" className="font-mono underline hover:text-brand-500">
+                              {r.branch}
+                            </a>
+                          ) : (
+                            <span className="font-mono">{r.branch}</span>
+                          )}
+                        </span>
+                      )}
+                      {r.commitSha && (
+                        <span>
+                          🔖{' '}
+                          {links?.commit ? (
+                            <a href={links.commit} target="_blank" rel="noreferrer" className="font-mono underline hover:text-brand-500">
+                              {r.commitSha.slice(0, 10)}
+                            </a>
+                          ) : (
+                            <span className="font-mono">{r.commitSha.slice(0, 10)}</span>
+                          )}
+                        </span>
+                      )}
+                      {links?.newMr && r.status === 'success' && !r.dryRun && (
+                        <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">
+                          🚀 Open MR/PR
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  {r.output && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-slate-500 hover:text-slate-700">Agent output</summary>
+                      <pre className="mt-1 whitespace-pre-wrap text-xs opacity-80 max-h-96 overflow-auto">{r.output}</pre>
+                    </details>
+                  )}
+                  {r.error && <pre className="mt-2 whitespace-pre-wrap text-xs text-red-500">{r.error}</pre>}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

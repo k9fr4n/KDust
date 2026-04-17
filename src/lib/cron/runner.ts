@@ -56,20 +56,37 @@ export async function runCronJob(cronJobId: string): Promise<void> {
   if (!job) return;
 
   // [1] Concurrency lock ------------------------------------------------------
+  // The lock is scoped per **project directory**, not per cron job. Two
+  // different jobs that happen to target the same /projects/<path> share
+  // the same filesystem and the same git working tree — running them in
+  // parallel would cause `git reset --hard` / branch checkout races and
+  // produce commits with mixed content. We therefore refuse to start if
+  // ANY cron run is currently active for the same projectPath.
+  //
+  // Stale detection still applies: a run older than 1h with no completion
+  // signal is considered crashed and is auto-marked failed so the next
+  // run can proceed.
   const concurrent = await db.cronRun.findFirst({
-    where: { cronJobId, status: 'running' },
+    where: {
+      status: 'running',
+      cronJob: { is: { projectPath: job.projectPath } },
+    },
     orderBy: { startedAt: 'desc' },
+    include: { cronJob: { select: { name: true } } },
   });
   if (concurrent) {
-    // Consider runs older than 1h as stale (process crash etc.)
     const ageMs = Date.now() - concurrent.startedAt.getTime();
     if (ageMs < 60 * 60 * 1000) {
-      console.warn(`[cron] skip job="${job.name}": previous run ${concurrent.id} still running (${Math.round(ageMs/1000)}s)`);
+      const sameJob = concurrent.cronJobId === cronJobId;
+      const reason = sameJob
+        ? `previous run ${concurrent.id} of this job still running`
+        : `run ${concurrent.id} of sibling job "${concurrent.cronJob?.name ?? concurrent.cronJobId}" still running on project "${job.projectPath}"`;
+      console.warn(`[cron] skip job="${job.name}": ${reason} (${Math.round(ageMs / 1000)}s)`);
       await db.cronRun.create({
         data: {
           cronJobId,
           status: 'skipped',
-          output: `Previous run ${concurrent.id} still running since ${concurrent.startedAt.toISOString()}`,
+          output: `${reason} since ${concurrent.startedAt.toISOString()}`,
           finishedAt: new Date(),
         },
       });

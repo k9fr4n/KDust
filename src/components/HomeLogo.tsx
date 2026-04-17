@@ -18,6 +18,8 @@ export function HomeLogo() {
     } catch {
       /* ignore */
     }
+    // Broadcast so other client components (ProjectSwitcher, …) refresh their state
+    window.dispatchEvent(new CustomEvent('kdust:project-changed', { detail: { name: null } }));
     router.push('/');
     router.refresh();
   }

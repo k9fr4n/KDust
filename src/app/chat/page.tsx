@@ -259,6 +259,34 @@ export default function ChatPage() {
               Agent locked for this conversation
             </span>
           )}
+
+          {currentProject && (
+            <span
+              className={`ml-auto flex items-center gap-1 text-xs px-2 py-1 rounded border ${
+                mcpStatus === 'ready'
+                  ? 'border-green-600 text-green-700 dark:text-green-400'
+                  : mcpStatus === 'starting'
+                    ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                    : mcpStatus === 'error'
+                      ? 'border-red-500 text-red-600 dark:text-red-400'
+                      : 'border-slate-300 text-slate-500'
+              }`}
+              title={
+                mcpServerId
+                  ? `MCP fs tools active (serverId=${mcpServerId})`
+                  : 'MCP fs tools inactive'
+              }
+            >
+              <Wrench size={12} />
+              {mcpStatus === 'ready'
+                ? `fs tools · ${currentProject}`
+                : mcpStatus === 'starting'
+                  ? `starting fs tools…`
+                  : mcpStatus === 'error'
+                    ? 'fs tools error'
+                    : `fs tools idle · ${currentProject}`}
+            </span>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">

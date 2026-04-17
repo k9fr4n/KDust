@@ -42,6 +42,7 @@ export function ProjectSwitcher() {
     });
     setCurrent(name);
     setOpen(false);
+    window.dispatchEvent(new CustomEvent('kdust:project-changed', { detail: { name } }));
     router.refresh();
   };
 

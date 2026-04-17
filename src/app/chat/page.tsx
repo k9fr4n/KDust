@@ -57,6 +57,9 @@ export default function ChatPage() {
       })
       .catch(() => setError('Cannot list agents — are you connected to Dust?'));
     void refreshConvs();
+    // If ?id=... is present, open that conversation on mount
+    const requested = searchParams.get('id');
+    if (requested) void loadConv(requested);
     // Detect current project from cookie and start MCP fs server for it
     void fetch('/api/projects/current')
       .then((r) => (r.ok ? r.json() : { name: null }))

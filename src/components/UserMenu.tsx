@@ -10,6 +10,7 @@ import {
   Link2,
   Link2Off,
   FolderGit2,
+  ScrollText,
 } from 'lucide-react';
 
 type Status = { region: string | null; workspaceId: string | null };
@@ -87,6 +88,9 @@ export function UserMenu() {
           </Link>
           <Link href="/settings" onClick={() => setOpen(false)} className={item} role="menuitem">
             <SettingsIcon size={16} /> Settings
+          </Link>
+          <Link href="/logs" onClick={() => setOpen(false)} className={item} role="menuitem">
+            <ScrollText size={16} /> Container logs
           </Link>
           <Link href="/debug/ssh" onClick={() => setOpen(false)} className={item} role="menuitem">
             <Terminal size={16} /> SSH debug

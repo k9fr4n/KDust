@@ -15,6 +15,27 @@ import {
 } from '../git';
 
 /**
+ * Registry of in-flight runs so the HTTP API can abort them on demand.
+ * Key: CronRun.id. Value: AbortController that aborts the agent stream.
+ * Entries are added at the start of runCronJob and always cleaned up in a
+ * finally block. Because Node.js modules are singletons within a process,
+ * this survives across requests but is of course NOT cross-process.
+ */
+const activeRuns = new Map<string, AbortController>();
+
+/** Abort an in-flight run. Returns true if the runId was active. */
+export function cancelCronRun(runId: string): boolean {
+  const ac = activeRuns.get(runId);
+  if (!ac) return false;
+  ac.abort();
+  return true;
+}
+
+export function isRunActive(runId: string): boolean {
+  return activeRuns.has(runId);
+}
+
+/**
  * End-to-end cron run pipeline (automation-push flavour):
  *
  *   [1]  concurrency lock (skip if another run is still `running` for this job)
@@ -134,6 +155,8 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     const convTitle = `[cron] ${job.name} @ ${new Date().toISOString()}`;
     const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds);
     const ac = new AbortController();
+    // Register so the HTTP cancel endpoint can abort from outside this scope.
+    activeRuns.set(run.id, ac);
     const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
     let streamErr: string | null = null;
     try {
@@ -145,6 +168,10 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       );
     } finally {
       clearTimeout(killTimer);
+      activeRuns.delete(run.id);
+    }
+    if (ac.signal.aborted) {
+      throw Object.assign(new Error('run aborted by user'), { aborted: true });
     }
     if (streamErr) throw new Error(`agent stream error: ${streamErr}`);
     if (!agentText.trim()) agentText = '(agent returned an empty response)';
@@ -304,13 +331,15 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
     console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
   } catch (err) {
+    const wasAborted = !!(err as { aborted?: boolean })?.aborted;
     const msg = err instanceof Error ? err.message : String(err);
+    const terminalStatus = wasAborted ? 'aborted' : 'failed';
     await db.cronRun.update({
       where: { id: run.id },
       data: {
-        status: 'failed',
+        status: terminalStatus,
         phase: 'done',
-        phaseMessage: `Failed: ${msg.slice(0, 120)}`,
+        phaseMessage: wasAborted ? 'Aborted by user' : `Failed: ${msg.slice(0, 120)}`,
         error: msg,
         branch,
         commitSha,
@@ -323,12 +352,12 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     });
     await db.cronJob.update({
       where: { id: job.id },
-      data: { lastRunAt: new Date(), lastStatus: 'failed' },
+      data: { lastRunAt: new Date(), lastStatus: terminalStatus },
     });
     if (webhook) {
       await postToTeams(webhook, {
-        title: `❌ KDust cron : ${job.name}`,
-        summary: `Failed on ${job.projectPath}`,
+        title: `${wasAborted ? '⏹️' : '❌'} KDust cron : ${job.name}`,
+        summary: wasAborted ? `Aborted on ${job.projectPath}` : `Failed on ${job.projectPath}`,
         status: 'failed',
         details: msg,
         facts: branch ? [
@@ -337,6 +366,6 @@ export async function runCronJob(cronJobId: string): Promise<void> {
         ] : undefined,
       });
     }
-    console.error(`[cron] FAILED job="${job.name}": ${msg}`);
+    console.error(`[cron] ${wasAborted ? 'ABORTED' : 'FAILED'} job="${job.name}": ${msg}`);
   }
 }

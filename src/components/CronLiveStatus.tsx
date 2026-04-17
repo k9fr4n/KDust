@@ -32,6 +32,28 @@ const PHASES: { key: string; label: string }[] = [
 export function CronLiveStatus({ cronId, initialRun }: { cronId: string; initialRun: Run | null }) {
   const router = useRouter();
   const [run, setRun] = useState<Run | null>(initialRun);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
+
+  async function onCancel() {
+    if (!run) return;
+    if (!confirm(`Cancel the running job? Any uncommitted changes will remain in /projects for inspection, nothing will be pushed.`)) return;
+    setCancelling(true);
+    setCancelMsg(null);
+    try {
+      const r = await fetch(`/api/cronruns/${run.id}/cancel`, { method: 'POST' });
+      if (r.ok) {
+        setCancelMsg('Abort signal sent. The run will stop within a few seconds.');
+      } else {
+        const body = await r.json().catch(() => ({}));
+        setCancelMsg(`Cancel failed: HTTP ${r.status} ${body.error ?? ''}`);
+      }
+    } catch (e) {
+      setCancelMsg(`Cancel failed: ${(e as Error).message}`);
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   useEffect(() => {
     if (!run || run.status !== 'running') return;
@@ -71,7 +93,16 @@ export function CronLiveStatus({ cronId, initialRun }: { cronId: string; initial
         <span className="text-xs font-mono text-blue-700 dark:text-blue-300 ml-auto">
           {Math.floor(startedMs / 1000)}s elapsed
         </span>
+        <button
+          onClick={onCancel}
+          disabled={cancelling}
+          className="ml-3 inline-flex items-center gap-1 px-2 py-1 rounded border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 text-xs hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50"
+          title="Abort this run"
+        >
+          ⏹ {cancelling ? 'Cancelling…' : 'Cancel'}
+        </button>
       </div>
+      {cancelMsg && <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">{cancelMsg}</p>}
 
       {/* Phase stepper */}
       <ol className="flex flex-wrap gap-1 mb-3">

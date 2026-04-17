@@ -80,18 +80,38 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     // Catch transport errors so auth failures don't silently loop for hours.
     transport.onerror = (err: any) => {
       // err is sometimes a real Error, sometimes the raw EventSource event with
-      // no usable .message (yields "[object Object]" if you concat it).
+      // no usable .message (yields "[object Object]" if you concat it), and
+      // sometimes a Dust SDK error object with shape
+      //   { dustError: { type: 'expired_oauth_token_error', message: '...' },
+      //     status: 401, url: '.../mcp/results' }
       let msg = '';
+      let status: number | undefined;
+      let dustErrType: string | undefined;
       if (err instanceof Error) msg = err.message;
       else if (typeof err === 'string') msg = err;
       else if (err && typeof err === 'object') {
-        msg = err.message ?? err.type ?? '';
+        status = typeof err.status === 'number' ? err.status : undefined;
+        dustErrType = err.dustError?.type ?? err.cause?.dustError?.type;
+        msg = err.message ?? err.dustError?.message ?? err.type ?? '';
         try { msg = msg || JSON.stringify(err); } catch { /* circular */ }
       }
 
-      if (/401\s+Unauthorized/i.test(msg)) {
+      // Detect auth failure from ALL the shapes we've observed in the wild:
+      //   - SSE stream rejected with "401 Unauthorized"
+      //   - DustAPI error with status=401 and dustError.type='expired_oauth_token_error'
+      //   - Wrapped "Failed to send MCP result: [object Object]" where the root
+      //     cause is a 401 but the stringified message hides it (the SDK logs
+      //     the dustError separately before handing us this opaque string)
+      const isAuthFailure =
+        status === 401 ||
+        dustErrType === 'expired_oauth_token_error' ||
+        /401\s+Unauthorized/i.test(msg) ||
+        /expired_oauth_token_error/i.test(msg) ||
+        /access token (has )?expired/i.test(msg) ||
+        /Failed to send MCP result/i.test(msg);
+      if (isAuthFailure) {
         console.warn(
-          `[mcp/fs-server] 401 on SSE stream for project="${projectName}" — access token likely expired, invalidating cache so the next call re-registers with a fresh token`,
+          `[mcp/fs-server] auth failure for project="${projectName}" (status=${status ?? '?'} dustErrType=${dustErrType ?? '?'}): invalidating cache so next call re-registers with a fresh token`,
         );
         void invalidate();
         return;

@@ -12,9 +12,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
 
   try {
+    console.log(`[api/mcp/ensure] requested for project="${parsed.data.projectName}"`);
     const serverId = await getFsServerId(parsed.data.projectName);
+    console.log(`[api/mcp/ensure] serverId=${serverId} project="${parsed.data.projectName}"`);
     return NextResponse.json({ serverId, projectName: parsed.data.projectName });
   } catch (e: any) {
+    console.error(`[api/mcp/ensure] failed project="${parsed.data.projectName}":`, e);
     return NextResponse.json({ error: e?.message ?? String(e) }, { status: 500 });
   }
 }

@@ -114,5 +114,9 @@ model CronRun {
   linesRemoved  Int?
   dryRun        Boolean  @default(false)
 
+  // --- live progress ---
+  phase         String?  // 'queued'|'syncing'|'branching'|'mcp'|'agent'|'diff'|'committing'|'pushing'|'done'
+  phaseMessage  String?  // short human-readable status line
+
   @@index([cronJobId])
 }

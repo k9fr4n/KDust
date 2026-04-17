@@ -62,10 +62,20 @@ export async function runCronJob(cronJobId: string): Promise<void> {
   }
 
   const run = await db.cronRun.create({
-    data: { cronJobId, status: 'running', dryRun: job.dryRun, baseBranch: job.baseBranch },
+    data: {
+      cronJobId,
+      status: 'running',
+      dryRun: job.dryRun,
+      baseBranch: job.baseBranch,
+      phase: 'queued',
+      phaseMessage: 'Starting',
+    },
   });
   const startedAt = Date.now();
   console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${job.baseBranch} mode=${job.branchMode}`);
+
+  const setPhase = (phase: string, message: string) =>
+    db.cronRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
 
   const project = job.projectPath
     ? await db.project.findFirst({ where: { name: job.projectPath } })
@@ -85,6 +95,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     // [2] Pre-run sync --------------------------------------------------------
+    await setPhase('syncing', `git fetch + reset --hard origin/${job.baseBranch}`);
     console.log(`[cron] git sync base=${job.baseBranch}`);
     const sync = await resetToBase(project.name, job.baseBranch);
     if (!sync.ok) throw new Error(`pre-sync failed: ${sync.error}\n${sync.output}`);
@@ -102,11 +113,13 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     if (protectedList.includes(branch) || protectedList.includes(job.baseBranch) && branch === job.baseBranch) {
       throw new Error(`refusing to work on protected branch "${branch}"`);
     }
+    await setPhase('branching', `Creating work branch ${branch}`);
     const co = await checkoutWorkingBranch(project.name, branch);
     if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
     console.log(`[cron] branch=${branch}`);
 
     // [4] MCP fs -------------------------------------------------------------
+    await setPhase('mcp', 'Registering fs-cli MCP server');
     let mcpServerIds: string[] | null = null;
     try {
       const id = await getFsServerId(project.name);
@@ -117,6 +130,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     // [5] Dust agent ---------------------------------------------------------
+    await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
     const convTitle = `[cron] ${job.name} @ ${new Date().toISOString()}`;
     const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds);
     const ac = new AbortController();
@@ -157,6 +171,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     // [6] Diff measurement ---------------------------------------------------
+    await setPhase('diff', 'Computing diff');
     const diff = await diffStatFromHead(project.name);
     filesChanged = diff.filesChanged;
     linesAdded = diff.linesAdded;
@@ -172,6 +187,8 @@ export async function runCronJob(cronJobId: string): Promise<void> {
         where: { id: run.id },
         data: {
           status: 'no-op',
+          phase: 'done',
+          phaseMessage: 'No changes produced',
           branch,
           filesChanged: 0,
           linesAdded: 0,
@@ -210,6 +227,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     // [8] Commit + push ------------------------------------------------------
+    await setPhase('committing', `Committing ${filesChanged} file(s)`);
     const commitMsg =
       `chore(${job.branchPrefix}): ${job.name}\n\n` +
       `Automated by KDust cron "${job.name}".\n` +
@@ -224,6 +242,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       if (protectedList.includes(branch)) {
         throw new Error(`aborting push: target branch "${branch}" is protected`);
       }
+      await setPhase('pushing', `git push origin ${branch}`);
       const push = await pushBranch(project.name, branch, job.branchMode === 'stable');
       if (!push.ok) throw new Error(`push failed: ${push.error}\n${push.output}`);
       console.log(`[cron] pushed ${branch}`);
@@ -236,6 +255,8 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       where: { id: run.id },
       data: {
         status: 'success',
+        phase: 'done',
+        phaseMessage: job.dryRun ? 'Done (dry-run, no push)' : 'Completed successfully',
         branch,
         commitSha,
         filesChanged,
@@ -288,6 +309,8 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       where: { id: run.id },
       data: {
         status: 'failed',
+        phase: 'done',
+        phaseMessage: `Failed: ${msg.slice(0, 120)}`,
         error: msg,
         branch,
         commitSha,

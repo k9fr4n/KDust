@@ -14,11 +14,13 @@ export function CronRunButton({ id, name }: { id: string; name: string }) {
     const r = await fetch(`/api/crons/${id}/run`, { method: 'POST' });
     setBusy(false);
     if (r.ok) {
-      setMsg(`Triggered "${name}". The run will appear below in a few seconds.`);
+      setMsg(`Triggered "${name}". Live status will appear below.`);
+      // Refresh immediately so the CronLiveStatus component picks up the new
+      // running CronRun row and begins polling.
       setTimeout(() => {
         router.refresh();
         setMsg(null);
-      }, 3000);
+      }, 800);
     } else {
       setMsg(`HTTP ${r.status}`);
     }

@@ -4,6 +4,7 @@ import { Pencil } from 'lucide-react';
 import { db } from '@/lib/db';
 import { CronDeleteButton } from '@/components/CronDeleteButton';
 import { CronRunButton } from '@/components/CronRunButton';
+import { CronLiveStatus } from '@/components/CronLiveStatus';
 import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,28 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         <span className="font-mono">{cron.schedule}</span> &middot; {cron.timezone} &middot; agent{' '}
         {cron.agentName ?? cron.agentSId}
       </p>
+
+      <CronLiveStatus
+        cronId={cron.id}
+        initialRun={
+          cron.runs[0]
+            ? {
+                id: cron.runs[0].id,
+                status: cron.runs[0].status,
+                phase: cron.runs[0].phase,
+                phaseMessage: cron.runs[0].phaseMessage,
+                startedAt: cron.runs[0].startedAt.toISOString(),
+                finishedAt: cron.runs[0].finishedAt ? cron.runs[0].finishedAt.toISOString() : null,
+                branch: cron.runs[0].branch,
+                commitSha: cron.runs[0].commitSha,
+                filesChanged: cron.runs[0].filesChanged,
+                linesAdded: cron.runs[0].linesAdded,
+                linesRemoved: cron.runs[0].linesRemoved,
+                dryRun: cron.runs[0].dryRun,
+              }
+            : null
+        }
+      />
 
       <section className="mb-6 grid grid-cols-2 gap-3 text-sm">
         <div><span className="text-slate-500">Project:</span> <span className="font-mono">{cron.projectPath}</span></div>

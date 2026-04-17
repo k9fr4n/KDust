@@ -1,8 +1,8 @@
 'use client';
 import { useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { FolderGit2, Pin, PinOff, Trash2 } from 'lucide-react';
+import { OpenConversationLink } from './OpenConversationLink';
 
 export type ConvSummary = {
   id: string;
@@ -62,8 +62,8 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
 
   return (
     <li className="group relative">
-      <Link
-        href={`/api/conversations/${conv.id}/open`}
+      <OpenConversationLink
+        conversationId={conv.id}
         className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
       >
         <div className="flex items-center gap-2">
@@ -83,7 +83,7 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
         <div className="text-xs text-slate-500 truncate">
           {conv.agentName ?? conv.agentSId}
         </div>
-      </Link>
+      </OpenConversationLink>
 
       <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white/90 dark:bg-slate-900/90 backdrop-blur px-1 rounded">
         <button

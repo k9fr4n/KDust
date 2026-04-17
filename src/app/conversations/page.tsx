@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { MessageSquare, Pin } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
+import { OpenConversationLink } from '@/components/OpenConversationLink';
 
 export const dynamic = 'force-dynamic';
 
@@ -160,8 +161,8 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         <ul className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-200 dark:divide-slate-800">
           {conversations.map((c) => (
             <li key={c.id}>
-              <Link
-                href={`/api/conversations/${c.id}/open`}
+              <OpenConversationLink
+                conversationId={c.id}
                 className="block px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-900"
               >
                 <div className="flex items-center gap-2">
@@ -180,7 +181,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
                   </span>
                   <span>· {c._count.messages} message(s)</span>
                 </div>
-              </Link>
+              </OpenConversationLink>
             </li>
           ))}
         </ul>

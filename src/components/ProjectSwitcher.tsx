@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { ChevronDown, FolderGit2, Check } from 'lucide-react';
 
 type Project = { id: string; name: string; branch: string };
@@ -9,7 +8,6 @@ export function ProjectSwitcher() {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
-  const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
 
   const refresh = async () => {
@@ -45,8 +43,22 @@ export function ProjectSwitcher() {
     });
     setCurrent(name);
     setOpen(false);
-    window.dispatchEvent(new CustomEvent('kdust:project-changed', { detail: { name } }));
-    router.refresh();
+    // Notify any in-page listener that wants to react WITHOUT a reload
+    // (e.g. the chat side-pane re-fetches its conversation list).
+    window.dispatchEvent(
+      new CustomEvent('kdust:project-changed', { detail: { name } }),
+    );
+    // Hard reload of the current page so every client component
+    // re-runs its useEffect data fetches with the new project scope.
+    // router.refresh() is a SOFT refresh — it re-runs server components
+    // and revalidates the RSC payload, but does NOT re-trigger client
+    // useEffects, which means data already loaded with the previous
+    // project would stay stale until manual interaction. A full reload
+    // is the only reliable cross-page guarantee that everything
+    // (conversations list, runs filter, advice slots, dashboard
+    // counters, MCP fs server handle, …) gets re-fetched against the
+    // new scope.
+    window.location.reload();
   };
 
   return (

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { MessageSquare, Plus, Send, Trash2, Wrench } from 'lucide-react';
 

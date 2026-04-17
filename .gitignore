@@ -9,6 +9,9 @@ data/*.db-journal
 *.log
 .DS_Store
 prisma/migrations/dev.db*
-projects/
-data/
+# Clones effectués par le runtime (volumes montés en prod).
+# Attention: le slash initial est indispensable pour ne pas masquer
+# accidentellement src/app/api/projects/ ni src/app/projects/.
+/projects/
+/data/
 tsconfig.tsbuildinfo

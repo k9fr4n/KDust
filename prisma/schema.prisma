@@ -93,6 +93,39 @@ model CronJob {
   dryRun             Boolean  @default(false)             // agent runs & commits locally, no push
   maxDiffLines       Int      @default(2000)              // abort push if +/- lines exceed
   protectedBranches  String   @default("main,master,develop,production,prod") // csv, never push to these
+
+  // --- advisory cron settings ---
+  // kind='automation' (default) = classic git-branch/commit/push pipeline.
+  // kind='advice'               = read-only analysis, result parsed as JSON
+  //                               and stored in ProjectAdvice; no git writes.
+  kind      String   @default("automation")
+  // Only meaningful for kind='advice'. One of:
+  //   security | performance | code_quality | improvement | documentation
+  category  String?
+  // Mandatory crons are auto-created with the project and cannot be
+  // deleted (the DELETE endpoint returns 403). User can still disable
+  // or tweak their schedule/prompt.
+  mandatory Boolean  @default(false)
+}
+
+// Latest advice points produced by weekly advisory crons, one row per
+// (projectName, category). Overwritten on each successful advice run.
+// Displayed in the "Conseils" section of the Projects dashboard.
+model ProjectAdvice {
+  id          String   @id @default(cuid())
+  projectName String
+  category    String   // security | performance | code_quality | improvement | documentation
+  // JSON-encoded array of { title, description, severity, refs? }.
+  // Parsing is deferred to the read path so a malformed response in
+  // rawOutput doesn't kill the row — see cron runner advice parser.
+  points      String
+  rawOutput   String?  // full agent text, for debugging / copy-paste
+  cronJobId   String?  // link back to the job that produced this
+  cronRunId   String?  // link back to the exact run (nullable: manual re-runs)
+  generatedAt DateTime @default(now())
+
+  @@unique([projectName, category])
+  @@index([projectName])
 }
 
 model CronRun {

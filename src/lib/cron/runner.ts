@@ -3,6 +3,8 @@ import { postToTeams, type TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
 import { getFsServerId } from '../mcp/registry';
+import { parseAdviceOutput } from '../advice/parser';
+import { CATEGORY_LABELS, type AdviceCategory } from '../advice/categories';
 import {
   parseGitRepo,
   buildGitLinks,
@@ -133,10 +135,156 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     // [2] Pre-run sync --------------------------------------------------------
+    // For advice crons we still want an up-to-date working copy so the
+    // agent analyses the latest main, but we go through a lighter path:
+    // resetToBase but no branch/commit/push. For automation crons, same
+    // call then a new working branch.
     await setPhase('syncing', `git fetch + reset --hard origin/${job.baseBranch}`);
     console.log(`[cron] git sync base=${job.baseBranch}`);
     const sync = await resetToBase(project.name, job.baseBranch);
     if (!sync.ok) throw new Error(`pre-sync failed: ${sync.error}\n${sync.output}`);
+
+    // [2b] Advice cron short-circuit: analysis only, no git writes.
+    // We still need MCP fs tools + a Dust call, but we skip branching,
+    // diffing, committing and pushing. The output is parsed as a JSON
+    // block and upserted into ProjectAdvice (one row per (project,
+    // category), overwritten each run — see docs/advice UI).
+    if (job.kind === 'advice') {
+      if (!job.category) {
+        throw new Error(`advice cron "${job.name}" has no category set`);
+      }
+      await setPhase('mcp', 'Registering fs-cli MCP server');
+      let mcpServerIds: string[] | null = null;
+      try {
+        const sid = await getFsServerId(project.name);
+        mcpServerIds = [sid];
+      } catch (e) {
+        console.warn(`[cron/advice] MCP register failed: ${(e as Error).message}`);
+      }
+
+      await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
+      const convTitle = `[advice:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
+      const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds);
+      const ac = new AbortController();
+      activeRuns.set(run.id, ac);
+      const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
+      let streamErr: string | null = null;
+      let partial = '';
+      let lastFlush = Date.now();
+      try {
+        agentText = await streamAgentReply(
+          conv.conversation,
+          conv.userMessageSId,
+          ac.signal,
+          (kind, payload) => {
+            if (kind === 'error') streamErr = String(payload);
+            if (kind === 'token') {
+              partial += payload;
+              const now = Date.now();
+              if (now - lastFlush > 500) {
+                lastFlush = now;
+                db.cronRun
+                  .update({ where: { id: run.id }, data: { output: partial } })
+                  .catch(() => {});
+              }
+            }
+          },
+        );
+      } finally {
+        clearTimeout(killTimer);
+        activeRuns.delete(run.id);
+      }
+      if (ac.signal.aborted) {
+        throw Object.assign(new Error('run aborted by user'), { aborted: true });
+      }
+      if (streamErr) throw new Error(`agent stream error: ${streamErr}`);
+      if (!agentText.trim()) throw new Error('agent returned empty response');
+
+      // Parse the JSON block. If parsing fails we still persist rawOutput
+      // (in CronRun.output) but mark the run 'failed' with a clear reason
+      // so the user can see the malformed response and iterate on the
+      // prompt. We do NOT overwrite the previous ProjectAdvice row in that
+      // case — stale-but-valid is better than empty.
+      const points = parseAdviceOutput(agentText);
+      const durationMs = Date.now() - startedAt;
+
+      if (!points) {
+        await db.cronRun.update({
+          where: { id: run.id },
+          data: {
+            status: 'failed',
+            phase: 'done',
+            phaseMessage: 'Agent response did not match JSON contract',
+            error: 'advice parser: could not extract a valid points[] block from agent output',
+            output: agentText,
+            finishedAt: new Date(),
+          },
+        });
+        await db.cronJob.update({
+          where: { id: job.id },
+          data: { lastRunAt: new Date(), lastStatus: 'failed' },
+        });
+        console.warn(`[cron/advice] parse failed job="${job.name}" (${(durationMs / 1000).toFixed(1)}s)`);
+        return;
+      }
+
+      await db.projectAdvice.upsert({
+        where: {
+          projectName_category: { projectName: project.name, category: job.category },
+        },
+        create: {
+          projectName: project.name,
+          category: job.category,
+          points: JSON.stringify(points),
+          rawOutput: agentText,
+          cronJobId: job.id,
+          cronRunId: run.id,
+        },
+        update: {
+          points: JSON.stringify(points),
+          rawOutput: agentText,
+          cronJobId: job.id,
+          cronRunId: run.id,
+          generatedAt: new Date(),
+        },
+      });
+      await db.cronRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'success',
+          phase: 'done',
+          phaseMessage: `Advice generated (${points.length} point(s))`,
+          output: agentText,
+          finishedAt: new Date(),
+        },
+      });
+      await db.cronJob.update({
+        where: { id: job.id },
+        data: { lastRunAt: new Date(), lastStatus: 'success' },
+      });
+      console.log(
+        `[cron/advice] success job="${job.name}" category=${job.category} points=${points.length} duration=${durationMs}ms`,
+      );
+      if (webhook) {
+        await postToTeams(webhook, {
+          title: `📋 KDust advice : ${CATEGORY_LABELS[job.category as AdviceCategory] ?? job.category} — ${project.name}`,
+          summary: `${points.length} recommandation(s) générée(s)`,
+          status: 'success',
+          details: points
+            .map(
+              (p, i) =>
+                `${i + 1}. [${p.severity.toUpperCase()}] ${p.title}\n   ${p.description}`,
+            )
+            .join('\n\n'),
+          facts: [
+            { name: 'Project', value: project.name },
+            { name: 'Category', value: job.category },
+            { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
+          ],
+        });
+      }
+      return; // skip the automation-push pipeline below
+    }
 
     // [3] Branch setup --------------------------------------------------------
     branch = composeBranchName(

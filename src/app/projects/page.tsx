@@ -1,7 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Button } from '@/components/Button';
-import { RefreshCw, Trash2, Plus, Folder } from 'lucide-react';
+import { RefreshCw, Trash2, Plus, Folder, ChevronRight, ChevronDown, Lightbulb } from 'lucide-react';
+import { AdviceSection } from '@/components/AdviceSection';
 
 type P = {
   id: string;
@@ -19,6 +20,10 @@ export default function ProjectsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // Per-project expanded state for the "Conseils" accordion row.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggleAdvice = (id: string) =>
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const refresh = async () => {
     const r = await fetch('/api/projects');
@@ -147,7 +152,8 @@ export default function ProjectsPage() {
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
             <tr>
-              <th className="py-2">Nom</th>
+              <th className="py-2 w-6"></th>
+              <th>Nom</th>
               <th>URL</th>
               <th>Branche</th>
               <th>Dernière sync</th>
@@ -157,7 +163,17 @@ export default function ProjectsPage() {
           </thead>
           <tbody>
             {projects.map((p) => (
-              <tr key={p.id} className="border-t border-slate-200 dark:border-slate-800">
+              <Fragment key={p.id}>
+              <tr className="border-t border-slate-200 dark:border-slate-800">
+                <td className="py-2">
+                  <button
+                    onClick={() => toggleAdvice(p.id)}
+                    className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                    title={expanded[p.id] ? 'Masquer les conseils' : 'Voir les conseils'}
+                  >
+                    {expanded[p.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                </td>
                 <td className="py-2 font-medium">
                   <span className="inline-flex items-center gap-2">
                     <Folder size={14} /> {p.name}
@@ -196,6 +212,20 @@ export default function ProjectsPage() {
                   </button>
                 </td>
               </tr>
+              {expanded[p.id] && (
+                <tr className="border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
+                  <td></td>
+                  <td colSpan={6}>
+                    <div className="text-xs text-slate-500 flex items-center gap-1.5 px-3 pt-3">
+                      <Lightbulb size={12} className="text-amber-500" />
+                      <span className="font-semibold uppercase tracking-wide">Conseils</span>
+                      <span>— analyses hebdomadaires automatiques</span>
+                    </div>
+                    <AdviceSection projectId={p.id} />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>

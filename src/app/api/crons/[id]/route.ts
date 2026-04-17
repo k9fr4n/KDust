@@ -24,6 +24,17 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
+  // Mandatory crons (auto-provisioned advice crons on project creation)
+  // cannot be deleted. User can disable them or tweak their schedule /
+  // prompt instead. See src/lib/advice/provision.ts.
+  const cron = await db.cronJob.findUnique({ where: { id }, select: { mandatory: true } });
+  if (!cron) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (cron.mandatory) {
+    return NextResponse.json(
+      { error: 'cron obligatoire: suppression interdite (vous pouvez le désactiver)' },
+      { status: 403 },
+    );
+  }
   await db.cronJob.delete({ where: { id } });
   await reloadScheduler();
   return NextResponse.json({ ok: true });

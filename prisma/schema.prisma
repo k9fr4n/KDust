@@ -36,11 +36,13 @@ model Conversation {
   agentName            String?
   title                String
   projectName          String?    // nom du projet (tenant) auquel rattacher la conv ; null = global
+  pinned               Boolean    @default(false)
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   messages             Message[]
 
   @@index([projectName])
+  @@index([pinned])
 }
 
 model Message {

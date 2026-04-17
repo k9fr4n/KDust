@@ -10,7 +10,7 @@ export async function GET() {
   const project = await getCurrentProjectName();
   const conversations = await db.conversation.findMany({
     where: project ? { projectName: project } : undefined,
-    orderBy: { updatedAt: 'desc' },
+    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
     select: {
       id: true,
       title: true,
@@ -18,6 +18,7 @@ export async function GET() {
       agentSId: true,
       updatedAt: true,
       projectName: true,
+      pinned: true,
     },
     take: 100,
   });

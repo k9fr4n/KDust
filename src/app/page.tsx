@@ -11,6 +11,7 @@ import { db } from '@/lib/db';
 import { listProjects, PROJECTS_ROOT } from '@/lib/projects';
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
+import { ConversationCard } from '@/components/ConversationCard';
 import { nextRunAt } from '@/lib/cron/validator';
 
 export const dynamic = 'force-dynamic';
@@ -42,7 +43,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       }),
       db.conversation.findMany({
         where: { projectName: current.name },
-        orderBy: { updatedAt: 'desc' },
+        orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
         take: 5,
       }),
       db.cronJob.findMany({
@@ -163,7 +164,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     db.cronJob.count(),
     db.conversation.count(),
     listProjects(),
-    db.conversation.findMany({ orderBy: { updatedAt: 'desc' }, take: 5 }),
+    db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 5 }),
     db.cronJob.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),
   ]);
 
@@ -255,29 +256,18 @@ function RecentConvs({ items }: { items: Array<any> }) {
   return (
     <ul className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-200 dark:divide-slate-800">
       {items.map((c) => (
-        <li key={c.id}>
-          <Link
-            href={`/chat?id=${c.id}`}
-            className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium truncate flex-1">{c.title}</span>
-              {c.projectName ? (
-                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-brand-300 text-brand-700 dark:text-brand-300 dark:border-brand-700 bg-brand-50 dark:bg-brand-950/30 font-mono">
-                  <FolderGit2 size={10} /> {c.projectName}
-                </span>
-              ) : (
-                <span className="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 italic">
-                  no project
-                </span>
-              )}
-              <span className="text-xs text-slate-400 shrink-0">{fmtRel(c.updatedAt)}</span>
-            </div>
-            <div className="text-xs text-slate-500 truncate">
-              {c.agentName ?? c.agentSId}
-            </div>
-          </Link>
-        </li>
+        <ConversationCard
+          key={c.id}
+          conv={{
+            id: c.id,
+            title: c.title,
+            agentName: c.agentName ?? null,
+            agentSId: c.agentSId,
+            projectName: c.projectName ?? null,
+            pinned: !!c.pinned,
+            updatedAt: c.updatedAt,
+          }}
+        />
       ))}
     </ul>
   );

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { nextRunAt } from '@/lib/cron/validator';
 import { getCurrentProjectName } from '@/lib/current-project';
+import { RunNowButton } from '@/components/RunNowButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,7 +65,9 @@ export default async function CronsPage() {
                   )}
                   {c.lastStatus && <span className="ml-2 text-xs text-slate-500">({c.lastStatus})</span>}
                 </td>
-                <td></td>
+                <td className="text-right">
+                  <RunNowButton cronId={c.id} />
+                </td>
               </tr>
             ))}
           </tbody>

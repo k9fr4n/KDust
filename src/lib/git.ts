@@ -75,16 +75,83 @@ export async function cloneOrPull(
   }
 
   if (!exists) {
-    // clone frais (supprime un dossier existant non-git au passage)
+    // Clone frais (supprime un dossier existant non-git au passage).
     try {
       await rm(target, { recursive: true, force: true });
     } catch {
       /* ignore */
     }
-    const r = await runGit(['clone', '--branch', branch, '--single-branch', gitUrl, target]);
+
+    // Happy path: the requested branch exists upstream.
+    let r = await runGit(['clone', '--branch', branch, '--single-branch', gitUrl, target]);
+    let combined = r.out;
+
+    // Tolerate empty / freshly-created remotes (no branch yet) and repos
+    // whose default branch differs from the one requested (e.g. master vs
+    // main). We detect the specific git error and retry with a plain clone
+    // (no --branch), then position HEAD onto the desired branch locally so
+    // the first commit will create it.
+    //
+    // Error string we catch: "Remote branch <x> not found in upstream origin"
+    // or "warning: You appear to have cloned an empty repository."
+    const branchMissing = /Remote branch .* not found in upstream origin/i.test(r.out);
+    if (r.code !== 0 && branchMissing) {
+      // Ensure target is clean before retrying (the failed clone may have
+      // left a partial directory behind).
+      try {
+        await rm(target, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+      const r2 = await runGit(['clone', gitUrl, target]);
+      combined += `\n$ git clone ${gitUrl} ${target}\n${r2.out}`;
+      if (r2.code !== 0) {
+        return {
+          ok: false,
+          output: combined,
+          error: `git clone exited ${r2.code}`,
+        };
+      }
+
+      // Two sub-cases:
+      //  a) Empty repo: no HEAD at all → set the symbolic ref so that the
+      //     first commit lands on <branch>. `git symbolic-ref` works even
+      //     when no commits exist yet (unlike `git checkout`).
+      //  b) Non-empty repo, different default branch: HEAD points to
+      //     something (master, trunk…). We create/switch to <branch> off
+      //     that current HEAD via `checkout -B` so the working tree stays
+      //     usable immediately.
+      const headCheck = await runGit(['rev-parse', '--verify', 'HEAD'], target);
+      combined += `\n$ git rev-parse --verify HEAD\n${headCheck.out}`;
+      if (headCheck.code !== 0) {
+        // (a) empty repo
+        const sym = await runGit(['symbolic-ref', 'HEAD', `refs/heads/${branch}`], target);
+        combined += `\n$ git symbolic-ref HEAD refs/heads/${branch}\n${sym.out}`;
+        if (sym.code !== 0) {
+          return {
+            ok: false,
+            output: combined,
+            error: `unable to position HEAD on empty repo (${sym.code})`,
+          };
+        }
+      } else {
+        // (b) repo has commits on another branch
+        const co = await runGit(['checkout', '-B', branch], target);
+        combined += `\n$ git checkout -B ${branch}\n${co.out}`;
+        if (co.code !== 0) {
+          return {
+            ok: false,
+            output: combined,
+            error: `unable to create branch ${branch} (${co.code})`,
+          };
+        }
+      }
+      return { ok: true, output: combined };
+    }
+
     return {
       ok: r.code === 0,
-      output: r.out,
+      output: combined,
       error: r.code === 0 ? undefined : `git clone exited ${r.code}`,
     };
   }

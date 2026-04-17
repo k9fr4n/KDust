@@ -331,26 +331,3 @@ export default function ChatPage() {
     </div>
   );
 }
-   <form onSubmit={send} className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
-          <textarea
-            className={field + ' resize-none'}
-            rows={2}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                (e.target as HTMLTextAreaElement).form?.requestSubmit();
-              }
-            }}
-            placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
-            disabled={streaming || !agentSId}
-          />
-          <Button type="submit" disabled={streaming || !draft.trim() || !agentSId}>
-            <Send size={14} /> {streaming ? 'Streaming…' : 'Send'}
-          </Button>
-        </form>
-      </section>
-    </div>
-  );
-}

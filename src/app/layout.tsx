@@ -1,4 +1,9 @@
 import './globals.css';
+// Syntax-highlighting theme for code blocks rendered by <MessageMarkdown>
+// (rehype-highlight + highlight.js). github-dark stays readable on the
+// dark pre background we apply in MessageMarkdown.tsx regardless of
+// the app's light/dark mode.
+import 'highlight.js/styles/github-dark.css';
 import type { Metadata } from 'next';
 import { Nav } from '@/components/Nav';
 

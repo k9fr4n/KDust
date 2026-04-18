@@ -2,6 +2,7 @@
 import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
+import { MessageMarkdown } from '@/components/MessageMarkdown';
 import {
   MessageSquare,
   Plus,
@@ -771,13 +772,22 @@ function ChatPageInner() {
                     <div
                       className={
                         isUser
-                          ? 'px-3 py-2 rounded-2xl rounded-br-sm text-sm whitespace-pre-wrap bg-blue-600 text-white shadow-sm'
+                          ? 'px-3 py-2 rounded-2xl rounded-br-sm text-sm bg-blue-600 text-white shadow-sm'
                           : m.role === 'system'
-                            ? 'px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic'
-                            : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm whitespace-pre-wrap bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
+                            ? 'px-3 py-2 rounded-2xl text-sm bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
+                            : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
                       }
                     >
-                      {m.content}
+                      {m.role === 'system' ? (
+                        // System messages are short diagnostic strings
+                        // (errors, notices). Markdown rendering would
+                        // risk mangling them; we keep the plain <pre>.
+                        m.content
+                      ) : (
+                        <MessageMarkdown tone={isUser ? 'user' : 'agent'}>
+                          {m.content}
+                        </MessageMarkdown>
+                      )}
                     </div>
                     <div
                       className={`text-[10px] text-slate-400 px-1 ${isUser ? 'text-right' : 'text-left'}`}
@@ -827,8 +837,8 @@ function ChatPageInner() {
 
           {streamedText && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm whitespace-pre-wrap bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
-                {streamedText}
+              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
+                <MessageMarkdown tone="agent">{streamedText}</MessageMarkdown>
                 <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
               </div>
             </div>

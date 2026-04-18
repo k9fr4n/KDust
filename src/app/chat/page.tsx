@@ -1,8 +1,8 @@
 'use client';
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { MessageSquare, Plus, Send, Square, Trash2, Wrench } from 'lucide-react';
+import { MessageSquare, Plus, Send, Square, Trash2, Wrench, Clock } from 'lucide-react';
 
 type Agent = { sId: string; name: string };
 type ConvSummary = {
@@ -12,8 +12,69 @@ type ConvSummary = {
   agentSId: string;
   updatedAt: string;
   projectName: string | null;
+  /** Optional \u2014 only present if the API returns it; used for tooltips. */
+  createdAt?: string;
+  /** Optional \u2014 count of messages for the sidebar badge. */
+  messageCount?: number;
 };
 type Msg = { id: string; role: 'user' | 'agent' | 'system'; content: string; createdAt?: string };
+
+/**
+ * Short relative-time label ("just now", "3m", "2h", "yesterday",
+ * "Mon", "12 Mar"). Kept intentionally terse for the sidebar. The
+ * full timestamp remains accessible via the `title` attribute on
+ * every element that uses this helper.
+ */
+function relTime(iso?: string | null): string {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.round(ms / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.round(h / 24);
+  if (d === 1) return 'yesterday';
+  if (d < 7) return `${d}d`;
+  const dt = new Date(iso);
+  const sameYear = dt.getFullYear() === new Date().getFullYear();
+  return dt.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+/** Short HH:MM for message bubbles. */
+function clockTime(iso?: string | null): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Full human label for tooltips. */
+function fullTime(iso?: string | null): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString();
+}
+
+/** Elapsed seconds \u2192 "1m 23s" / "45s" / "2h 03m". */
+function elapsed(sinceIso?: string | null, nowMs?: number): string {
+  if (!sinceIso) return '';
+  const from = new Date(sinceIso).getTime();
+  if (!Number.isFinite(from)) return '';
+  const diff = Math.max(0, Math.round(((nowMs ?? Date.now()) - from) / 1000));
+  if (diff < 60) return `${diff}s`;
+  const m = Math.floor(diff / 60);
+  const s = diff % 60;
+  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${String(m % 60).padStart(2, '0')}m`;
+}
 
 export default function ChatPage() {
   // Suspense boundary required by Next.js 15 because ChatPageInner calls useSearchParams().
@@ -44,6 +105,22 @@ function ChatPageInner() {
   // as long as the Dust call is still producing tokens in the background.
   const [serverStreaming, setServerStreaming] = useState(false);
   const [serverStreamingSince, setServerStreamingSince] = useState<string | null>(null);
+  // When the *local* SSE read loop starts, we record the wall-clock
+  // time so the status strip can display a live "1m 23s" counter,
+  // mirroring what serverStreamingSince does for detached streams.
+  const [localStreamStartedAt, setLocalStreamStartedAt] = useState<string | null>(null);
+  // Heartbeat tick (ms) used to re-render the relative-time labels
+  // (sidebar "2h", status strip elapsed, message "just now"). Cheap
+  // global re-render, gated so it only ticks while something is live.
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    // Always tick once a minute for sidebar/relative labels. Tick
+    // every second when a stream is live for the elapsed counter.
+    const anyStreaming = streaming || serverStreaming;
+    const period = anyStreaming ? 1000 : 60_000;
+    const id = setInterval(() => setNowTick(Date.now()), period);
+    return () => clearInterval(id);
+  }, [streaming, serverStreaming]);
   // AbortController for the current SSE fetch so the Stop button can
   // tear the client read loop down immediately, in addition to asking
   // Dust (via /cancel) to stop generating server-side.
@@ -233,6 +310,7 @@ function ChatPageInner() {
 
   const consumeStream = async (convId: string, userMessageSId: string) => {
     setStreaming(true);
+    setLocalStreamStartedAt(new Date().toISOString());
     // This tab is actively consuming the stream → mirror the server
     // flag so the banner/dot stays visible if the user briefly scrolls
     // up past the live bubble.
@@ -290,6 +368,7 @@ function ChatPageInner() {
       setError(e?.message ?? String(e));
     } finally {
       setStreaming(false);
+      setLocalStreamStartedAt(null);
       // loadConv() above will refresh serverStreaming from the API; if the
       // stream wrapped up before we finished consuming, we still want the
       // banner gone immediately.
@@ -397,11 +476,23 @@ function ChatPageInner() {
               <button
                 onClick={() => loadConv(c.id)}
                 className="flex-1 text-left px-2 py-2 min-w-0"
+                title={`Last updated ${fullTime(c.updatedAt)}`}
               >
-                <div className="text-sm font-medium truncate">{c.title}</div>
+                <div className="flex items-baseline gap-2">
+                  <div className="text-sm font-medium truncate flex-1">{c.title}</div>
+                  <span
+                    // `nowTick` is read so the relative label stays
+                    // fresh. Kept on the same line as the title for
+                    // density; switches to "just now", "5m", "2h"\u2026
+                    className="text-[10px] text-slate-400 shrink-0"
+                    data-tick={nowTick}
+                  >
+                    {relTime(c.updatedAt)}
+                  </span>
+                </div>
                 <div className="text-xs text-slate-500 truncate">
                   {c.agentName ?? c.agentSId}
-                  {c.projectName && <span className="ml-1">· {c.projectName}</span>}
+                  {c.projectName && <span className="ml-1">\u00b7 {c.projectName}</span>}
                 </div>
               </button>
               <button
@@ -476,23 +567,107 @@ function ChatPageInner() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={
-                  m.role === 'user'
-                    ? 'max-w-[80%] px-3 py-2 rounded-2xl rounded-br-sm text-sm whitespace-pre-wrap bg-blue-600 text-white shadow-sm'
-                    : 'max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm whitespace-pre-wrap bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
-                }
-              >
-                {m.content}
-              </div>
+        {/* Conversation info strip \u2014 visible only when a conversation is
+            loaded. Surfaces timestamps and counts that users repeatedly
+            asked for (no horodatage at all before). */}
+        {currentId && messages.length > 0 && (() => {
+          const first = messages[0]?.createdAt;
+          const last = messages[messages.length - 1]?.createdAt;
+          const currentAgent = agents.find((a) => a.sId === agentSId);
+          return (
+            <div className="px-3 py-1.5 text-[11px] border-b border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="inline-flex items-center gap-1">
+                <MessageSquare size={11} />
+                {messages.length} message{messages.length > 1 ? 's' : ''}
+              </span>
+              {currentAgent && (
+                <span>\u00b7 agent <b className="text-slate-700 dark:text-slate-300">{currentAgent.name}</b></span>
+              )}
+              {first && (
+                <span title={fullTime(first)}>
+                  \u00b7 started {relTime(first)}
+                </span>
+              )}
+              {last && last !== first && (
+                <span title={fullTime(last)}>
+                  \u00b7 last message {relTime(last)}
+                </span>
+              )}
+              <span
+                // Invisible span keeping the reactive dep on nowTick
+                // so the relative labels refresh without a manual
+                // state read.
+                className="hidden"
+                data-tick={nowTick}
+              />
             </div>
-          ))}
+          );
+        })()}
+
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
+          {messages.map((m, i) => {
+            const prev = i > 0 ? messages[i - 1] : null;
+            // Day separator when the day changes between consecutive
+            // messages (or at the very top). Works for missing
+            // createdAt by simply skipping the separator.
+            const showDay =
+              !!m.createdAt &&
+              (!prev?.createdAt ||
+                new Date(m.createdAt).toDateString() !==
+                  new Date(prev.createdAt).toDateString());
+            const isUser = m.role === 'user';
+            const roleLabel = isUser
+              ? 'You'
+              : m.role === 'system'
+                ? 'System'
+                : (agents.find((a) => a.sId === agentSId)?.name ?? 'Agent');
+            return (
+              <Fragment key={m.id}>
+                {showDay && (
+                  <div className="flex justify-center my-1">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                      {new Date(m.createdAt!).toLocaleDateString(undefined, {
+                        weekday: 'short',
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </span>
+                  </div>
+                )}
+                <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
+                    <div
+                      className={
+                        isUser
+                          ? 'px-3 py-2 rounded-2xl rounded-br-sm text-sm whitespace-pre-wrap bg-blue-600 text-white shadow-sm'
+                          : m.role === 'system'
+                            ? 'px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic'
+                            : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm whitespace-pre-wrap bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
+                      }
+                    >
+                      {m.content}
+                    </div>
+                    <div
+                      className={`text-[10px] text-slate-400 px-1 ${isUser ? 'text-right' : 'text-left'}`}
+                      data-tick={nowTick}
+                    >
+                      <span className="font-medium">{roleLabel}</span>
+                      {m.createdAt && (
+                        <span title={fullTime(m.createdAt)}>
+                          {' \u00b7 '}
+                          {clockTime(m.createdAt)}
+                          <span className="ml-1 text-slate-300 dark:text-slate-600">
+                            ({relTime(m.createdAt)})
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </Fragment>
+            );
+          })}
 
           {toolCalls.length > 0 && (
             <div className="flex flex-col gap-1">
@@ -565,19 +740,32 @@ function ChatPageInner() {
                 }`}
               />
             </span>
-            <span className="flex-1">
+            <span className="flex-1" data-tick={nowTick}>
               {streaming ? (
-                'Streaming live…'
+                <>
+                  <Clock size={11} className="inline-block mb-0.5 mr-1" />
+                  Streaming live
+                  {localStreamStartedAt && (
+                    <>
+                      {' '}· elapsed{' '}
+                      <b>{elapsed(localStreamStartedAt, nowTick)}</b>
+                    </>
+                  )}
+                </>
               ) : (
                 <>
+                  <Clock size={11} className="inline-block mb-0.5 mr-1" />
                   Agent is still replying in the background
                   {serverStreamingSince && (
                     <>
                       {' '}· started{' '}
-                      {new Date(serverStreamingSince).toLocaleTimeString()}
+                      <span title={fullTime(serverStreamingSince)}>
+                        {new Date(serverStreamingSince).toLocaleTimeString()}
+                      </span>
+                      {' '}({elapsed(serverStreamingSince, nowTick)})
                     </>
                   )}
-                  . The reply will appear automatically when it’s ready.
+                  . The reply will appear automatically when it\u2019s ready.
                 </>
               )}
             </span>

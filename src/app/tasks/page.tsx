@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Clock } from 'lucide-react';
+import { Clock, ChevronUp, ChevronDown } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
@@ -7,54 +7,94 @@ import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 
-type Kind = 'all' | 'automation' | 'advice';
+/**
+ * UI-facing task kinds. `audit` is the v5 display name for DB
+ * `kind='advice'`; URLs accept both for back-compat (aliased below).
+ */
+type UiKind = 'all' | 'automation' | 'audit';
 type EnabledFlag = 'all' | 'on' | 'off';
 type Status = 'all' | 'success' | 'failed' | 'aborted' | 'running' | 'never';
+type SortKey =
+  | 'name'
+  | 'kind'
+  | 'agent'
+  | 'project'
+  | 'enabled'
+  | 'lastStatus'
+  | 'lastRun';
+type SortDir = 'asc' | 'desc';
 
 type SearchProps = {
   searchParams?: Promise<{
     q?: string;
-    kind?: Kind;
+    kind?: string;
     enabled?: EnabledFlag;
     status?: Status;
+    sort?: string;
+    dir?: SortDir;
     limit?: string;
   }>;
 };
 
+/** Accept both `audit` (v5) and legacy `advice`; normalise to UI kind. */
+function normaliseKind(raw?: string): UiKind {
+  if (raw === 'automation') return 'automation';
+  if (raw === 'audit' || raw === 'advice') return 'audit';
+  return 'all';
+}
+/** Map the UI kind back to DB `Task.kind` for filtering. */
+function uiKindToDb(k: UiKind): string | null {
+  if (k === 'audit') return 'advice';
+  if (k === 'automation') return 'automation';
+  return null;
+}
+const SORT_KEYS: SortKey[] = [
+  'name', 'kind', 'agent', 'project', 'enabled', 'lastStatus', 'lastRun',
+];
+function normaliseSort(raw?: string): SortKey {
+  return (SORT_KEYS as string[]).includes(raw ?? '') ? (raw as SortKey) : 'lastRun';
+}
+
 /**
- * /tasks — list of every cron with search + filter pills.
+ * /tasks — unified list of every cron with search + filters + sort.
  *
  * Query string (all optional):
  *   ?q=<text>            substring match on name (case-insensitive)
- *   ?kind=automation|advice
+ *   ?kind=automation|audit   (legacy `advice` also accepted)
  *   ?enabled=on|off
  *   ?status=success|failed|aborted|running|never  (last run)
+ *   ?sort=name|kind|agent|project|enabled|lastStatus|lastRun  (default: lastRun)
+ *   ?dir=asc|desc                                              (default: desc)
  *   ?limit=<n>           default 200, max 500
  *
- * Scope: NO project filter. Every task across every project is shown
- * in a single unified list — per-project views remain available on
- * /projects/:id.
+ * Scope: NO project filter. Every task across every project shown in
+ * a single unified list — per-project views remain on /projects/:id.
  */
 export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const cookieProject = await getCurrentProjectName();
   const q = (sp.q ?? '').trim();
-  const kind: Kind = sp.kind ?? 'all';
+  const kind: UiKind = normaliseKind(sp.kind);
   const enabled: EnabledFlag = sp.enabled ?? 'all';
   const status: Status = sp.status ?? 'all';
+  const sort: SortKey = normaliseSort(sp.sort);
+  const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '200', 10) || 200));
 
   const where: Prisma.TaskWhereInput = {};
   if (cookieProject) where.projectPath = cookieProject;
   if (q) where.name = { contains: q };
-  if (kind !== 'all') where.kind = kind;
+  const dbKind = uiKindToDb(kind);
+  if (dbKind) where.kind = dbKind;
   if (enabled === 'on') where.enabled = true;
   else if (enabled === 'off') where.enabled = false;
 
   const tasks = await db.task.findMany({
     where,
-    orderBy: [{ kind: 'asc' }, { createdAt: 'desc' }],
-    take: limit,
+    // Fetch a stable superset; final ordering is applied in-memory
+    // because several sort keys (lastStatus, lastRun) depend on the
+    // last TaskRun row. `take: limit` is applied AFTER the sort.
+    orderBy: [{ createdAt: 'desc' }],
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 1 } },
   });
 
@@ -67,26 +107,83 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     return last.status === status;
   });
 
+  // In-memory sort. Each key has a stable tiebreaker on `name asc`
+  // so the UI is deterministic when values collide.
+  const mult = dir === 'asc' ? 1 : -1;
+  const getLastRun = (c: (typeof filtered)[number]) =>
+    c.runs[0]?.finishedAt ?? c.runs[0]?.startedAt ?? null;
+  const cmp = (
+    a: (typeof filtered)[number],
+    b: (typeof filtered)[number],
+  ): number => {
+    let r = 0;
+    switch (sort) {
+      case 'name': r = a.name.localeCompare(b.name); break;
+      case 'kind': r = a.kind.localeCompare(b.kind); break;
+      case 'agent':
+        r = (a.agentName ?? a.agentSId).localeCompare(b.agentName ?? b.agentSId);
+        break;
+      case 'project': r = a.projectPath.localeCompare(b.projectPath); break;
+      case 'enabled':
+        r = Number(a.enabled) - Number(b.enabled); break;
+      case 'lastStatus':
+        r = (a.runs[0]?.status ?? '').localeCompare(b.runs[0]?.status ?? '');
+        break;
+      case 'lastRun': {
+        const ta = getLastRun(a)?.getTime() ?? 0;
+        const tb = getLastRun(b)?.getTime() ?? 0;
+        r = ta - tb;
+        break;
+      }
+    }
+    if (r === 0) r = a.name.localeCompare(b.name);
+    return r * mult;
+  };
+  filtered.sort(cmp);
+  const paged = filtered.slice(0, limit);
+
   const runningIds = new Set(
-    filtered.filter((c) => c.runs[0]?.status === 'running').map((c) => c.id),
+    paged.filter((c) => c.runs[0]?.status === 'running').map((c) => c.id),
   );
 
-  const buildHref = (patch: Partial<{ q: string; kind: Kind; enabled: EnabledFlag; status: Status }>) => {
+  const buildHref = (patch: Partial<{
+    q: string;
+    kind: UiKind;
+    enabled: EnabledFlag;
+    status: Status;
+    sort: SortKey;
+    dir: SortDir;
+  }>) => {
     const qs = new URLSearchParams();
     const merged = {
       q: patch.q ?? q,
       kind: patch.kind ?? kind,
       enabled: patch.enabled ?? enabled,
       status: patch.status ?? status,
+      sort: patch.sort ?? sort,
+      dir: patch.dir ?? dir,
     };
     if (merged.q) qs.set('q', merged.q);
     if (merged.kind && merged.kind !== 'all') qs.set('kind', merged.kind);
     if (merged.enabled && merged.enabled !== 'all') qs.set('enabled', merged.enabled);
     if (merged.status && merged.status !== 'all') qs.set('status', merged.status);
+    // Only surface sort in the URL when it differs from the default
+    // (lastRun desc) so pristine links stay short.
+    if (merged.sort !== 'lastRun') qs.set('sort', merged.sort);
+    if (merged.dir !== 'desc') qs.set('dir', merged.dir);
     return `/tasks${qs.toString() ? `?${qs}` : ''}`;
   };
+  /** Build the href for a column header click: flip dir on same col, else asc/desc default. */
+  const sortHref = (col: SortKey) => {
+    if (sort === col) return buildHref({ dir: dir === 'asc' ? 'desc' : 'asc' });
+    // Sensible defaults per column: text asc, dates desc.
+    const defaultDir: SortDir =
+      col === 'lastRun' || col === 'lastStatus' ? 'desc' : 'asc';
+    return buildHref({ sort: col, dir: defaultDir });
+  };
   const hasActiveFilter =
-    !!q || kind !== 'all' || enabled !== 'all' || status !== 'all';
+    !!q || kind !== 'all' || enabled !== 'all' || status !== 'all' ||
+    sort !== 'lastRun' || dir !== 'desc';
 
   return (
     <div className="w-full">
@@ -100,7 +197,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             </span>
           )}
         </h1>
-        <span className="text-sm text-slate-500 ml-auto">{filtered.length} shown</span>
+        <span className="text-sm text-slate-500 ml-auto">{paged.length} shown</span>
         <Link
           href="/tasks/new"
           className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"
@@ -121,6 +218,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         {kind !== 'all' && <input type="hidden" name="kind" value={kind} />}
         {enabled !== 'all' && <input type="hidden" name="enabled" value={enabled} />}
         {status !== 'all' && <input type="hidden" name="status" value={status} />}
+        {sort !== 'lastRun' && <input type="hidden" name="sort" value={sort} />}
+        {dir !== 'desc' && <input type="hidden" name="dir" value={dir} />}
         <button
           type="submit"
           className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
@@ -142,7 +241,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <FilterLabel>Kind:</FilterLabel>
         <Link href={buildHref({ kind: 'all' })} className={pillCls(kind === 'all')}>all</Link>
         <Link href={buildHref({ kind: 'automation' })} className={pillCls(kind === 'automation')}>automation</Link>
-        <Link href={buildHref({ kind: 'advice' })} className={pillCls(kind === 'advice')}>advice</Link>
+        <Link href={buildHref({ kind: 'audit' })} className={pillCls(kind === 'audit')}>audit</Link>
       </div>
 
       {/* Enabled */}
@@ -164,28 +263,30 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <Link href={buildHref({ status: 'never' })} className={pillCls(status === 'never')}>never ran</Link>
       </div>
 
-      {filtered.length === 0 ? (
+      {paged.length === 0 ? (
         <p className="text-slate-500 text-sm">No cron matches the filters.</p>
       ) : (
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
             <tr>
-              <th className="py-2">Name</th>
-              <th>Kind</th>
-              <th>Schedule</th>
-              <th>Agent</th>
-              <th>Project</th>
-              <th>Next run</th>
-              <th>Enabled</th>
-              <th>Running</th>
-              <th>Last result</th>
+              <SortableTh col="name"       sort={sort} dir={dir} href={sortHref('name')}>Name</SortableTh>
+              <SortableTh col="kind"       sort={sort} dir={dir} href={sortHref('kind')}>Kind</SortableTh>
+              <SortableTh col="agent"      sort={sort} dir={dir} href={sortHref('agent')}>Agent</SortableTh>
+              <SortableTh col="project"    sort={sort} dir={dir} href={sortHref('project')}>Project</SortableTh>
+              <SortableTh col="enabled"    sort={sort} dir={dir} href={sortHref('enabled')}>Enabled</SortableTh>
+              <th className="py-2">Running</th>
+              <SortableTh col="lastStatus" sort={sort} dir={dir} href={sortHref('lastStatus')}>Last status</SortableTh>
+              <SortableTh col="lastRun"    sort={sort} dir={dir} href={sortHref('lastRun')}>Last run</SortableTh>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((c) => {
+            {paged.map((c) => {
               const isRunning = runningIds.has(c.id);
               const last = c.runs[0];
+              // Display `audit` instead of the stored DB value `advice`.
+              const kindLabel = c.kind === 'advice' ? 'audit' : c.kind;
+              const isAudit = c.kind === 'advice';
               return (
                 <tr key={c.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="py-2 font-medium">
@@ -205,13 +306,13 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                     <span
                       className={
                         'inline-block px-1.5 py-0.5 rounded text-[10px] ' +
-                        (c.kind === 'advice'
+                        (isAudit
                           ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
                           : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300')
                       }
                     >
-                      {c.kind}
-                      {c.kind === 'advice' && c.category ? ` · ${c.category}` : ''}
+                      {kindLabel}
+                      {isAudit && c.category ? ` · ${c.category}` : ''}
                     </span>
                   </td>
                   <td className="text-xs">{c.agentName ?? c.agentSId}</td>
@@ -263,11 +364,13 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                     ) : (
                       <span className="text-xs text-slate-400">-</span>
                     )}
-                    {last?.finishedAt && (
-                      <span className="ml-2 text-xs text-slate-400">
-                        {new Date(last.finishedAt).toLocaleString()}
-                      </span>
-                    )}
+                  </td>
+                  <td className="text-xs text-slate-500 whitespace-nowrap">
+                    {last?.finishedAt
+                      ? new Date(last.finishedAt).toLocaleString()
+                      : last?.startedAt
+                      ? new Date(last.startedAt).toLocaleString()
+                      : '—'}
                   </td>
                   <td className="text-right">
                     <RunNowButton cronId={c.id} />
@@ -293,4 +396,48 @@ function pillCls(active: boolean) {
 
 function FilterLabel({ children }: { children: React.ReactNode }) {
   return <span className="text-slate-500 self-center font-semibold">{children}</span>;
+}
+
+/**
+ * Clickable <th> for server-rendered column sorting. Toggles
+ * direction when the user clicks the active column, otherwise jumps
+ * to the column's default direction (defined in sortHref()).
+ */
+function SortableTh({
+  col,
+  sort,
+  dir,
+  href,
+  children,
+}: {
+  col: SortKey;
+  sort: SortKey;
+  dir: SortDir;
+  href: string;
+  children: React.ReactNode;
+}) {
+  const active = sort === col;
+  return (
+    <th className="py-2">
+      <Link
+        href={href}
+        className={
+          'inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-200 ' +
+          (active ? 'text-slate-700 dark:text-slate-200 font-semibold' : '')
+        }
+        aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        {children}
+        {active ? (
+          dir === 'asc' ? (
+            <ChevronUp size={12} />
+          ) : (
+            <ChevronDown size={12} />
+          )
+        ) : (
+          <span className="inline-block w-3" />
+        )}
+      </Link>
+    </th>
+  );
 }

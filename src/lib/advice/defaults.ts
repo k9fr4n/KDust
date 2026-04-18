@@ -54,7 +54,7 @@ export async function ensureBuiltinsSeeded(): Promise<void> {
   // look like the legacy default (builtIn=true on one of the legacy keys).
   // We:
   //   (a) force-disable the legacy default rows + demote builtIn=false
-  //       so /settings/advice shows them greyed out and the user can
+  //       so /settings/audits shows them greyed out and the user can
   //       delete them manually if they want;
   //   (b) delete every materialised advice Task for those legacy keys
   //       (they are all mandatory → regular DELETE would refuse, so we

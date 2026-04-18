@@ -107,7 +107,7 @@ export function AdviceSection({
     return (
       <p className="text-xs italic text-slate-500 p-3">
         No category enabled. Head to{' '}
-        <a href="/settings/advice" className="underline">
+        <a href="/settings/audits" className="underline">
           Settings › Advice
         </a>
         .

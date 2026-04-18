@@ -40,7 +40,7 @@ export default function SettingsIndex() {
       accent: 'text-teal-600 dark:text-teal-400',
     },
     {
-      href: '/settings/advice',
+      href: '/settings/audits',
       title: 'Audit Categories',
       description:
         'Weekly audit cron templates: prompts, schedules, add/remove categories.',

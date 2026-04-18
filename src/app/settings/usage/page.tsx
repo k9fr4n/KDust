@@ -520,7 +520,7 @@ export default async function UsagePage({
           href="/settings"
           className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
         >
-          <ArrowLeft size={14} /> Back-office
+          <ArrowLeft size={14} /> Settings
         </Link>
         <div className="mt-2 flex flex-wrap items-start gap-3">
           <h1 className="text-2xl font-bold flex items-center gap-2">

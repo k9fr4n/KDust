@@ -165,7 +165,7 @@ export default function AdviceSettingsPage() {
           href="/settings"
           className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
         >
-          <ArrowLeft size={14} /> Back-office
+          <ArrowLeft size={14} /> Settings
         </Link>
         <h1 className="text-2xl font-bold mt-2 flex items-center gap-2">
           <Lightbulb size={22} className="text-amber-500" /> Audit Categories

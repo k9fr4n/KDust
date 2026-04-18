@@ -1,83 +1,62 @@
 /**
- * Extract the strict JSON block from the agent's raw output and
- * normalise it to the shape the UI expects. Lenient on the envelope
- * (accepts both fenced ```json ... ``` and naked {...}) but strict on
- * the shape: we discard anything that doesn't match.
+ * Extract the strict JSON block from the agent's raw output (v5
+ * contract) and normalise it to the shape the UI expects.
+ *
+ * v5 format (one task per category):
+ *   {
+ *     "version": 5,
+ *     "category": "security",
+ *     "score": 0..100,
+ *     "notes": "...",
+ *     "points": [ { rank, title, description, severity, refs? } ]  // max 5
+ *   }
+ *
+ * Older v3 / v4 payloads are NOT handled: the seeder wipes legacy
+ * rows, and any freshly-run task uses the v5 contract.
  */
 
-export type AdvicePoint = {
-  /** 1-based rank inferred from array order (or explicit `rank` field). */
+export type AuditPoint = {
+  /** 1-based rank within the category (max 5). */
   rank: number;
-  /**
-   * Category tag on the point itself. Starting with the v4 contract
-   * every point carries its category (security, performance, …) so
-   * the UI can group / filter without the parent row's category.
-   * null for legacy payloads parsed from v3 rows.
-   */
-  category: string | null;
   title: string;
   description: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   refs?: string[];
 };
 
-export type CategoryScore = {
+export type AuditPayload = {
+  /** Echo of the category slug from the agent response. */
+  category: string | null;
+  /** Single category score [0..100]. */
   score: number | null;
+  /** Short rationale, <=400 chars. */
   notes: string;
-};
-
-/**
- * Parsed advice payload — v4 contract (2026-04-18).
- *
- * Shape:
- *   - `score`          : overall project health [0..100] (was v3 `score`,
- *                        v4 `global_score`; unified here).
- *   - `categoryScores` : per-category `{score, notes}`, keyed by the
- *                        canonical slugs in POINT_CATEGORIES. Empty
- *                        object for legacy v3 rows that didn't emit it.
- *   - `points`         : ordered list of advice points, each with its
- *                        own category tag (v4) or null (v3).
- *
- * Backwards compat:
- *   - v3 agent output (`{score, points:[{title, description, severity, refs}]}`)
- *     parses successfully with categoryScores={} and point.category=null.
- *   - Legacy rows already stored in DB (same v3 shape) are re-read
- *     with the same helper and get the same default fields.
- */
-export type AdvicePayload = {
-  points: AdvicePoint[];
-  score: number | null;
-  categoryScores: Record<string, CategoryScore>;
+  /** Up to 5 points. */
+  points: AuditPoint[];
 };
 
 const VALID_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
+const MAX_POINTS = 5;
 
-/**
- * Coerce arbitrary JSON input to a [0..100] integer score, or null.
- * Accepts numbers, numeric strings, and clamps out-of-range values
- * with a console.warn so we don't silently drop a bad agent response.
- */
 function coerceScore(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;
   const n = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(n)) return null;
   const clamped = Math.max(0, Math.min(100, Math.round(n)));
   if (clamped !== n) {
-    console.warn(`[advice/parser] score ${n} clamped to ${clamped}`);
+    console.warn(`[audit/parser] score ${n} clamped to ${clamped}`);
   }
   return clamped;
 }
 
-export function parseAdviceOutput(raw: string): AdvicePayload | null {
+export function parseAuditOutput(raw: string): AuditPayload | null {
   if (!raw) return null;
 
-  // Try fenced block first — the prompt asks for it. Fall back to the
-  // first balanced { ... } we can find. Greedy-match .* with `s` flag
-  // so newlines are included.
+  // Try fenced block first (the contract asks for it). Fall back to
+  // the outermost balanced {...} so we're tolerant to stray prose.
   const fenced = /```json\s*([\s\S]*?)```/i.exec(raw);
   const candidates: string[] = [];
   if (fenced) candidates.push(fenced[1]);
-  // Fallback: try to locate the outermost {...} by scanning brackets.
   const firstBrace = raw.indexOf('{');
   if (firstBrace >= 0) {
     let depth = 0;
@@ -96,9 +75,11 @@ export function parseAdviceOutput(raw: string): AdvicePayload | null {
   for (const c of candidates) {
     try {
       const obj = JSON.parse(c);
+      // points[] must be an array (possibly empty: excellent project).
       const arr = Array.isArray(obj?.points) ? obj.points : null;
       if (!arr) continue;
-      const normalised: AdvicePoint[] = [];
+
+      const points: AuditPoint[] = [];
       arr.forEach((p: unknown, idx: number) => {
         if (!p || typeof p !== 'object') return;
         const pp = p as Record<string, unknown>;
@@ -107,61 +88,56 @@ export function parseAdviceOutput(raw: string): AdvicePayload | null {
           typeof pp.description === 'string' ? pp.description.trim() : '';
         const severity =
           typeof pp.severity === 'string' && VALID_SEVERITIES.has(pp.severity)
-            ? (pp.severity as AdvicePoint['severity'])
+            ? (pp.severity as AuditPoint['severity'])
             : 'medium';
         const refs = Array.isArray(pp.refs)
           ? (pp.refs as unknown[]).filter(
               (r: unknown): r is string => typeof r === 'string',
             )
           : undefined;
-        // v4: each point carries its own category tag. v3 points have
-        // none — we keep null and let the UI fall back to the parent
-        // row's category.
-        const category =
-          typeof pp.category === 'string' && pp.category.trim()
-            ? pp.category.trim()
-            : null;
-        // Prefer the explicit rank if the agent respected the contract;
-        // otherwise infer from array position (idx+1). Clamp to [1..].
         const rawRank = typeof pp.rank === 'number' ? pp.rank : Number(pp.rank);
         const rank =
           Number.isFinite(rawRank) && rawRank >= 1
             ? Math.round(rawRank)
             : idx + 1;
         if (!title || !description) return;
-        normalised.push({ rank, category, title, description, severity, refs });
+        points.push({ rank, title, description, severity, refs });
       });
-      if (normalised.length === 0) continue;
 
-      // v4 category_scores block — {key: {score, notes}}. Tolerate a
-      // missing block (v3 rows) and malformed sub-entries (skip them).
-      const categoryScores: Record<string, CategoryScore> = {};
-      const csRaw = obj.category_scores;
-      if (csRaw && typeof csRaw === 'object') {
-        for (const [k, v] of Object.entries(csRaw)) {
-          if (!v || typeof v !== 'object') continue;
-          const vv = v as Record<string, unknown>;
-          categoryScores[k] = {
-            score: coerceScore(vv.score),
-            notes: typeof vv.notes === 'string' ? vv.notes.trim() : '',
-          };
-        }
-      }
+      // Score is mandatory semantically but we still tolerate null to
+      // surface a failed run with a clear error downstream.
+      const score = coerceScore(obj.score);
+      const category =
+        typeof obj.category === 'string' && obj.category.trim()
+          ? obj.category.trim()
+          : null;
+      const notes =
+        typeof obj.notes === 'string' ? obj.notes.trim().slice(0, 400) : '';
 
-      // Global score — v4 `global_score` supersedes v3 `score`. Prefer
-      // the new field, fall back to the old one for legacy compat.
-      const globalScore =
-        coerceScore(obj.global_score) ?? coerceScore(obj.score);
+      // Require at least the score to consider the parse successful
+      // (a truly excellent project can legitimately return 0 points).
+      if (score === null) continue;
 
       return {
-        // Cap at 15 to bound the payload regardless of agent verbosity.
-        points: normalised.slice(0, 15),
-        score: globalScore,
-        categoryScores,
+        category,
+        score,
+        notes,
+        points: points.slice(0, MAX_POINTS).sort((a, b) => a.rank - b.rank),
       };
     } catch {
       /* try next candidate */
     }
   }
   return null;
+}
+
+/**
+ * Legacy alias kept for callers that still import parseAdviceOutput.
+ * Returns a shape-compatible-enough object so the runner keeps
+ * compiling until it's migrated alongside. New code should use
+ * parseAuditOutput directly.
+ * @deprecated
+ */
+export function parseAdviceOutput(raw: string): AuditPayload | null {
+  return parseAuditOutput(raw);
 }

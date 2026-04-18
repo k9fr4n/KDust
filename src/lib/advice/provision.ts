@@ -2,7 +2,7 @@ import { db } from '@/lib/db';
 import { getDustClient } from '@/lib/dust/client';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { listEnabledAdviceDefaults, type AdviceDefault } from './defaults';
-import { buildAdvicePrompt } from './prompts';
+import { buildAuditPrompt } from './prompts';
 
 /**
  * Picks the default agent for advisory tasks. Strategy:
@@ -33,7 +33,7 @@ async function createCronFromDefault(
 ): Promise<void> {
   await db.task.create({
     data: {
-      name: `Advice: ${def.label} — ${projectName}`,
+      name: `Audit: ${def.label} — ${projectName}`,
       kind: 'advice',
       category: def.key,
       mandatory: def.builtIn,
@@ -41,7 +41,7 @@ async function createCronFromDefault(
       timezone: 'Europe/Paris',
       agentSId: agent.sId,
       agentName: agent.name,
-      prompt: buildAdvicePrompt(def.prompt, projectName),
+      prompt: buildAuditPrompt(def.prompt, projectName, def.key),
       projectPath: projectName,
       // Inherit the project's default branch instead of falling back to
       // the hard-coded 'main' default. Projects cloned from GitLab often
@@ -189,9 +189,9 @@ export async function overwriteCategoryEverywhere(categoryKey: string): Promise<
       await db.task.update({
         where: { id: existing.id },
         data: {
-          name: `Advice: ${def.label} — ${p.name}`,
+          name: `Audit: ${def.label} — ${p.name}`,
           schedule: def.schedule,
-          prompt: buildAdvicePrompt(def.prompt, p.name),
+          prompt: buildAuditPrompt(def.prompt, p.name, def.key),
           // mandatory re-affirmed in case the template's builtIn flag toggled.
           mandatory: def.builtIn,
           // agent refreshed too — cheap and avoids stale agentSId if the

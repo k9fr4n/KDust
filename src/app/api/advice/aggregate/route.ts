@@ -7,20 +7,18 @@ export const runtime = 'nodejs';
 /**
  * GET /api/advice/aggregate
  *
- * Cross-project advice digest. Joins every ProjectAdvice row with its
- * Project (to expose id + display name) and its template (for label +
- * emoji). Ordering is left to the client so it can re-sort without
- * roundtripping (by worst score, then severity, then recency).
+ * Cross-project audit digest (v5). One row per (project, category).
+ * Each row carries its own category-level `score` and a points[]
+ * list (max 5). Ordering is left to the client so it can re-sort
+ * without roundtripping.
  *
  * Missing category templates are tolerated: we fall back to the
- * category key as label so an old advice row whose template was
- * deleted still surfaces (lightly) rather than disappearing.
+ * category key as label so an orphan advice row (template deleted)
+ * still surfaces rather than disappearing silently.
  */
 export async function GET() {
   const [advices, projects, defaults] = await Promise.all([
-    db.projectAdvice.findMany({
-      orderBy: { generatedAt: 'desc' },
-    }),
+    db.projectAdvice.findMany({ orderBy: { generatedAt: 'desc' } }),
     db.project.findMany({
       select: { id: true, name: true, gitUrl: true, branch: true },
     }),
@@ -33,24 +31,21 @@ export async function GET() {
   const items = advices
     .map((a) => {
       const proj = projByName.get(a.projectName);
-      if (!proj) return null; // orphan row (project deleted): skip
+      if (!proj) return null; // orphan (project deleted): skip
       const tpl = tplByKey.get(a.category);
 
-      // Decode the stored `points` column. v4 wraps the payload in
-      // `{version:4, points:[...], categoryScores:{...}}`. v3 (legacy)
-      // stores the bare points array. Tolerate both shapes.
+      // v5 stored format: `{version:5, category, notes, points[]}`.
+      // Tolerant decoder for anything else that may still be in DB
+      // (shouldn't happen post-migration, but we don't want to 500).
       let points: unknown[] = [];
-      let categoryScores: Record<string, { score: number | null; notes: string }> = {};
+      let notes = '';
       try {
         const raw = JSON.parse(a.points);
         if (Array.isArray(raw)) {
           points = raw;
         } else if (raw && typeof raw === 'object') {
           points = Array.isArray(raw.points) ? raw.points : [];
-          categoryScores =
-            raw.categoryScores && typeof raw.categoryScores === 'object'
-              ? raw.categoryScores
-              : {};
+          notes = typeof raw.notes === 'string' ? raw.notes : '';
         }
       } catch {
         /* malformed stored payload: surface an empty row rather than 500 */
@@ -60,11 +55,11 @@ export async function GET() {
         projectName: proj.name,
         category: a.category,
         label: tpl?.label ?? a.category,
-        emoji: tpl?.emoji ?? '📋',
+        emoji: tpl?.emoji ?? '\uD83D\uDCCB',
         score: a.score ?? null,
+        notes,
         generatedAt: a.generatedAt,
         points,
-        categoryScores,
       };
     })
     .filter(Boolean);

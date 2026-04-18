@@ -10,5 +10,5 @@ import { permanentRedirect } from 'next/navigation';
  * deploy).
  */
 export default function LegacyAdviceRedirect() {
-  permanentRedirect('/advices');
+  permanentRedirect('/audits');
 }

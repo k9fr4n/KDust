@@ -7,12 +7,12 @@ import {
 } from '@/components/advice/AdviceBrowser';
 
 /**
- * Client companion of /advices/page.tsx. Fetches the aggregate
+ * Client companion of /audits/page.tsx. Fetches the aggregate
  * dataset, then hands it to <AdviceBrowser>. The project scope is
  * driven entirely by `scopedProjectId` which the server component
  * derives from the top navbar selector cookie.
  */
-export function AdvicesClient({
+export function AuditsClient({
   scopedProjectId,
   scopedProjectName,
 }: {
@@ -48,21 +48,13 @@ export function AdvicesClient({
     ? (items ?? []).filter((it) => it.projectId === scopedProjectId)
     : items;
 
-  // Diagnose a common situation: the user has advice rows but all
-  // scores are missing — typically rows persisted by an older version
-  // of the advice runner (v3 bare-array format, no `score` /
-  // `category_scores` in the agent output). The tiles will all show
-  // "—" which Franck (rightly) flagged as "no scores, bug?". Surface
-  // a clear call-to-action rather than silently rendering em-dashes.
+  // Diagnose a common situation: the user has audit rows but no
+  // scores at all (parse failures, legacy rows, etc). v5: each row
+  // carries a single category-level score on `it.score`, so this is
+  // a one-line scan.
   const hasAnyScore =
     !!scopedItems &&
-    scopedItems.some(
-      (it) =>
-        typeof it.score === 'number' ||
-        Object.values(it.categoryScores ?? {}).some(
-          (cs) => typeof cs.score === 'number',
-        ),
-    );
+    scopedItems.some((it) => typeof it.score === 'number');
   const showLegacyBanner =
     !loading && !!scopedItems && scopedItems.length > 0 && !hasAnyScore;
 
@@ -71,7 +63,7 @@ export function AdvicesClient({
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Lightbulb size={22} className="text-amber-500" />
-          Advices
+          Audits
           {scopedProjectName ? (
             <span className="text-base font-normal text-slate-500">
               · {scopedProjectName}

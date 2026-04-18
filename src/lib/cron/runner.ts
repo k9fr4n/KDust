@@ -3,7 +3,7 @@ import { postToTeams, type TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
 import { getFsServerId } from '../mcp/registry';
-import { parseAdviceOutput } from '../advice/parser';
+import { parseAuditOutput } from '../advice/parser';
 import { getAdviceDefaultByKey } from '../advice/defaults';
 import {
   parseGitRepo,
@@ -244,19 +244,19 @@ export async function runTask(taskId: string): Promise<void> {
       // so the user can see the malformed response and iterate on the
       // prompt. We do NOT overwrite the previous ProjectAdvice row in that
       // case — stale-but-valid is better than empty.
-      const parsed = parseAdviceOutput(agentText);
+      const parsed = parseAuditOutput(agentText);
       const points = parsed?.points ?? null;
       const score = parsed?.score ?? null;
-      // v4: persist category_scores alongside points. Shoehorned into
-      // the existing TEXT column via a wrapper `{version:4, points,
-      // categoryScores}` so no DB migration is needed. Legacy (v3)
-      // rows keep a raw array in `points` and the read path in
-      // advice/aggregate understands both shapes.
+      // v5 storage: a single category per row. `points` column holds
+      // `{version:5, category, notes, points[]}`. Score is stored on
+      // the dedicated Int column. The read path in advice/aggregate
+      // decodes the wrapper and falls back gracefully on malformed.
       const storedPoints = parsed
         ? JSON.stringify({
-            version: 4,
+            version: 5,
+            category: parsed.category ?? job.category,
+            notes: parsed.notes,
             points: parsed.points,
-            categoryScores: parsed.categoryScores,
           })
         : null;
       const durationMs = Date.now() - startedAt;

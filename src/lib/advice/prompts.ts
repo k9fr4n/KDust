@@ -1,29 +1,35 @@
+import { POINT_CATEGORIES } from './categories';
+
 /**
- * The immutable JSON contract appended to every per-category prompt
- * body. Kept separate from the category prompt (stored in DB, editable
- * by the user) so accidentally removing the contract while editing the
+ * JSON contract appended to every per-category audit prompt (v5).
+ *
+ * v5 change: each task is now scoped to ONE category and emits:
+ *   - a single `score` [0..100] for that category
+ *   - up to 5 actionable `points`, each with rank + severity + refs
+ *
+ * Kept separate from the category prompt (stored in DB, editable by
+ * the user) so accidentally removing the contract while editing the
  * body is impossible.
+ *
+ * The `category` field in the JSON must echo the task's category
+ * slug. We enforce it server-side (parser) to catch prompt/task drift.
  */
-const JSON_CONTRACT = `
+function jsonContract(categoryKey: string): string {
+  const knownKeys = Object.keys(POINT_CATEGORIES).join('|');
+  return `
 Return EXACTLY one fenced JSON block and nothing else after it, using this schema:
 
 \`\`\`json
 {
-  "category_scores": {
-    "security":      { "score": 0, "notes": "<≤400 chars>" },
-    "performance":   { "score": 0, "notes": "<≤400 chars>" },
-    "code_quality":  { "score": 0, "notes": "<≤400 chars>" },
-    "improvement":   { "score": 0, "notes": "<≤400 chars>" },
-    "documentation": { "score": 0, "notes": "<≤400 chars>" },
-    "test_coverage": { "score": 0, "notes": "<≤400 chars>" }
-  },
-  "global_score": 0,
+  "version": 5,
+  "category": "${categoryKey}",
+  "score": 0,
+  "notes": "<=400 chars rationale for the score",
   "points": [
     {
       "rank": 1,
-      "category": "security|performance|code_quality|improvement|documentation|test_coverage",
-      "title": "<≤80 chars>",
-      "description": "<≤400 chars, actionable>",
+      "title": "<=80 chars",
+      "description": "<=400 chars, actionable",
       "severity": "low|medium|high|critical",
       "refs": ["path/file.ext:lineno"]
     }
@@ -32,42 +38,54 @@ Return EXACTLY one fenced JSON block and nothing else after it, using this schem
 \`\`\`
 
 Rules:
-- Scores are integers in [0..100] using this grid:
-    * 90-100 : excellent, no action needed
-    * 70-89  : good, minor improvements
-    * 50-69  : fair, several issues to address
-    * 30-49  : poor, significant concerns
-    * 0-29   : critical, urgent action required
-  Base them on what you ACTUALLY observed via the fs tools. Do not be
-  artificially harsh or lenient — if the project is clean, give a
-  high score; if it is a mess, give a low one.
-- "category_scores" MUST include all 6 categories above. "notes" is
-  a short rationale (bullet-like, comma-separated) supporting the
-  score. No prose inside notes, just the concrete signals.
-- "global_score" is the overall project health (weighted average of
-  the category scores is a good default; you may deviate if one area
-  dominates the risk).
-- EXACTLY 15 "points", sorted by ascending "rank" (1 = most critical).
-  Each point MUST carry its "category" tag so the UI can group /
-  filter them. Priority = business impact × severity, across ALL
-  areas; do not balance artificially.
+- "version" MUST be the integer 5.
+- "category" MUST be exactly "${categoryKey}" (known: ${knownKeys}).
+- "score" is an integer in [0..100] using the grid described above.
+  Base it on what you ACTUALLY observed via the fs tools. Do not be
+  artificially harsh or lenient.
+- "notes" is a short rationale (<=400 chars): concrete signals that
+  led to the score (bullet-like, comma-separated). No prose.
+- "points" is an array of AT MOST 5 entries, sorted by ascending
+  "rank" (1 = most urgent). Return fewer points (including zero) when
+  the project is already excellent on this axis. Never pad.
 - "severity" uses the literal strings above.
 - "refs" is optional but strongly preferred; list concrete file paths
   (+ line numbers when relevant) you observed via the fs tools.
 - No prose before/after the JSON block. No markdown headers, no tables.
 `;
+}
 
 /**
- * Build the final prompt sent to the Dust agent. `body` comes from
- * AdviceCategoryDefault.prompt (user-editable); we wrap it with the
- * project context and JSON contract here.
+ * Build the final prompt sent to the Dust agent for ONE category.
+ *
+ * @param body        AdviceCategoryDefault.prompt (user-editable).
+ * @param projectName Project slug (also the fs mount path).
+ * @param categoryKey Canonical slug (security, performance, ...).
  */
-export function buildAdvicePrompt(body: string, projectName: string): string {
+export function buildAuditPrompt(
+  body: string,
+  projectName: string,
+  categoryKey: string,
+): string {
   return `${body.trim()}
 
 Project under review: \`${projectName}\` (mounted at /projects/${projectName}).
+Audit axis: \`${categoryKey}\`.
 Use ONLY fs_cli tools for exploration; do not invent file contents.
 
-${JSON_CONTRACT.trim()}
+${jsonContract(categoryKey).trim()}
 `;
+}
+
+/**
+ * Legacy alias kept for callers that haven't been migrated yet.
+ * Ignores the category because pre-v5 callers had a single prompt.
+ * @deprecated use buildAuditPrompt(body, projectName, categoryKey).
+ */
+export function buildAdvicePrompt(
+  body: string,
+  projectName: string,
+  categoryKey = 'priority',
+): string {
+  return buildAuditPrompt(body, projectName, categoryKey);
 }

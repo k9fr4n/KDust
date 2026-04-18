@@ -171,15 +171,14 @@ export default function AdviceSettingsPage() {
           <Lightbulb size={22} className="text-amber-500" /> Audit Categories
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Templates used to generate the per-project advice task. The
-          default config ships a single <b>Priority advice</b> category
-          that covers security, performance, code quality, improvement,
-          documentation and test coverage in one pass and returns a
-          TOP-15 ranked action list.
+          Templates used to generate per-project audit tasks. The
+          default config ships <b>6 categories</b> — security,
+          performance, improvement, code quality, test coverage and
+          documentation. Each category runs independently and returns
+          a single score + up to 5 actionable points.
         </p>
       </div>
 
-      {/* v3 info banner */}
       <div className="flex gap-2 items-start text-xs border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200 rounded-md p-3">
         <Info size={14} className="shrink-0 mt-0.5" />
         <div className="space-y-1">
@@ -190,7 +189,7 @@ export default function AdviceSettingsPage() {
             customisations).
           </p>
           <p>
-            Advice tasks are <b>manual-trigger</b> (no scheduler in v2+). Run
+            Audit tasks are <b>manual-trigger</b> (no scheduler in v2+). Run
             them from the project dashboard or via{' '}
             <code className="text-[11px]">POST /api/tasks/:id/run</code>.
           </p>
@@ -404,7 +403,7 @@ function LegacySection({
       >
         <span className="inline-flex items-center gap-2 font-semibold text-slate-600 dark:text-slate-400">
           <Archive size={14} />
-          Legacy v1 categories
+          Legacy categories (pre-v5)
           <span className="text-[10px] font-mono bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">
             {items.length}
           </span>
@@ -418,12 +417,11 @@ function LegacySection({
           <div className="flex items-start gap-2 text-xs text-slate-500">
             <Info size={12} className="shrink-0 mt-0.5" />
             <p>
-              These per-area categories (security, performance, code
-              quality, improvement, documentation, code coverage) were
-              replaced by the single <b>Priority advice</b> task in v3.
-              Their tasks and past results have been cleaned up; only
-              the template stubs remain so you can review the old
-              prompts. Safe to delete.
+              Pre-v5 templates (the consolidated <b>priority</b> task,
+              or the old <code className="text-[11px]">code_coverage</code>
+              slug). Normally wiped automatically by the seeder on the
+              first page load; any remaining row here is safe to
+              delete.
             </p>
           </div>
           <div className="flex">

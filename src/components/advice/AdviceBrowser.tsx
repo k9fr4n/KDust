@@ -77,11 +77,14 @@ function chipCls(color: string): string {
 export type AdviceBrowserItem = {
   projectId: string;
   projectName: string;
+  /** v5: one of POINT_CATEGORY_KEYS. */
   category: string;
+  /** Category-level score [0..100] for THIS (project, category) row. */
   score: number | null;
+  /** Short rationale emitted by the agent (<=400 chars). */
+  notes?: string;
   generatedAt: string;
   points: AdvicePoint[] | null;
-  categoryScores?: Record<string, { score: number | null; notes: string }>;
 };
 
 type FlatPoint = {
@@ -226,29 +229,32 @@ export function AdviceBrowser(props: {
     );
   }, [items]);
 
+  // v5 tile scores: each AdviceBrowserItem row IS already one
+  // (project, category) score. Per-category tile = avg of scores for
+  // rows with that category. Global tile = avg of per-category tiles.
   const tileScores = useMemo(() => {
     const sourceItems = scopedProjectId
       ? items.filter((it) => it.projectId === scopedProjectId)
       : items;
-    const globalVals = sourceItems
-      .map((it) => it.score)
-      .filter((s): s is number => typeof s === 'number');
-    const global =
-      globalVals.length > 0
-        ? Math.round(globalVals.reduce((a, b) => a + b, 0) / globalVals.length)
-        : null;
     const perCat: Record<string, number | null> = {};
     for (const key of Object.keys(POINT_CATEGORIES)) {
       const vals: number[] = [];
       for (const it of sourceItems) {
-        const cs = it.categoryScores?.[key];
-        if (cs && typeof cs.score === 'number') vals.push(cs.score);
+        if (it.category !== key) continue;
+        if (typeof it.score === 'number') vals.push(it.score);
       }
       perCat[key] =
         vals.length > 0
           ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
           : null;
     }
+    const catVals = Object.values(perCat).filter(
+      (s): s is number => typeof s === 'number',
+    );
+    const global =
+      catVals.length > 0
+        ? Math.round(catVals.reduce((a, b) => a + b, 0) / catVals.length)
+        : null;
     return { global, perCat };
   }, [items, scopedProjectId]);
 

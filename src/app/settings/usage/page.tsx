@@ -1004,7 +1004,7 @@ export default async function UsagePage({
         <Card
           title="Advice health per project"
           icon={<Activity size={14} />}
-          right={<Link href="/advices" className="text-xs text-brand-500 hover:underline">view all →</Link>}
+          right={<Link href="/audits" className="text-xs text-brand-500 hover:underline">view all →</Link>}
         >
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-slate-500">

@@ -13,11 +13,11 @@ import {
   Pin,
 } from 'lucide-react';
 import { db } from '@/lib/db';
-import { listProjects, PROJECTS_ROOT } from '@/lib/projects';
+
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
 import { ConversationCard } from '@/components/ConversationCard';
-import { ProjectOpenLink } from '@/components/ProjectOpenLink';
+
 
 export const dynamic = 'force-dynamic';
 
@@ -195,7 +195,6 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     nbRunsRunning,
     nbRunsAborted,
     nbProjectsDb,
-    projects,
     recentConvs,
     recentRuns,
   ] = await Promise.all([
@@ -207,7 +206,6 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     db.taskRun.count({ where: { status: 'running' } }),
     db.taskRun.count({ where: { status: 'aborted' } }),
     db.project.count(),
-    listProjects(),
     db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 8 }),
     db.taskRun.findMany({
       orderBy: { startedAt: 'desc' },
@@ -297,48 +295,6 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         </div>
       </section>
 
-      <section>
-        <div className="flex items-end justify-between mb-3">
-          <h2 className="font-semibold">Mounted projects</h2>
-          <span className="text-xs text-slate-500">
-            <code>{PROJECTS_ROOT}</code> ({projects.length})
-          </span>
-        </div>
-
-        {projects.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center text-sm text-slate-500">
-            No projects detected in <code>{PROJECTS_ROOT}</code>.
-          </div>
-        ) : (
-          <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {projects.map((p) => (
-              <li key={p.name}>
-                <ProjectOpenLink
-                  projectName={p.name}
-                  className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 flex items-center gap-3 hover:border-brand-400 dark:hover:border-brand-600 hover:bg-slate-50 dark:hover:bg-slate-900 transition-colors group"
-                >
-                  <FolderGit2
-                    size={20}
-                    className="text-slate-400 group-hover:text-brand-500 transition-colors"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium truncate group-hover:text-brand-700 dark:group-hover:text-brand-400">
-                      {p.name}
-                    </div>
-                    <div className="text-xs text-slate-500 truncate">
-                      {p.path}
-                      {p.updatedAt && ` · updated ${p.updatedAt.toLocaleDateString()}`}
-                    </div>
-                  </div>
-                  <span className="text-xs text-slate-400 group-hover:text-brand-500 shrink-0">
-                    →
-                  </span>
-                </ProjectOpenLink>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   );
 }

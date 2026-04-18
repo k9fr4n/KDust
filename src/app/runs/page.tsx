@@ -311,20 +311,23 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                   <td className="text-xs font-mono truncate max-w-[240px]">{r.branch ?? '-'}</td>
                   <td className="text-center">
                     {(() => {
-                      // Priority: local Conversation row (opens in-app
-                      // /conversations/:id view). Falls back to the raw
-                      // Dust chat URL when the conversation wasn't
-                      // persisted locally (network hiccup during the
-                      // post-stream db.conversation.create). Nothing
-                      // shown when the run never reached Dust.
+                      // Priority: local Conversation row. We route to
+                      // /chat?id=<localId> (not /conversations/:id)
+                      // because /chat is the interactive view with
+                      // streaming, sidebar, composer, etc. \u2014 the
+                      // legacy /conversations/:id page is read-only
+                      // and Franck asked explicitly for the /chat
+                      // link (2026-04-18 23:41).
+                      // /chat's ChatPageInner reads `id` from the
+                      // query string and calls loadConv() on mount.
                       const localId = r.dustConversationSId
                         ? convIdBySId.get(r.dustConversationSId)
                         : undefined;
                       if (localId) {
                         return (
                           <Link
-                            href={`/conversations/${localId}`}
-                            title="Open the persisted conversation"
+                            href={`/chat?id=${localId}`}
+                            title="Open in /chat"
                             className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
                           >
                             <MessageCircle size={11} /> open

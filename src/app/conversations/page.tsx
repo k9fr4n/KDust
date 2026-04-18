@@ -173,11 +173,14 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    {c.agentName ?? c.agentSId}
-                  </span>
+                  {/* Project first, then agent — project is the most
+                      meaningful grouping dimension for users, the
+                      agent is secondary metadata. */}
                   <span className="font-mono">
                     {c.projectName ? c.projectName : <em className="italic">global</em>}
+                  </span>
+                  <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                    {c.agentName ?? c.agentSId}
                   </span>
                   <span>· {c._count.messages} message(s)</span>
                 </div>

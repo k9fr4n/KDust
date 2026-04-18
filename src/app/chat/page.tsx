@@ -138,13 +138,28 @@ function ChatPageInner() {
     // panel: each point has a "Chat" shortcut that opens a new empty
     // conversation with the point description already typed in the
     // textarea so the user just has to hit Send.
-    const rawPrompt = searchParams.get('prompt');
-    if (rawPrompt && !requested) {
+    // Prompt can arrive via two channels:
+    //   1. sessionStorage (preferred — used by /advices bulk chat +
+    //      AdviceSection) to avoid URL length limits on big prompts.
+    //   2. ?prompt=<base64> query string (legacy single-point deep
+    //      link from advice cards).
+    // sessionStorage takes precedence and is consumed single-shot.
+    if (!requested) {
       try {
-        const decoded = decodeURIComponent(escape(atob(rawPrompt)));
-        setDraft(decoded);
+        const pending = sessionStorage.getItem('kdust.chat.pendingPrompt');
+        if (pending) {
+          sessionStorage.removeItem('kdust.chat.pendingPrompt');
+          setDraft(pending);
+        } else {
+          const rawPrompt = searchParams.get('prompt');
+          if (rawPrompt) {
+            const decoded = decodeURIComponent(escape(atob(rawPrompt)));
+            setDraft(decoded);
+          }
+        }
       } catch {
-        // malformed base64 — ignore rather than crash the page
+        // malformed base64 / sessionStorage unavailable — ignore
+        // rather than crash the page.
       }
     }
     // Detect current project from cookie and start MCP fs server for it

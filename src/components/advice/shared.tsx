@@ -184,20 +184,20 @@ export function buildChatHrefFromAdvice(opts: {
  * can digest in one shot. Points are grouped by project to minimise
  * context-switching in the agent's response.
  */
-export function buildChatHrefForMultipleAdvices(
-  items: Array<{
-    projectName: string;
-    categoryLabel: string;
-    categoryEmoji: string;
-    rank: number | null;
-    point: AdvicePoint;
-  }>,
-): string {
-  if (items.length === 0) return '/chat';
+export type BulkAdviceItem = {
+  projectName: string;
+  categoryLabel: string;
+  categoryEmoji: string;
+  rank: number | null;
+  point: AdvicePoint;
+};
+
+export function buildBulkAdvicePrompt(items: BulkAdviceItem[]): string {
+  if (items.length === 0) return '';
 
   // Group by project so the agent sees all points for a given project
   // together (helps it batch file reads and avoid redundant tool use).
-  const byProject = new Map<string, typeof items>();
+  const byProject = new Map<string, BulkAdviceItem[]>();
   for (const it of items) {
     const arr = byProject.get(it.projectName) ?? [];
     arr.push(it);
@@ -233,10 +233,37 @@ export function buildChatHrefForMultipleAdvices(
     `flag it for review when the trade-offs are non-trivial.\n` +
     `Batch work by project when possible.`;
 
-  const prompt = `${header}\n\n${sections.join('\n\n')}${footer}`;
-  const b64 =
-    typeof window !== 'undefined'
-      ? btoa(unescape(encodeURIComponent(prompt)))
-      : '';
-  return `/chat?prompt=${encodeURIComponent(b64)}`;
+  return `${header}\n\n${sections.join('\n\n')}${footer}`;
+}
+
+/**
+ * SessionStorage key used to hand off the bulk-advice prompt between
+ * /advices (or AdviceSection) and the /chat page. Using sessionStorage
+ * rather than a `?prompt=<base64>` query string avoids browser URL
+ * length limits (some browsers choke past ~8 KB; a 15-points prompt
+ * can be 20+ KB) and survives any router soft-navigation quirks.
+ *
+ * The /chat page reads this key on mount AND whenever the pathname
+ * changes back to /chat, then deletes it — so it's single-shot.
+ */
+export const PENDING_CHAT_PROMPT_KEY = 'kdust.chat.pendingPrompt';
+
+/**
+ * Drop a bulk-advice prompt in sessionStorage and navigate to /chat.
+ * Must be called from a click handler (NOT during render) so the
+ * sessionStorage write is synchronous and ordered before navigation.
+ */
+export function stashPromptAndGoToChat(prompt: string): void {
+  try {
+    sessionStorage.setItem(PENDING_CHAT_PROMPT_KEY, prompt);
+  } catch {
+    // Storage quota or private mode: fall back to the legacy query
+    // string with a hard-truncated prompt. Better than dropping the
+    // navigation entirely.
+    const shortPrompt = prompt.slice(0, 4000);
+    const b64 = btoa(unescape(encodeURIComponent(shortPrompt)));
+    window.location.href = `/chat?prompt=${encodeURIComponent(b64)}`;
+    return;
+  }
+  window.location.href = '/chat';
 }

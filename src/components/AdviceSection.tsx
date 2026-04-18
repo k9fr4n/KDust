@@ -1,53 +1,65 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
   PlayCircle,
   RotateCw,
-  MessageSquarePlus,
 } from 'lucide-react';
 import {
-  AdvicePoint,
-  AdviceSlot,
-  SEVERITY_STYLE,
-  ScoreBadge,
-  buildChatHrefFromAdvice,
-} from './advice/shared';
+  AdviceBrowser,
+  AdviceBrowserItem,
+} from './advice/AdviceBrowser';
+import { AdviceSlot } from './advice/shared';
 
 /**
- * "Advice" panel rendered on the project dashboard (/projects/:id).
- * Lazy-loads the advice slots (one per enabled template) and shows
- * each category's latest 3 points + category score. The per-slot
- * "Re-run" button triggers the matching cron on demand.
+ * /projects/:id → Advice panel.
  *
- * The "Run all sequentially" batch button lives OUTSIDE this component
- * (on the Project tasks section header) so the user can trigger a
- * rerun without scrolling to Advice. Batch progress is fed back here
- * via the `batchStartedAt` prop: when set, this component auto-polls
- * /advice every 4s and highlights categories whose cron.lastRunAt is
- * still older than the batch start.
+ * Per-project wrapper around <AdviceBrowser>: reuses the exact same
+ * tiles + list + multi-select UX as /advices, minus the project
+ * filter (hidden via `scopedProjectId`).
+ *
+ * Drives two fetches in parallel:
+ *   1. /api/projects/:id/advice  → slot metadata + cron task info
+ *      for the Re-run button & status indicators.
+ *   2. /api/advice/aggregate     → decoded v4 payload (points +
+ *      categoryScores) filtered by projectId. We reuse this route
+ *      rather than duplicating the decoder, so tile math stays
+ *      identical between /advices and this panel.
+ *
+ * `batchStartedAt` (from the parent page's "Run all" button) keeps
+ * the Re-run button pulsing while a batch is still in flight.
  */
 export function AdviceSection({
   projectId,
   batchStartedAt,
 }: {
   projectId: string;
-  /** epoch-ms when a batch "Run all" started; null = idle */
   batchStartedAt?: number | null;
 }) {
   const [slots, setSlots] = useState<AdviceSlot[] | null>(null);
+  const [items, setItems] = useState<AdviceBrowserItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [runningCat, setRunningCat] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`/api/projects/${projectId}/advice`);
-      if (r.ok) {
-        const j = await r.json();
+      const [slotsRes, aggRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/advice`),
+        fetch(`/api/advice/aggregate`),
+      ]);
+      if (slotsRes.ok) {
+        const j = await slotsRes.json();
         setSlots(j.slots ?? []);
+      }
+      if (aggRes.ok) {
+        const j = await aggRes.json();
+        const mine: AdviceBrowserItem[] = (j.items ?? []).filter(
+          (it: AdviceBrowserItem) => it.projectId === projectId,
+        );
+        setItems(mine);
       }
     } finally {
       setLoading(false);
@@ -55,10 +67,10 @@ export function AdviceSection({
   };
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Auto-poll while a batch is in flight. Scoped to this component so
-  // the parent doesn't need to pass a loader callback.
+  // Poll while a parent-triggered batch is in flight.
   useEffect(() => {
     if (!batchStartedAt) return;
     const iv = setInterval(() => void load(), 4000);
@@ -66,24 +78,32 @@ export function AdviceSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchStartedAt]);
 
-  const rerun = async (slot: AdviceSlot) => {
-    if (!slot.task) return;
-    setRunningCat(slot.category);
+  // v4: 1 single "priority" slot per project by default. Use its task
+  // (if present) to wire the Re-run button in the toolbar.
+  const primarySlot = slots && slots.length > 0 ? slots[0] : null;
+  const pendingInBatch = useMemo(() => {
+    if (!batchStartedAt || !primarySlot?.task) return false;
+    const lastRunMs = primarySlot.task.lastRunAt
+      ? new Date(primarySlot.task.lastRunAt).getTime()
+      : 0;
+    return lastRunMs < batchStartedAt;
+  }, [batchStartedAt, primarySlot]);
+
+  const rerun = async () => {
+    if (!primarySlot?.task) return;
+    setRunningCat(primarySlot.category);
     try {
-      await fetch(`/api/tasks/${slot.task.id}/run`, { method: 'POST' });
+      await fetch(`/api/tasks/${primarySlot.task.id}/run`, { method: 'POST' });
       setTimeout(() => void load(), 5000);
     } finally {
       setRunningCat(null);
     }
   };
 
-  if (loading && !slots) {
+  if (loading && !items) {
     return <p className="text-xs text-slate-500 p-3">Loading advice…</p>;
   }
-  if (!slots) {
-    return <p className="text-xs text-red-500 p-3">Unable to load advice.</p>;
-  }
-  if (slots.length === 0) {
+  if (!slots || slots.length === 0) {
     return (
       <p className="text-xs italic text-slate-500 p-3">
         No category enabled. Head to{' '}
@@ -95,129 +115,66 @@ export function AdviceSection({
     );
   }
 
-  // v3: the default config collapses all advice into a single
-  // "priority" slot carrying up to 15 points. In that case, give the
-  // card the full width so the ranked list stays readable. If the user
-  // re-enabled / added custom categories (slots > 1), keep the old
-  // responsive 3-column grid for the per-category cards.
-  const gridCls =
-    slots.length === 1
-      ? 'grid grid-cols-1 gap-3'
-      : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3';
+  const hasItems = !!items && items.length > 0;
+  const generatedAt = primarySlot?.generatedAt;
+
+  /** Re-run button + last-run status, shown above the tiles. */
+  const headerExtra = primarySlot ? (
+    <div className="inline-flex items-center gap-2 text-[11px] text-slate-500 ml-2">
+      <Clock size={11} />
+      <span>
+        {generatedAt
+          ? `Generated ${new Date(generatedAt).toLocaleString()}`
+          : 'No analysis yet'}
+      </span>
+      {primarySlot.task?.lastStatus === 'failed' && (
+        <span className="text-red-500 inline-flex items-center gap-1">
+          <AlertTriangle size={11} /> last run failed
+        </span>
+      )}
+      {primarySlot.task?.lastStatus === 'success' && !pendingInBatch && (
+        <span className="text-green-600 inline-flex items-center gap-1">
+          <CheckCircle2 size={11} /> OK
+        </span>
+      )}
+      <button
+        onClick={rerun}
+        disabled={
+          runningCat === primarySlot.category
+          || !primarySlot.task
+          || pendingInBatch
+        }
+        title="Re-run the advice cron now"
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+      >
+        {runningCat === primarySlot.category || pendingInBatch ? (
+          <RotateCw size={11} className="animate-spin" />
+        ) : (
+          <PlayCircle size={11} />
+        )}
+        Re-run
+      </button>
+    </div>
+  ) : null;
+
+  if (!hasItems) {
+    return (
+      <div className="space-y-3">
+        <div className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
+          {headerExtra}
+        </div>
+        <p className="text-xs italic text-slate-400 p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-md text-center">
+          No advice available yet. Run the task to generate the first analysis.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className={gridCls}>
-      {slots.map((slot) => {
-        const hasPoints = slot.points && slot.points.length > 0;
-        // "pending in batch" = batch is running AND this slot's cron
-        // hasn't reported a fresh lastRunAt yet. Used to grey out the
-        // card so the user sees progress visually.
-        const lastRunMs = slot.task?.lastRunAt
-          ? new Date(slot.task.lastRunAt).getTime()
-          : 0;
-        const pendingInBatch =
-          !!batchStartedAt && !!slot.task && lastRunMs < batchStartedAt;
-        return (
-          <div
-            key={slot.category}
-            className={
-              'border rounded-lg p-3 bg-white dark:bg-slate-900 transition-opacity ' +
-              (pendingInBatch
-                ? 'border-amber-300 dark:border-amber-700 animate-pulse'
-                : 'border-slate-200 dark:border-slate-800')
-            }
-          >
-            <div className="flex items-center justify-between mb-2 gap-2">
-              <h4 className="text-sm font-semibold flex items-center gap-1.5 min-w-0">
-                <span>{slot.emoji}</span>
-                <span className="truncate">{slot.label}</span>
-              </h4>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <ScoreBadge score={slot.score} />
-                <button
-                  onClick={() => rerun(slot)}
-                  disabled={runningCat === slot.category || !slot.task || pendingInBatch}
-                  title="Re-run the cron now"
-                  className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-                >
-                  {runningCat === slot.category || pendingInBatch ? (
-                    <RotateCw size={11} className="animate-spin" />
-                  ) : (
-                    <PlayCircle size={11} />
-                  )}
-                  Re-run
-                </button>
-              </div>
-            </div>
-
-            <div className="text-[10px] text-slate-500 flex items-center gap-2 mb-2 flex-wrap">
-              <Clock size={10} />
-              {slot.generatedAt
-                ? `Generated ${new Date(slot.generatedAt).toLocaleString()}`
-                : 'No analysis yet'}
-              {slot.task?.lastStatus === 'failed' && (
-                <span className="text-red-500 inline-flex items-center gap-1">
-                  <AlertTriangle size={10} /> last run failed
-                </span>
-              )}
-              {slot.task?.lastStatus === 'success' && !pendingInBatch && (
-                <span className="text-green-600 inline-flex items-center gap-1">
-                  <CheckCircle2 size={10} /> OK
-                </span>
-              )}
-              {!slot.task && (
-                <span className="text-orange-500">cron not provisioned</span>
-              )}
-            </div>
-
-            {hasPoints ? (
-              <ol className="space-y-2">
-                {slot.points!.map((p: AdvicePoint, i: number) => (
-                  <li
-                    key={i}
-                    className="border-l-2 border-slate-200 dark:border-slate-700 pl-2"
-                  >
-                    <div className="flex items-start gap-1.5">
-                      <span
-                        className={
-                          'shrink-0 text-[9px] uppercase tracking-wide font-bold rounded px-1 py-0.5 ' +
-                          SEVERITY_STYLE[p.severity]
-                        }
-                      >
-                        {p.severity}
-                      </span>
-                      <p className="text-xs font-medium flex-1">{p.title}</p>
-                      <a
-                        href={buildChatHrefFromAdvice({
-                          label: slot.label,
-                          emoji: slot.emoji,
-                          point: p,
-                        })}
-                        title="Open a new chat with this advice as the initial prompt"
-                        className="shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-950/30"
-                      >
-                        <MessageSquarePlus size={10} /> Chat
-                      </a>
-                    </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                      {p.description}
-                    </p>
-                    {p.refs && p.refs.length > 0 && (
-                      <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-                        {p.refs.join(' • ')}
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="text-xs italic text-slate-400">
-                No advice available. Run the task to generate the first analysis.
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <AdviceBrowser
+      items={items!}
+      scopedProjectId={projectId}
+      headerExtra={headerExtra}
+    />
   );
 }

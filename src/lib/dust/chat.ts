@@ -68,7 +68,8 @@ function safeOrigin(o: string | undefined | null): NonBilledOrigin {
 
 function userContext(
   mcpServerIds?: string[] | null,
-  origin: NonBilledOrigin = 'web',
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _origin: NonBilledOrigin = 'web',
 ) {
   return {
     username: 'kdust',
@@ -79,7 +80,13 @@ function userContext(
     // NEVER set this to 'api' / 'cli_programmatic' / 'triggered_programmatic'
     // \u2014 those flip the conversation into programmatic billing on Dust's
     // side (same bucket as the CLI's `-m` flag). See NonBilledOrigin.
-    origin: safeOrigin(origin),
+    // origin: intentionally omitted. Dust API now returns 400 "This
+    // origin is not allowed. Remove the origin from the context
+    // property." (2026-04-18). The billing bucket is now inferred
+    // server-side from the API key class (user vs workspace). KDust
+    // uses a user/personal key -> human usage bucket, same as the web
+    // UI. The `origin` parameter is still threaded through callers
+    // for log correlation; it's just not forwarded to the API.
     clientSideMCPServerIds:
       mcpServerIds && mcpServerIds.length > 0 ? mcpServerIds : null,
     selectedMCPServerViewIds: null,

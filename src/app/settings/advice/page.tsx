@@ -168,7 +168,7 @@ export default function AdviceSettingsPage() {
           <ArrowLeft size={14} /> Back-office
         </Link>
         <h1 className="text-2xl font-bold mt-2 flex items-center gap-2">
-          <Lightbulb size={22} className="text-amber-500" /> Advice categories
+          <Lightbulb size={22} className="text-amber-500" /> Audit Categories
         </h1>
         <p className="text-sm text-slate-500 mt-1">
           Templates used to generate the per-project advice task. The

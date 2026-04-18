@@ -24,6 +24,14 @@ export default function SettingsIndex() {
     accent: string;
   }[] = [
     {
+      href: '/settings/global',
+      title: 'App Settings',
+      description:
+        'Application-wide configuration: Dust endpoint, WorkOS OAuth, default notifications.',
+      icon: <SettingsIcon size={18} />,
+      accent: 'text-slate-600 dark:text-slate-300',
+    },
+    {
       href: '/settings/projects',
       title: 'Projects',
       description:
@@ -32,18 +40,10 @@ export default function SettingsIndex() {
       accent: 'text-teal-600 dark:text-teal-400',
     },
     {
-      href: '/settings/global',
-      title: 'Global settings',
-      description:
-        'Application-wide configuration: Dust endpoint, WorkOS OAuth, default notifications.',
-      icon: <SettingsIcon size={18} />,
-      accent: 'text-slate-600 dark:text-slate-300',
-    },
-    {
       href: '/settings/advice',
-      title: 'Advice categories',
+      title: 'Audit Categories',
       description:
-        'Weekly analysis cron templates: prompts, schedules, add/remove categories.',
+        'Weekly audit cron templates: prompts, schedules, add/remove categories.',
       icon: <Lightbulb size={18} />,
       accent: 'text-amber-600 dark:text-amber-400',
     },

@@ -50,7 +50,7 @@ export default function GlobalSettingsPage() {
           <ArrowLeft size={14} /> Back-office
         </Link>
         <h1 className="text-2xl font-bold mt-2 flex items-center gap-2">
-          <SettingsIcon size={22} className="text-brand-500" /> Global settings
+          <SettingsIcon size={22} className="text-brand-500" /> App Settings
         </h1>
         <p className="text-sm text-slate-500 mt-1">
           Application-wide configuration (Dust endpoint, WorkOS OAuth,

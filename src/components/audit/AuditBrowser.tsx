@@ -205,8 +205,19 @@ export function AuditBrowser(props: {
         const pointCategory = it.category;
         const rankInProject =
           typeof p.rank === 'number' && p.rank >= 1 ? p.rank : idx + 1;
+        // BUG-FIX (2026-04-18): the row id MUST include the category.
+        // Without it, two points from the SAME project but DIFFERENT
+        // categories that happen to share rank+idx produced IDENTICAL
+        // React keys \u2014 React then rendered them as duplicates (visible
+        // in the list) and warned in the console. Most obvious when
+        // toggling a tile filter back to \"__all__\": the locked-in
+        // category restricted output to one row per project, the
+        // unlocked view exploded the list and keys collided.
+        // We also include the selectionProjectId-safe id format by
+        // keeping the projectId prefix (used by toggleSelect to parse
+        // the owner project id).
         out.push({
-          id: `${it.projectId}#${rankInProject}#${idx}`,
+          id: `${it.projectId}#${it.category}#${rankInProject}#${idx}`,
           point: p,
           rankInProject,
           pointCategory,

@@ -323,28 +323,31 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       const localId = r.dustConversationSId
                         ? convIdBySId.get(r.dustConversationSId)
                         : undefined;
+                      // Visual upgrade 2026-04-18: the previous tiny
+                      // "open" text was easy to miss. We now render a
+                      // full button-like chip with clear affordance.
                       if (localId) {
                         return (
                           <Link
                             href={`/chat?id=${localId}`}
-                            title="Open in /chat"
-                            className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
+                            title="Open this run's conversation in /chat"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-xs font-medium"
                           >
-                            <MessageCircle size={11} /> open
+                            <MessageCircle size={12} /> Open chat
                           </Link>
                         );
                       }
                       if (r.dustConversationSId) {
                         return (
                           <span
-                            title={`Dust sId ${r.dustConversationSId} — not persisted locally`}
-                            className="inline-flex items-center gap-1 text-xs text-slate-400"
+                            title={`Dust sId ${r.dustConversationSId} — no local Conversation row (stream likely crashed before persistence)`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 text-xs"
                           >
-                            <MessageCircle size={11} /> orphan
+                            <MessageCircle size={12} /> orphan
                           </span>
                         );
                       }
-                      return <span className="text-slate-300">—</span>;
+                      return <span className="text-slate-300 text-xs">—</span>;
                     })()}
                   </td>
                   <td className="text-right">

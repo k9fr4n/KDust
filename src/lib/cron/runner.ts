@@ -165,6 +165,20 @@ export async function runTask(taskId: string): Promise<void> {
       await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
       const convTitle = `[audit:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
       const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'cli');
+      // BUG-FIX (2026-04-18): the audit branch used to forget to stamp
+      // the TaskRun row with the Dust conversation sId - unlike the
+      // automation branch below (around line 388). Consequence: /runs
+      // had no way to link the run back to the live chat, so the
+      // Chat column kept showing a dash for every audit run. We now
+      // fire-and-forget the update (same pattern as the automation
+      // branch) so a stream crash halfway through still leaves a
+      // usable link on /runs.
+      db.taskRun
+        .update({
+          where: { id: run.id },
+          data: { dustConversationSId: conv.dustConversationSId },
+        })
+        .catch(() => {});
       const ac = new AbortController();
       activeRuns.set(run.id, ac);
       const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);

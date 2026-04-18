@@ -3,8 +3,8 @@ import { postToTeams, type TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
 import { getFsServerId } from '../mcp/registry';
-import { parseAuditOutput } from '../advice/parser';
-import { getAdviceDefaultByKey } from '../advice/defaults';
+import { parseAuditOutput } from '../audit/parser';
+import { getAuditDefaultByKey } from '../audit/defaults';
 import {
   parseGitRepo,
   buildGitLinks,
@@ -135,7 +135,7 @@ export async function runTask(taskId: string): Promise<void> {
     }
 
     // [2] Pre-run sync --------------------------------------------------------
-    // For advice tasks we still want an up-to-date working copy so the
+    // For audit tasks we still want an up-to-date working copy so the
     // agent analyses the latest main, but we go through a lighter path:
     // resetToBase but no branch/commit/push. For automation tasks, same
     // call then a new working branch.
@@ -144,14 +144,14 @@ export async function runTask(taskId: string): Promise<void> {
     const sync = await resetToBase(project.name, job.baseBranch);
     if (!sync.ok) throw new Error(`pre-sync failed: ${sync.error}\n${sync.output}`);
 
-    // [2b] Advice cron short-circuit: analysis only, no git writes.
+    // [2b] Audit cron short-circuit: analysis only, no git writes.
     // We still need MCP fs tools + a Dust call, but we skip branching,
     // diffing, committing and pushing. The output is parsed as a JSON
-    // block and upserted into ProjectAdvice (one row per (project,
-    // category), overwritten each run — see docs/advice UI).
-    if (job.kind === 'advice') {
+    // block and upserted into ProjectAudit (one row per (project,
+    // category), overwritten each run — see docs/audit UI).
+    if (job.kind === 'audit') {
       if (!job.category) {
-        throw new Error(`advice cron "${job.name}" has no category set`);
+        throw new Error(`audit cron "${job.name}" has no category set`);
       }
       await setPhase('mcp', 'Registering fs-cli MCP server');
       let mcpServerIds: string[] | null = null;
@@ -159,11 +159,11 @@ export async function runTask(taskId: string): Promise<void> {
         const sid = await getFsServerId(project.name);
         mcpServerIds = [sid];
       } catch (e) {
-        console.warn(`[cron/advice] MCP register failed: ${(e as Error).message}`);
+        console.warn(`[cron/audit] MCP register failed: ${(e as Error).message}`);
       }
 
       await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
-      const convTitle = `[advice:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
+      const convTitle = `[audit:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
       const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'cli');
       const ac = new AbortController();
       activeRuns.set(run.id, ac);
@@ -206,7 +206,7 @@ export async function runTask(taskId: string): Promise<void> {
       // Persist the conversation so the manually-launched task shows up
       // in /conversations history (same audit trail as the automation
       // branch below). Best-effort: a write failure here must not abort
-      // the advice pipeline — the ProjectAdvice upsert is the source of
+      // the audit pipeline — the ProjectAudit upsert is the source of
       // truth for the score/points display.
       try {
         await db.conversation.create({
@@ -235,21 +235,21 @@ export async function runTask(taskId: string): Promise<void> {
         });
       } catch (e) {
         console.warn(
-          `[cron/advice] could not persist conv: ${(e as Error).message}`,
+          `[cron/audit] could not persist conv: ${(e as Error).message}`,
         );
       }
 
       // Parse the JSON block. If parsing fails we still persist rawOutput
       // (in TaskRun.output) but mark the run 'failed' with a clear reason
       // so the user can see the malformed response and iterate on the
-      // prompt. We do NOT overwrite the previous ProjectAdvice row in that
+      // prompt. We do NOT overwrite the previous ProjectAudit row in that
       // case — stale-but-valid is better than empty.
       const parsed = parseAuditOutput(agentText);
       const points = parsed?.points ?? null;
       const score = parsed?.score ?? null;
       // v5 storage: a single category per row. `points` column holds
       // `{version:5, category, notes, points[]}`. Score is stored on
-      // the dedicated Int column. The read path in advice/aggregate
+      // the dedicated Int column. The read path in audits/aggregate
       // decodes the wrapper and falls back gracefully on malformed.
       const storedPoints = parsed
         ? JSON.stringify({
@@ -268,7 +268,7 @@ export async function runTask(taskId: string): Promise<void> {
             status: 'failed',
             phase: 'done',
             phaseMessage: 'Agent response did not match JSON contract',
-            error: 'advice parser: could not extract a valid points[] block from agent output',
+            error: 'audit parser: could not extract a valid points[] block from agent output',
             output: agentText,
             finishedAt: new Date(),
           },
@@ -277,11 +277,11 @@ export async function runTask(taskId: string): Promise<void> {
           where: { id: job.id },
           data: { lastRunAt: new Date(), lastStatus: 'failed' },
         });
-        console.warn(`[cron/advice] parse failed job="${job.name}" (${(durationMs / 1000).toFixed(1)}s)`);
+        console.warn(`[cron/audit] parse failed job="${job.name}" (${(durationMs / 1000).toFixed(1)}s)`);
         return;
       }
 
-      await db.projectAdvice.upsert({
+      await db.projectAudit.upsert({
         where: {
           projectName_category: { projectName: project.name, category: job.category },
         },
@@ -308,7 +308,7 @@ export async function runTask(taskId: string): Promise<void> {
         data: {
           status: 'success',
           phase: 'done',
-          phaseMessage: `Advice generated (${points.length} point(s))`,
+          phaseMessage: `Audit generated (${points.length} point(s))`,
           output: agentText,
           finishedAt: new Date(),
         },
@@ -318,16 +318,16 @@ export async function runTask(taskId: string): Promise<void> {
         data: { lastRunAt: new Date(), lastStatus: 'success' },
       });
       console.log(
-        `[cron/advice] success job="${job.name}" category=${job.category} points=${points.length} duration=${durationMs}ms`,
+        `[cron/audit] success job="${job.name}" category=${job.category} points=${points.length} duration=${durationMs}ms`,
       );
       if (webhook) {
         // Look up the human-readable label from the DB template so
         // custom (user-added) categories render nicely too. Fall back
         // to the slug if the template has since been deleted.
-        const tpl = await getAdviceDefaultByKey(job.category);
+        const tpl = await getAuditDefaultByKey(job.category);
         const categoryLabel = tpl?.label ?? job.category;
         await postToTeams(webhook, {
-          title: `📋 KDust advice : ${categoryLabel} — ${project.name}`,
+          title: `📋 KDust audit : ${categoryLabel} — ${project.name}`,
           summary: `${points.length} recommendation(s) generated`,
           status: 'success',
           details: points

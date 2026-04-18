@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 /**
  * UI-facing task kinds. `audit` is the v5 display name for DB
- * `kind='advice'`; URLs accept both for back-compat (aliased below).
+ * `kind='audit'`; URLs accept both for back-compat (aliased below).
  */
 type UiKind = 'all' | 'automation' | 'audit';
 type EnabledFlag = 'all' | 'on' | 'off';
@@ -36,7 +36,7 @@ type SearchProps = {
   }>;
 };
 
-/** Accept both `audit` (v5) and legacy `advice`; normalise to UI kind. */
+/** Normalise the incoming ?kind= value to a UiKind. Legacy `advice` still accepted transparently for old bookmarks. */
 function normaliseKind(raw?: string): UiKind {
   if (raw === 'automation') return 'automation';
   if (raw === 'audit' || raw === 'advice') return 'audit';
@@ -44,7 +44,7 @@ function normaliseKind(raw?: string): UiKind {
 }
 /** Map the UI kind back to DB `Task.kind` for filtering. */
 function uiKindToDb(k: UiKind): string | null {
-  if (k === 'audit') return 'advice';
+  if (k === 'audit') return 'audit';
   if (k === 'automation') return 'automation';
   return null;
 }
@@ -288,9 +288,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             {paged.map((c) => {
               const isRunning = runningIds.has(c.id);
               const last = c.runs[0];
-              // Display `audit` instead of the stored DB value `advice`.
-              const kindLabel = c.kind === 'advice' ? 'audit' : c.kind;
-              const isAudit = c.kind === 'advice';
+              const kindLabel = c.kind === 'audit' ? 'audit' : c.kind;
+              const isAudit = c.kind === 'audit';
               return (
                 <tr key={c.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="py-2 font-medium">

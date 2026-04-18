@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { isValidCronExpression } from '@/lib/cron/validator';
-import { listAdviceDefaults } from '@/lib/advice/defaults';
-import { propagateCategoryToAllProjects } from '@/lib/advice/provision';
+import { listAuditDefaults } from '@/lib/audit/defaults';
+import { propagateCategoryToAllProjects } from '@/lib/audit/provision';
 
 export const runtime = 'nodejs';
 
@@ -17,7 +17,7 @@ const CreateInput = z.object({
   emoji: z.string().min(1).max(8).default('📋'),
   prompt: z.string().min(20),
   // 'manual' accepted as a sentinel: KDust v2 removed the scheduler,
-  // advice tasks are manual-trigger only. Kept in schema for legacy
+  // audit tasks are manual-trigger only. Kept in schema for legacy
   // rows still carrying a cron expression.
   schedule: z.string().min(1).default('manual'),
   enabled: z.boolean().default(true),
@@ -25,14 +25,14 @@ const CreateInput = z.object({
 });
 
 export async function GET() {
-  const defaults = await listAdviceDefaults();
+  const defaults = await listAuditDefaults();
   return NextResponse.json({ defaults });
 }
 
 /**
- * POST /api/advice/defaults
+ * POST /api/audits/defaults
  *
- * Create a new (custom) advice category. Automatically provisions it
+ * Create a new (custom) audit category. Automatically provisions it
  * on every existing project in the same transaction — see SRS choice:
  * adding a template is meant to be instantly visible everywhere.
  */
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'schedule: invalid cron expression' }, { status: 400 });
   }
   try {
-    const created = await db.adviceCategoryDefault.create({
+    const created = await db.auditCategoryDefault.create({
       data: {
         key: d.key,
         label: d.label,
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     // Fan out to existing projects immediately. Best-effort — if Dust
     // is disconnected the user can retry via the "Propager" button.
     const provisioned = await propagateCategoryToAllProjects(d.key).catch((e) => {
-      console.warn(`[advice/defaults] post-create propagation failed:`, e);
+      console.warn(`[audit/defaults] post-create propagation failed:`, e);
       return 0;
     });
     return NextResponse.json({ default: created, provisioned }, { status: 201 });

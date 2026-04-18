@@ -11,14 +11,14 @@
  *          to 5 actionable points. Legacy v3 "priority" + v1 per-area
  *          rows are wiped at seed time (see defaults.ts).
  *
- * Source of truth: BUILTIN_ADVICE_CATEGORIES below. POINT_CATEGORIES
+ * Source of truth: BUILTIN_AUDIT_CATEGORIES below. POINT_CATEGORIES
  * is a derived view used by UI code that only cares about label /
  * emoji / color.
  */
 
-export type AdviceCategoryKey = string;
+export type AuditCategoryKey = string;
 
-export type AdviceCategoryBuiltin = {
+export type AuditCategoryBuiltin = {
   key: string;
   label: string;
   emoji: string;
@@ -33,7 +33,7 @@ export type AdviceCategoryBuiltin = {
 /**
  * Legacy keys cleaned up at seed time by ensureBuiltinsSeeded().
  * Includes both v1 per-area builtins AND the v3 "priority" task.
- * Any AdviceCategoryDefault / Task / ProjectAdvice row still carrying
+ * Any AuditCategoryDefault / Task / ProjectAudit row still carrying
  * one of these keys is migrated away (deleted) on next boot.
  */
 export const LEGACY_BUILTIN_KEYS = [
@@ -71,7 +71,7 @@ ${bullets}
 ${GRADING_RUBRIC}`;
 }
 
-export const BUILTIN_ADVICE_CATEGORIES: AdviceCategoryBuiltin[] = [
+export const BUILTIN_AUDIT_CATEGORIES: AuditCategoryBuiltin[] = [
   {
     key: 'security',
     label: 'Security',
@@ -205,7 +205,7 @@ export const BUILTIN_ADVICE_CATEGORIES: AdviceCategoryBuiltin[] = [
  * Canonical keys in display order (used by UI components iterating
  * over the category grid).
  */
-export const POINT_CATEGORY_KEYS = BUILTIN_ADVICE_CATEGORIES.map((c) => c.key);
+export const POINT_CATEGORY_KEYS = BUILTIN_AUDIT_CATEGORIES.map((c) => c.key);
 
 /**
  * Derived UI map: label + emoji + color + sortOrder per slug. Kept
@@ -215,7 +215,7 @@ export const POINT_CATEGORIES: Record<
   string,
   { label: string; emoji: string; sortOrder: number; color: string }
 > = Object.fromEntries(
-  BUILTIN_ADVICE_CATEGORIES.map((c) => [
+  BUILTIN_AUDIT_CATEGORIES.map((c) => [
     c.key,
     { label: c.label, emoji: c.emoji, sortOrder: c.sortOrder, color: c.color },
   ]),

@@ -37,7 +37,7 @@ const LEGACY_KEYS = new Set([
 ]);
 
 /**
- * Admin page to manage advice category templates.
+ * Admin page to manage audit category templates.
  *
  * v3 model (2026-04-18): the default ships a SINGLE built-in
  * "priority" category that covers security, performance, code
@@ -57,7 +57,7 @@ export default function AdviceSettingsPage() {
 
   const load = async () => {
     setLoading(true);
-    const r = await fetch('/api/advice/defaults');
+    const r = await fetch('/api/audits/defaults');
     const j = await r.json();
     setDefs(j.defaults ?? []);
     setLoading(false);
@@ -72,7 +72,7 @@ export default function AdviceSettingsPage() {
   };
 
   const save = async (d: Def) => {
-    const r = await fetch(`/api/advice/defaults/${d.id}`, {
+    const r = await fetch(`/api/audits/defaults/${d.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -100,16 +100,16 @@ export default function AdviceSettingsPage() {
     if (
       !confirm(
         `Delete category "${d.label}"?\n\n` +
-          `This will also delete all advice tasks and past results for this category on EVERY project.`,
+          `This will also delete all audit tasks and past results for this category on EVERY project.`,
       )
     )
       return;
-    const r = await fetch(`/api/advice/defaults/${d.id}`, { method: 'DELETE' });
+    const r = await fetch(`/api/audits/defaults/${d.id}`, { method: 'DELETE' });
     if (r.ok) {
       const j = await r.json();
       notify(
         'ok',
-        `Deleted. Cascaded: ${j.cascade.tasks} task(s) + ${j.cascade.advices} advice row(s).`,
+        `Deleted. Cascaded: ${j.cascade.tasks} task(s) + ${j.cascade.advices} audit row(s).`,
       );
       await load();
     } else {
@@ -128,7 +128,7 @@ export default function AdviceSettingsPage() {
       )
     )
       return;
-    const r = await fetch(`/api/advice/defaults/${d.id}/overwrite`, {
+    const r = await fetch(`/api/audits/defaults/${d.id}/overwrite`, {
       method: 'POST',
     });
     if (r.ok) {
@@ -385,12 +385,12 @@ function LegacySection({
     if (
       !confirm(
         `Delete ALL ${items.length} legacy v1 categor${items.length === 1 ? 'y' : 'ies'}?\n\n` +
-          `This will also remove any leftover tasks and advice rows. Irreversible.`,
+          `This will also remove any leftover tasks and audit rows. Irreversible.`,
       )
     )
       return;
     for (const d of items) {
-      await fetch(`/api/advice/defaults/${d.id}`, { method: 'DELETE' });
+      await fetch(`/api/audits/defaults/${d.id}`, { method: 'DELETE' });
     }
     location.reload();
   };
@@ -469,7 +469,7 @@ function CreateForm({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    const r = await fetch('/api/advice/defaults', {
+    const r = await fetch('/api/audits/defaults', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // schedule defaults to 'manual' server-side (see route validator).
@@ -508,9 +508,9 @@ function CreateForm({
     >
       <div className="flex items-center gap-2">
         <Plus size={16} className="text-amber-500" />
-        <h3 className="font-semibold">New advice category</h3>
+        <h3 className="font-semibold">New audit category</h3>
         <span className="text-[10px] text-slate-500">
-          Creates a second advice task per project, run manually on demand.
+          Creates a second audit task per project, run manually on demand.
         </span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[160px_1fr_80px] gap-2">

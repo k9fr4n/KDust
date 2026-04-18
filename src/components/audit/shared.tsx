@@ -1,12 +1,12 @@
 'use client';
 
 /**
- * Shared types + helpers used by both the per-project AdviceSection
- * and the cross-project /advice page. Kept together so score styling,
+ * Shared types + helpers used by both the per-project AuditSection
+ * and the cross-project /audits page. Kept together so score styling,
  * severity palette and chat-deep-link encoding stay consistent.
  */
 
-export type AdvicePoint = {
+export type AuditPoint = {
   /**
    * 1-based rank in the project's priority list (v4). Optional for
    * legacy v3 payloads where position in the array was the de-facto
@@ -25,11 +25,11 @@ export type AdvicePoint = {
   refs?: string[];
 };
 
-export type AdviceSlot = {
+export type AuditSlot = {
   category: string;
   label: string;
   emoji: string;
-  points: AdvicePoint[] | null;
+  points: AuditPoint[] | null;
   score: number | null;
   generatedAt: string | null;
   task: {
@@ -41,7 +41,7 @@ export type AdviceSlot = {
   } | null;
 };
 
-export const SEVERITY_STYLE: Record<AdvicePoint['severity'], string> = {
+export const SEVERITY_STYLE: Record<AuditPoint['severity'], string> = {
   low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
   medium: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
   high: 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300',
@@ -52,7 +52,7 @@ export const SEVERITY_STYLE: Record<AdvicePoint['severity'], string> = {
  * Numeric ordering for severities, used on the cross-project page to
  * surface critical items first. Higher number = worse.
  */
-export const SEVERITY_WEIGHT: Record<AdvicePoint['severity'], number> = {
+export const SEVERITY_WEIGHT: Record<AuditPoint['severity'], number> = {
   low: 1,
   medium: 2,
   high: 3,
@@ -145,14 +145,14 @@ export function ScoreBadge({ score }: { score: number | null }) {
 
 /**
  * Build a /chat deep-link that opens a fresh conversation with the
- * advice point pre-filled as the initial user message. The prompt is
+ * audit point pre-filled as the initial user message. The prompt is
  * base64(UTF-8)-encoded to survive multi-line content + special chars
  * through the query string.
  */
-export function buildChatHrefFromAdvice(opts: {
+export function buildChatHrefFromAudit(opts: {
   label: string;
   emoji: string;
-  point: AdvicePoint;
+  point: AuditPoint;
   projectName?: string;
 }) {
   const { label, emoji, point, projectName } = opts;
@@ -162,7 +162,7 @@ export function buildChatHrefFromAdvice(opts: {
       : '';
   const projectLine = projectName ? `\nProject: \`${projectName}\`\n` : '';
   const prompt =
-    `Advice (${emoji} ${label} — severity ${point.severity}):${projectLine}\n` +
+    `Audit (${emoji} ${label} — severity ${point.severity}):${projectLine}\n` +
     `**${point.title}**\n\n${point.description}${refs}\n\n` +
     `Can you help me address this point? Review the relevant code, propose ` +
     `a concrete action plan, then apply the changes if it makes sense.`;
@@ -175,8 +175,8 @@ export function buildChatHrefFromAdvice(opts: {
 
 /**
  * Build a /chat deep-link that opens a fresh conversation whose
- * initial message bundles MULTIPLE advice points as context — used by
- * the cross-project /advices page when the user checks several items
+ * initial message bundles MULTIPLE audit points as context — used by
+ * the cross-project /auditss page when the user checks several items
  * and clicks the bulk "Chat" action.
  *
  * The prompt lists each point with its project, axis, severity, rank,
@@ -184,20 +184,20 @@ export function buildChatHrefFromAdvice(opts: {
  * can digest in one shot. Points are grouped by project to minimise
  * context-switching in the agent's response.
  */
-export type BulkAdviceItem = {
+export type BulkAuditItem = {
   projectName: string;
   categoryLabel: string;
   categoryEmoji: string;
   rank: number | null;
-  point: AdvicePoint;
+  point: AuditPoint;
 };
 
-export function buildBulkAdvicePrompt(items: BulkAdviceItem[]): string {
+export function buildBulkAuditPrompt(items: BulkAuditItem[]): string {
   if (items.length === 0) return '';
 
   // Group by project so the agent sees all points for a given project
   // together (helps it batch file reads and avoid redundant tool use).
-  const byProject = new Map<string, BulkAdviceItem[]>();
+  const byProject = new Map<string, BulkAuditItem[]>();
   for (const it of items) {
     const arr = byProject.get(it.projectName) ?? [];
     arr.push(it);
@@ -223,8 +223,8 @@ export function buildBulkAdvicePrompt(items: BulkAdviceItem[]): string {
 
   const header =
     items.length === 1
-      ? `I want to discuss the following advice point:`
-      : `I want to discuss the following ${items.length} advice points together:`;
+      ? `I want to discuss the following audit point:`
+      : `I want to discuss the following ${items.length} audit points together:`;
   const footer =
     `\n\nFor each point, help me:\n` +
     `1. Confirm the finding by inspecting the referenced files\n` +
@@ -237,8 +237,8 @@ export function buildBulkAdvicePrompt(items: BulkAdviceItem[]): string {
 }
 
 /**
- * SessionStorage key used to hand off the bulk-advice prompt between
- * /advices (or AdviceSection) and the /chat page. Using sessionStorage
+ * SessionStorage key used to hand off the bulk-audit prompt between
+ * /advices (or AuditSection) and the /chat page. Using sessionStorage
  * rather than a `?prompt=<base64>` query string avoids browser URL
  * length limits (some browsers choke past ~8 KB; a 15-points prompt
  * can be 20+ KB) and survives any router soft-navigation quirks.
@@ -249,7 +249,7 @@ export function buildBulkAdvicePrompt(items: BulkAdviceItem[]): string {
 export const PENDING_CHAT_PROMPT_KEY = 'kdust.chat.pendingPrompt';
 
 /**
- * Drop a bulk-advice prompt in sessionStorage and navigate to /chat.
+ * Drop a bulk-audit prompt in sessionStorage and navigate to /chat.
  * Must be called from a click handler (NOT during render) so the
  * sessionStorage write is synchronous and ordered before navigation.
  */

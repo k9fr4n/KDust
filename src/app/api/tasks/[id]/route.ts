@@ -24,9 +24,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  // Mandatory tasks (auto-provisioned advice tasks on project creation)
+  // Mandatory tasks (auto-provisioned audit tasks on project creation)
   // cannot be deleted. User can disable them or tweak their schedule /
-  // prompt instead. See src/lib/advice/provision.ts.
+  // prompt instead. See src/lib/audit/provision.ts.
   const task = await db.task.findUnique({ where: { id }, select: { mandatory: true } });
   if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (task.mandatory) {

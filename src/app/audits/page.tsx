@@ -4,7 +4,7 @@ import { AuditsClient } from './client';
 export const dynamic = 'force-dynamic';
 
 /**
- * /audits — priority-advice browser.
+ * /audits — priority-audit browser.
  *
  * Server entry point: reads the global project scope from the
  * kdust_project cookie (set by the top navbar project selector) and

@@ -124,10 +124,10 @@ model Task {
 
   // --- advisory task settings ---
   // kind='automation' (default) = classic git-branch/commit/push pipeline.
-  // kind='advice'               = read-only analysis, result parsed as JSON
-  //                               and stored in ProjectAdvice; no git writes.
+  // kind='audit'               = read-only analysis, result parsed as JSON
+  //                               and stored in ProjectAudit; no git writes.
   kind      String   @default("automation")
-  // Only meaningful for kind='advice'. One of:
+  // Only meaningful for kind='audit'. One of:
   //   security | performance | code_quality | improvement | documentation
   category  String?
   // Mandatory tasks are auto-created with the project and cannot be
@@ -137,11 +137,11 @@ model Task {
   @@map("CronJob")
 }
 
-// Catalog of advice categories. Each entry is a "template" that gets
+// Catalog of audit categories. Each entry is a "template" that gets
 // materialized into a CronJob when a project is created (or when an
-// admin adds a new template via /settings/advice). Built-in entries
+// admin adds a new template via /settings/audits). Built-in entries
 // (builtIn=true) cannot be deleted — only disabled.
-model AdviceCategoryDefault {
+model AuditCategoryDefault {
   id         String   @id @default(cuid())
   key        String   @unique   // slug, ex: 'security', 'code_coverage'
   label      String              // FR display name
@@ -153,18 +153,24 @@ model AdviceCategoryDefault {
   builtIn    Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  // Renamed AdviceCategoryDefault -> AuditCategoryDefault in v5
+  // (Audit rebrand). Underlying SQL table kept as `AdviceCategoryDefault`
+  // via @@map to avoid a disruptive data migration \u2014 only the Prisma
+  // Client accessor name changes (db.auditCategoryDefault.*).
+  @@map("AdviceCategoryDefault")
 }
 
-// Latest advice points produced by weekly advisory crons, one row per
-// (projectName, category). Overwritten on each successful advice run.
-// Displayed in the "Conseils" section of the Projects dashboard.
-model ProjectAdvice {
+// Latest audit points produced by weekly audit crons, one row per
+// (projectName, category). Overwritten on each successful audit run.
+// Displayed in the "Audits" section of the Projects dashboard.
+model ProjectAudit {
   id          String   @id @default(cuid())
   projectName String
   category    String   // security | performance | code_quality | improvement | documentation
   // JSON-encoded array of { title, description, severity, refs? }.
   // Parsing is deferred to the read path so a malformed response in
-  // rawOutput doesn't kill the row — see cron runner advice parser.
+  // rawOutput doesn't kill the row — see cron runner audit parser.
   points      String
   // Overall category score in [0..100]. The agent grades the whole
   // category (not a single point); we parse it from the same JSON
@@ -178,6 +184,11 @@ model ProjectAdvice {
 
   @@unique([projectName, category])
   @@index([projectName])
+  // Renamed ProjectAdvice -> ProjectAudit in v5 (Audit rebrand).
+  // Underlying SQL table kept as `ProjectAdvice` via @@map to avoid a
+  // disruptive data migration \u2014 only the Prisma Client accessor
+  // name changes (db.projectAudit.*).
+  @@map("ProjectAdvice")
 }
 
 // Renamed CronRun -> TaskRun in v2. Underlying SQL table kept as

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
-import { provisionAdviceCrons } from '@/lib/advice/provision';
+import { provisionAuditCrons } from '@/lib/audit/provision';
 
 export const runtime = 'nodejs';
 // A fresh clone can easily take 30-90s on large repos; Next.js default
@@ -78,10 +78,10 @@ export async function POST(req: Request) {
   // from the user's POV — a provisioning failure (eg. Dust disconnected)
   // logs a warning but doesn't void the clone.
   try {
-    await provisionAdviceCrons(project.name);
+    await provisionAuditCrons(project.name);
   } catch (err) {
     console.warn(
-      `[projects/POST] advice cron provisioning failed for "${project.name}":`,
+      `[projects/POST] audit cron provisioning failed for "${project.name}":`,
       err instanceof Error ? err.message : err,
     );
   }

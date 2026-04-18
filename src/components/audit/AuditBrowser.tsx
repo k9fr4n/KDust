@@ -11,22 +11,22 @@ import {
   Lock,
 } from 'lucide-react';
 import {
-  AdvicePoint,
+  AuditPoint,
   SEVERITY_STYLE,
   SEVERITY_WEIGHT,
   ScoreBadge,
-  buildBulkAdvicePrompt,
+  buildBulkAuditPrompt,
   stashPromptAndGoToChat,
-  BulkAdviceItem,
+  BulkAuditItem,
 } from './shared';
 import {
   POINT_CATEGORIES,
   pointCategoryMeta,
-} from '@/lib/advice/categories';
+} from '@/lib/audit/categories';
 
 /**
  * Shared “browse-and-act-on-advice” UI used by both the cross-project
- * /advices page and the per-project AdviceSection on /projects/:id.
+ * /advices page and the per-project AuditSection on /projects/:id.
  *
  * Behaviour contract:
  *   - Top tiles      : 1 global + 6 axes. Click to toggle an axis
@@ -74,7 +74,7 @@ function chipCls(color: string): string {
   return CATEGORY_CHIP_CLS[color] ?? CATEGORY_CHIP_CLS.slate;
 }
 
-export type AdviceBrowserItem = {
+export type AuditBrowserItem = {
   projectId: string;
   projectName: string;
   /** v5: one of POINT_CATEGORY_KEYS. */
@@ -84,21 +84,21 @@ export type AdviceBrowserItem = {
   /** Short rationale emitted by the agent (<=400 chars). */
   notes?: string;
   generatedAt: string;
-  points: AdvicePoint[] | null;
+  points: AuditPoint[] | null;
 };
 
 type FlatPoint = {
   id: string;
-  point: AdvicePoint;
+  point: AuditPoint;
   rankInProject: number;
   pointCategory: string;
-  item: AdviceBrowserItem;
+  item: AuditBrowserItem;
 };
 
 type SortKey = 'severity' | 'rank' | 'project' | 'date';
 
-export function AdviceBrowser(props: {
-  items: AdviceBrowserItem[];
+export function AuditBrowser(props: {
+  items: AuditBrowserItem[];
   /** When set, the UI hides the project filter and the Project column. */
   scopedProjectId?: string | null;
   /** Optional extra element rendered in the tiles toolbar (e.g. Re-run button). */
@@ -229,7 +229,7 @@ export function AdviceBrowser(props: {
     );
   }, [items]);
 
-  // v5 tile scores: each AdviceBrowserItem row IS already one
+  // v5 tile scores: each AuditBrowserItem row IS already one
   // (project, category) score. Per-category tile = avg of scores for
   // rows with that category. Global tile = avg of per-category tiles.
   const tileScores = useMemo(() => {
@@ -262,7 +262,7 @@ export function AdviceBrowser(props: {
   const onOpenChat = () => {
     if (selectedCount === 0) return;
     const byId = new Map(flat.map((f) => [f.id, f]));
-    const bulk: BulkAdviceItem[] = [];
+    const bulk: BulkAuditItem[] = [];
     for (const id of selected) {
       const fp = byId.get(id);
       if (!fp) continue;
@@ -276,7 +276,7 @@ export function AdviceBrowser(props: {
       });
     }
     if (bulk.length === 0) return;
-    const prompt = buildBulkAdvicePrompt(bulk);
+    const prompt = buildBulkAuditPrompt(bulk);
     stashPromptAndGoToChat(prompt);
   };
 
@@ -431,7 +431,7 @@ export function AdviceBrowser(props: {
       {/* List */}
       {flat.length === 0 ? (
         <p className="text-xs italic text-slate-400 p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-md text-center">
-          No advice matches the current filters.
+          No audit matches the current filters.
         </p>
       ) : (
         <ul className="divide-y divide-slate-200 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900">
@@ -439,7 +439,7 @@ export function AdviceBrowser(props: {
             const disabled =
               !!selectionProjectId && selectionProjectId !== row.item.projectId;
             return (
-              <AdviceListRow
+              <AuditListRow
                 key={row.id}
                 row={row}
                 selected={selected.has(row.id)}
@@ -552,7 +552,7 @@ function ScoreTile(props: {
   );
 }
 
-function AdviceListRow(props: {
+function AuditListRow(props: {
   row: FlatPoint;
   selected: boolean;
   disabled: boolean;
@@ -587,7 +587,7 @@ function AdviceListRow(props: {
           disabled={disabled}
           onChange={onToggle}
           className="mt-1 shrink-0 accent-brand-600"
-          aria-label="Select this advice point"
+          aria-label="Select this audit point"
           title={
             disabled
               ? 'Selection is locked to another project. Clear the current selection to pick points from a different project.'
@@ -636,7 +636,7 @@ function AdviceListRow(props: {
             {!hideProject && (
               <>
                 <Link
-                  href={`/projects/${item.projectId}#advice`}
+                  href={`/projects/${item.projectId}#audits`}
                   className="inline-flex items-center gap-1 hover:underline"
                 >
                   <Folder size={10} /> {item.projectName}

@@ -41,7 +41,7 @@ export const runtime = 'nodejs';
  * Comprehensive usage dashboard for KDust's activity against Dust.
  *
  * Built ENTIRELY from the local KDust database (Conversation,
- * Message, Task, TaskRun, ProjectAdvice) — no calls to the Dust
+ * Message, Task, TaskRun, ProjectAudit) — no calls to the Dust
  * analytics API, which requires workspace-admin rights the user
  * doesn't have. Every conversation KDust ever initiated is persisted
  * locally (see runner.ts and /chat), so the local view is an
@@ -54,7 +54,7 @@ export const runtime = 'nodejs';
  *   2. 30-day timelines (messages, runs, conversations)
  *   3. Top agents / top projects / top tasks
  *   4. Run status breakdown
- *   5. Advice health (scores per project)
+ *   5. Audit health (scores per project)
  *   6. Recent activity
  */
 export default async function UsagePage({
@@ -162,7 +162,7 @@ export default async function UsagePage({
         _count: { select: { messages: true } },
       },
     }),
-    db.projectAdvice.findMany({
+    db.projectAudit.findMany({
       orderBy: { generatedAt: 'desc' },
       select: {
         projectName: true,
@@ -943,7 +943,7 @@ export default async function UsagePage({
             <p className="text-xs text-slate-500">
               By kind:{' '}
               <b>{kindCount.automation ?? 0}</b> automation ·{' '}
-              <b>{kindCount.advice ?? 0}</b> advice
+              <b>{kindCount.audit ?? 0}</b> audit
             </p>
             <p className="text-xs text-slate-500">
               Enabled:{' '}
@@ -999,10 +999,10 @@ export default async function UsagePage({
         </Card>
       </section>
 
-      {/* Advice health */}
+      {/* Audit health */}
       {adviceByProject.size > 0 && (
         <Card
-          title="Advice health per project"
+          title="Audit health per project"
           icon={<Activity size={14} />}
           right={<Link href="/audits" className="text-xs text-brand-500 hover:underline">view all →</Link>}
         >
@@ -1029,7 +1029,7 @@ export default async function UsagePage({
                   >
                     <td className="py-1">
                       <Link
-                        href={`/projects/${encodeURIComponent(project)}#advice`}
+                        href={`/projects/${encodeURIComponent(project)}#audits`}
                         className="hover:underline"
                       >
                         {project}

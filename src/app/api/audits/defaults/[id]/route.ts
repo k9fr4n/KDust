@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { isValidCronExpression } from '@/lib/cron/validator';
-import { deleteCategoryEverywhere } from '@/lib/advice/provision';
+import { deleteCategoryEverywhere } from '@/lib/audit/provision';
 
 export const runtime = 'nodejs';
 
@@ -26,7 +26,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   // Template edits only affect future provisioning. The user can click
   // "Propager" explicitly if they want to push a new prompt/schedule
   // to every project (see POST /propagate).
-  const updated = await db.adviceCategoryDefault.update({
+  const updated = await db.auditCategoryDefault.update({
     where: { id },
     data: parsed.data,
   });
@@ -34,17 +34,17 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 }
 
 /**
- * DELETE /api/advice/defaults/:id
+ * DELETE /api/audits/defaults/:id
  *
  * Forbidden on built-in templates (user should disable instead). For
- * custom templates, cascades: all Task+ProjectAdvice rows with the
+ * custom templates, cascades: all Task+ProjectAudit rows with the
  * matching category slug are deleted too. Set ?cascade=0 to keep them.
  */
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const url = new URL(req.url);
   const cascade = url.searchParams.get('cascade') !== '0';
-  const def = await db.adviceCategoryDefault.findUnique({ where: { id } });
+  const def = await db.auditCategoryDefault.findUnique({ where: { id } });
   if (!def) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (def.builtIn) {
     return NextResponse.json(
@@ -56,6 +56,6 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   if (cascade) {
     cascadeStats = await deleteCategoryEverywhere(def.key);
   }
-  await db.adviceCategoryDefault.delete({ where: { id } });
+  await db.auditCategoryDefault.delete({ where: { id } });
   return NextResponse.json({ ok: true, cascade: cascadeStats });
 }

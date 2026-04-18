@@ -8,22 +8,22 @@ import {
   RotateCw,
 } from 'lucide-react';
 import {
-  AdviceBrowser,
-  AdviceBrowserItem,
-} from './advice/AdviceBrowser';
-import { AdviceSlot } from './advice/shared';
+  AuditBrowser,
+  AuditBrowserItem,
+} from './audit/AuditBrowser';
+import { AuditSlot } from './audit/shared';
 
 /**
- * /projects/:id → Advice panel.
+ * /projects/:id → Audit panel.
  *
- * Per-project wrapper around <AdviceBrowser>: reuses the exact same
+ * Per-project wrapper around <AuditBrowser>: reuses the exact same
  * tiles + list + multi-select UX as /advices, minus the project
  * filter (hidden via `scopedProjectId`).
  *
  * Drives two fetches in parallel:
- *   1. /api/projects/:id/advice  → slot metadata + cron task info
+ *   1. /api/projects/:id/audits  → slot metadata + cron task info
  *      for the Re-run button & status indicators.
- *   2. /api/advice/aggregate     → decoded v4 payload (points +
+ *   2. /api/audits/aggregate     → decoded v4 payload (points +
  *      categoryScores) filtered by projectId. We reuse this route
  *      rather than duplicating the decoder, so tile math stays
  *      identical between /advices and this panel.
@@ -31,15 +31,15 @@ import { AdviceSlot } from './advice/shared';
  * `batchStartedAt` (from the parent page's "Run all" button) keeps
  * the Re-run button pulsing while a batch is still in flight.
  */
-export function AdviceSection({
+export function AuditSection({
   projectId,
   batchStartedAt,
 }: {
   projectId: string;
   batchStartedAt?: number | null;
 }) {
-  const [slots, setSlots] = useState<AdviceSlot[] | null>(null);
-  const [items, setItems] = useState<AdviceBrowserItem[] | null>(null);
+  const [slots, setSlots] = useState<AuditSlot[] | null>(null);
+  const [items, setItems] = useState<AuditBrowserItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [runningCat, setRunningCat] = useState<string | null>(null);
 
@@ -47,8 +47,8 @@ export function AdviceSection({
     setLoading(true);
     try {
       const [slotsRes, aggRes] = await Promise.all([
-        fetch(`/api/projects/${projectId}/advice`),
-        fetch(`/api/advice/aggregate`),
+        fetch(`/api/projects/${projectId}/audits`),
+        fetch(`/api/audits/aggregate`),
       ]);
       if (slotsRes.ok) {
         const j = await slotsRes.json();
@@ -56,8 +56,8 @@ export function AdviceSection({
       }
       if (aggRes.ok) {
         const j = await aggRes.json();
-        const mine: AdviceBrowserItem[] = (j.items ?? []).filter(
-          (it: AdviceBrowserItem) => it.projectId === projectId,
+        const mine: AuditBrowserItem[] = (j.items ?? []).filter(
+          (it: AuditBrowserItem) => it.projectId === projectId,
         );
         setItems(mine);
       }
@@ -101,14 +101,14 @@ export function AdviceSection({
   };
 
   if (loading && !items) {
-    return <p className="text-xs text-slate-500 p-3">Loading advice…</p>;
+    return <p className="text-xs text-slate-500 p-3">Loading audits…</p>;
   }
   if (!slots || slots.length === 0) {
     return (
       <p className="text-xs italic text-slate-500 p-3">
         No category enabled. Head to{' '}
         <a href="/settings/audits" className="underline">
-          Settings › Advice
+          Settings › Audit
         </a>
         .
       </p>
@@ -144,7 +144,7 @@ export function AdviceSection({
           || !primarySlot.task
           || pendingInBatch
         }
-        title="Re-run the advice cron now"
+        title="Re-run the audit cron now"
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
       >
         {runningCat === primarySlot.category || pendingInBatch ? (
@@ -164,14 +164,14 @@ export function AdviceSection({
           {headerExtra}
         </div>
         <p className="text-xs italic text-slate-400 p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-md text-center">
-          No advice available yet. Run the task to generate the first analysis.
+          No audit available yet. Run the task to generate the first analysis.
         </p>
       </div>
     );
   }
 
   return (
-    <AdviceBrowser
+    <AuditBrowser
       items={items!}
       scopedProjectId={projectId}
       headerExtra={headerExtra}

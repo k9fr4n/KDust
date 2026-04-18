@@ -58,7 +58,7 @@ Rules:
 /**
  * Build the final prompt sent to the Dust agent for ONE category.
  *
- * @param body        AdviceCategoryDefault.prompt (user-editable).
+ * @param body        AuditCategoryDefault.prompt (user-editable).
  * @param projectName Project slug (also the fs mount path).
  * @param categoryKey Canonical slug (security, performance, ...).
  */
@@ -77,15 +77,6 @@ ${jsonContract(categoryKey).trim()}
 `;
 }
 
-/**
- * Legacy alias kept for callers that haven't been migrated yet.
- * Ignores the category because pre-v5 callers had a single prompt.
- * @deprecated use buildAuditPrompt(body, projectName, categoryKey).
- */
-export function buildAdvicePrompt(
-  body: string,
-  projectName: string,
-  categoryKey = 'priority',
-): string {
-  return buildAuditPrompt(body, projectName, categoryKey);
-}
+// v5 rename: `buildAdvicePrompt` was merged into `buildAuditPrompt`
+// (the one canonical entry point above). The legacy alias has been
+// removed; all call sites were migrated in the same commit.

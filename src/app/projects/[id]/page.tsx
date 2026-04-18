@@ -12,7 +12,7 @@ import {
   ListChecks,
   RotateCw,
 } from 'lucide-react';
-import { AdviceSection } from '@/components/AdviceSection';
+import { AuditSection } from '@/components/AuditSection';
 import { RunNowButton } from '@/components/RunNowButton';
 
 type Project = {
@@ -29,7 +29,7 @@ type Task = {
   name: string;
   schedule: string;
   timezone: string;
-  kind: 'automation' | 'advice';
+  kind: 'automation' | 'audit';
   category: string | null;
   mandatory: boolean;
   enabled: boolean;
@@ -40,7 +40,7 @@ type Task = {
 /**
  * Per-project dashboard. Shows:
  *   - project metadata
- *   - weekly "Advice" panel (advice slots, one per enabled template)
+ *   - weekly "Audit" panel (audit slots, one per enabled template)
  *   - list of every cron attached to the project, with direct link
  *     to /tasks/:id for prompt/schedule editing
  */
@@ -53,8 +53,8 @@ export default function ProjectDashboardPage({
   const [project, setProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  // State shared with AdviceSection: epoch-ms when "Run all" kicked
-  // off. The AdviceSection uses it to highlight pending categories +
+  // State shared with AuditSection: epoch-ms when "Run all" kicked
+  // off. The AuditSection uses it to highlight pending categories +
   // auto-poll. Null = idle. We also use it here to disable the
   // trigger button and show a progress hint.
   const [adviceBatchStartedAt, setAdviceBatchStartedAt] = useState<number | null>(
@@ -86,14 +86,14 @@ export default function ProjectDashboardPage({
   };
 
   /**
-   * Kick off the sequential "Run all advice" batch for this project.
+   * Kick off the sequential "Run all audits" batch for this project.
    * The endpoint fires the loop in the background; we record the
-   * timestamp so AdviceSection can poll + detect completion.
+   * timestamp so AuditSection can poll + detect completion.
    */
   const runAllAdvice = async () => {
     if (adviceBatchStartedAt) return;
     const startedAt = Date.now() - 2000; // 2s grace for client/server clock drift
-    const r = await fetch(`/api/projects/${id}/advice/run-all`, {
+    const r = await fetch(`/api/projects/${id}/audits/run-all`, {
       method: 'POST',
     });
     if (!r.ok) return;
@@ -103,15 +103,15 @@ export default function ProjectDashboardPage({
     setAdviceBatchStartedAt(startedAt);
     setAdviceBatchSize(count);
     // Safety timeout: clear batch state after 20 min even if the
-    // progress detection in AdviceSection doesn't catch completion
+    // progress detection in AuditSection doesn't catch completion
     // (e.g. all categories skipped because a sibling cron was running).
     setTimeout(
       () => setAdviceBatchStartedAt((s) => (s === startedAt ? null : s)),
       20 * 60 * 1000,
     );
     // Poll cron metadata every 5s to detect completion here (the
-    // AdviceSection does its own advice-endpoint polling). When every
-    // advice cron has a lastRunAt newer than startedAt, we can drop
+    // AuditSection does its own audit-endpoint polling). When every
+    // audit cron has a lastRunAt newer than startedAt, we can drop
     // the batch state.
     const iv = setInterval(async () => {
       const tasksRes = await fetch(`/api/projects/${id}/tasks`).then((rr) =>
@@ -119,7 +119,7 @@ export default function ProjectDashboardPage({
       );
       const list: Task[] = tasksRes.tasks ?? [];
       setTasks(list);
-      const advCrons = list.filter((c) => c.kind === 'advice' && c.enabled);
+      const advCrons = list.filter((c) => c.kind === 'audit' && c.enabled);
       const allDone =
         advCrons.length > 0 &&
         advCrons.every((c) => {
@@ -144,8 +144,8 @@ export default function ProjectDashboardPage({
       </div>
     );
 
-  const adviceTasks = tasks.filter((c) => c.kind === 'advice');
-  const otherTasks = tasks.filter((c) => c.kind !== 'advice');
+  const adviceTasks = tasks.filter((c) => c.kind === 'audit');
+  const otherTasks = tasks.filter((c) => c.kind !== 'audit');
 
   return (
     <div className="space-y-6">
@@ -162,7 +162,7 @@ export default function ProjectDashboardPage({
       </div>
 
       {/* ====== Advices ====== */}
-      <section id="advice" className="scroll-mt-20">
+      <section id="audits" className="scroll-mt-20">
         <h2 className="text-lg font-semibold flex items-center gap-2 mb-3">
           <Lightbulb size={18} className="text-amber-500" />
           Advices
@@ -170,7 +170,7 @@ export default function ProjectDashboardPage({
             — weekly automated analyses
           </span>
         </h2>
-        <AdviceSection projectId={id} batchStartedAt={adviceBatchStartedAt} />
+        <AuditSection projectId={id} batchStartedAt={adviceBatchStartedAt} />
       </section>
 
       {/* ====== Project tasks ====== */}
@@ -181,26 +181,26 @@ export default function ProjectDashboardPage({
           <span className="text-xs font-normal text-slate-500">
             — {tasks.length} active
           </span>
-          {/* "Run all advice sequentially" button. Placed here so users
+          {/* "Run all audits sequentially" button. Placed here so users
               can trigger a full batch from the tasks control centre,
-              not buried inside the Advice panel. The batch state is
-              lifted to this component and piped into AdviceSection so
+              not buried inside the Audit panel. The batch state is
+              lifted to this component and piped into AuditSection so
               both surfaces stay in sync. */}
           <div className="ml-auto flex items-center gap-2">
             {adviceBatchStartedAt && (
               <span className="text-xs text-amber-600 dark:text-amber-300 inline-flex items-center gap-1.5">
                 <RotateCw size={11} className="animate-spin" />
-                Running {adviceBatchSize} advice cron(s) sequentially…
+                Running {adviceBatchSize} audit cron(s) sequentially…
               </span>
             )}
             <button
               onClick={runAllAdvice}
               disabled={!!adviceBatchStartedAt || adviceTasks.length === 0}
-              title="Run every enabled advice cron of this project, one after the other"
+              title="Run every enabled audit cron of this project, one after the other"
               className="text-xs px-2 py-1 rounded border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
             >
               <ListChecks size={12} />
-              {adviceBatchStartedAt ? 'Running…' : 'Run all advice sequentially'}
+              {adviceBatchStartedAt ? 'Running…' : 'Run all audits sequentially'}
             </button>
             <button
               onClick={() => void loadAll()}
@@ -212,7 +212,7 @@ export default function ProjectDashboardPage({
         </h2>
 
         <TaskTable
-          title="Advice (mandatory)"
+          title="Audit (mandatory)"
           rows={adviceTasks}
           onToggle={toggleEnabled}
         />

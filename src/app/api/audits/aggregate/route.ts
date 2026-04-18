@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listAdviceDefaults } from '@/lib/advice/defaults';
+import { listAuditDefaults } from '@/lib/audit/defaults';
 
 export const runtime = 'nodejs';
 
 /**
- * GET /api/advice/aggregate
+ * GET /api/audits/aggregate
  *
  * Cross-project audit digest (v5). One row per (project, category).
  * Each row carries its own category-level `score` and a points[]
@@ -13,16 +13,16 @@ export const runtime = 'nodejs';
  * without roundtripping.
  *
  * Missing category templates are tolerated: we fall back to the
- * category key as label so an orphan advice row (template deleted)
+ * category key as label so an orphan audit row (template deleted)
  * still surfaces rather than disappearing silently.
  */
 export async function GET() {
   const [advices, projects, defaults] = await Promise.all([
-    db.projectAdvice.findMany({ orderBy: { generatedAt: 'desc' } }),
+    db.projectAudit.findMany({ orderBy: { generatedAt: 'desc' } }),
     db.project.findMany({
       select: { id: true, name: true, gitUrl: true, branch: true },
     }),
-    listAdviceDefaults(),
+    listAuditDefaults(),
   ]);
 
   const projByName = new Map(projects.map((p) => [p.name, p]));

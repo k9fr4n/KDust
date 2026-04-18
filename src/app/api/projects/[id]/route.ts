@@ -21,7 +21,7 @@ export const runtime = 'nodejs';
  *
  * Cleanup covers:
  *   - Conversations  (Message rows cascade via schema)
- *   - ProjectAdvice
+ *   - ProjectAudit
  *   - Task        (TaskRun rows cascade via schema)
  *   - MCP fs server  (in-memory handle, so the next /chat doesn't
  *                     talk to a stale transport rooted at a vanished
@@ -47,10 +47,10 @@ export async function DELETE(
   // --- DB cascade in a single transaction ---------------------------------
   // deleteMany is idempotent: if there are no matches, counts come back as 0.
   // Keeping all four writes in one transaction ensures we don't end up with
-  // orphaned tasks/conversations/advice if the Project.delete step fails.
+  // orphaned tasks/conversations/audits if the Project.delete step fails.
   const [convs, advices, tasks] = await db.$transaction([
     db.conversation.deleteMany({ where: { projectName: p.name } }),
-    db.projectAdvice.deleteMany({ where: { projectName: p.name } }),
+    db.projectAudit.deleteMany({ where: { projectName: p.name } }),
     db.task.deleteMany({ where: { projectPath: p.name } }),
     // Project row deleted last; result is ignored but still part of the tx
     // so a failure here rolls back the deleteManys above.

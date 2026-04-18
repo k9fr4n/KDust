@@ -211,15 +211,15 @@ function ChatPageInner() {
     if (requested) void loadConv(requested);
 
     // If ?prompt=<base64> is present, prefill the draft with the
-    // decoded text (UTF-8 safe). Used by deep-links from the advice
+    // decoded text (UTF-8 safe). Used by deep-links from the audit
     // panel: each point has a "Chat" shortcut that opens a new empty
     // conversation with the point description already typed in the
     // textarea so the user just has to hit Send.
     // Prompt can arrive via two channels:
     //   1. sessionStorage (preferred — used by /advices bulk chat +
-    //      AdviceSection) to avoid URL length limits on big prompts.
+    //      AuditSection) to avoid URL length limits on big prompts.
     //   2. ?prompt=<base64> query string (legacy single-point deep
-    //      link from advice cards).
+    //      link from audit cards).
     // sessionStorage takes precedence and is consumed single-shot.
     if (!requested) {
       try {

@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { propagateCategoryToAllProjects } from '@/lib/advice/provision';
+import { propagateCategoryToAllProjects } from '@/lib/audit/provision';
 
 export const runtime = 'nodejs';
 
 /**
- * POST /api/advice/defaults/:id/propagate
+ * POST /api/audits/defaults/:id/propagate
  *
  * Force-provision this template on every project that doesn't yet
  * have a cron for this category. Existing per-project tasks are NOT
@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const def = await db.adviceCategoryDefault.findUnique({ where: { id } });
+  const def = await db.auditCategoryDefault.findUnique({ where: { id } });
   if (!def) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const count = await propagateCategoryToAllProjects(def.key);
   return NextResponse.json({ ok: true, created: count });

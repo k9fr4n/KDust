@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listEnabledAdviceDefaults } from '@/lib/advice/defaults';
+import { listEnabledAuditDefaults } from '@/lib/audit/defaults';
 
 export const runtime = 'nodejs';
 
 /**
- * GET /api/projects/:id/advice
+ * GET /api/projects/:id/audits
  *
- * Returns the latest advice row per category for a project, plus the
+ * Returns the latest audit row per category for a project, plus the
  * associated cron job metadata (schedule, lastRunAt, lastStatus) so
  * the dashboard can show "next run in X days" / "generation failed".
  *
@@ -20,10 +20,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const [defaults, advices, tasks] = await Promise.all([
-    listEnabledAdviceDefaults(),
-    db.projectAdvice.findMany({ where: { projectName: project.name } }),
+    listEnabledAuditDefaults(),
+    db.projectAudit.findMany({ where: { projectName: project.name } }),
     db.task.findMany({
-      where: { projectPath: project.name, kind: 'advice' },
+      where: { projectPath: project.name, kind: 'audit' },
       select: {
         id: true,
         category: true,

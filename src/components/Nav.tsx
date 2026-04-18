@@ -11,7 +11,7 @@ export async function Nav() {
 
 
   // Order (per product ask): Dashboard, Conversations, Chat, Runs,
-  // Crons, Advice. Project-scoped routes are locked when no project
+  // Crons, Audits. Project-scoped routes are locked when no project
   // is selected.
   const main: Array<{
     href: string;

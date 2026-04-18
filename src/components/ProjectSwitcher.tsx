@@ -55,7 +55,7 @@ export function ProjectSwitcher() {
     // useEffects, which means data already loaded with the previous
     // project would stay stale until manual interaction. A full reload
     // is the only reliable cross-page guarantee that everything
-    // (conversations list, runs filter, advice slots, dashboard
+    // (conversations list, runs filter, audit slots, dashboard
     // counters, MCP fs server handle, …) gets re-fetched against the
     // new scope.
     window.location.reload();

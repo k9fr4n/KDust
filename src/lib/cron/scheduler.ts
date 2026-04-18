@@ -12,7 +12,7 @@
  *
  * `reloadScheduler()` and `stopScheduler()` are kept as exported no-op
  * stubs so the existing call-sites (project create/delete, task CRUD,
- * advice provisioning) continue to compile and behave correctly
+ * audit provisioning) continue to compile and behave correctly
  * without any code churn. If/when all callers are cleaned up, this
  * whole file can be deleted — until then it's the cheap compatibility
  * shim.

@@ -131,13 +131,6 @@ export function parseAuditOutput(raw: string): AuditPayload | null {
   return null;
 }
 
-/**
- * Legacy alias kept for callers that still import parseAdviceOutput.
- * Returns a shape-compatible-enough object so the runner keeps
- * compiling until it's migrated alongside. New code should use
- * parseAuditOutput directly.
- * @deprecated
- */
-export function parseAdviceOutput(raw: string): AuditPayload | null {
-  return parseAuditOutput(raw);
-}
+// v5 rename: `parseAdviceOutput` was merged into `parseAuditOutput`
+// (the canonical entry point above). The legacy alias has been
+// removed; all call sites were migrated in the same commit.

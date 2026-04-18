@@ -36,7 +36,7 @@ type SearchProps = {
  *
  * Default scope: current project (cookie) if set, else all projects.
  */
-export default async function CronsPage({ searchParams }: SearchProps) {
+export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const cookieProject = await getCurrentProjectName();
   const q = (sp.q ?? '').trim();
@@ -117,7 +117,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
       <div className="flex items-center gap-3 mb-4">
         <Clock className="text-slate-400" />
         <h1 className="text-2xl font-bold">
-          Crons
+          Tasks
           {projectFilter && (
             <span className="ml-2 text-base font-normal text-slate-500">
               · {projectFilter}

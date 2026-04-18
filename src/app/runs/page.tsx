@@ -1,9 +1,26 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
-import { Clock, MessageCircle } from 'lucide-react';
+import { Clock, MessageCircle, ChevronUp, ChevronDown } from 'lucide-react';
+import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
+
+type SortKey =
+  | 'status'
+  | 'task'
+  | 'project'
+  | 'started'
+  | 'duration'
+  | 'diff'
+  | 'branch';
+type SortDir = 'asc' | 'desc';
+const SORT_KEYS: SortKey[] = [
+  'status', 'task', 'project', 'started', 'duration', 'diff', 'branch',
+];
+function normaliseSort(raw?: string): SortKey {
+  return (SORT_KEYS as string[]).includes(raw ?? '') ? (raw as SortKey) : 'started';
+}
 
 const STATUS_CLASS: Record<string, string> = {
   success: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400',
@@ -15,7 +32,14 @@ const STATUS_CLASS: Record<string, string> = {
 };
 
 type SearchProps = {
-  searchParams?: Promise<{ status?: string; task?: string; q?: string; limit?: string }>;
+  searchParams?: Promise<{
+    status?: string;
+    task?: string;
+    q?: string;
+    limit?: string;
+    sort?: string;
+    dir?: SortDir;
+  }>;
 };
 
 export default async function RunsPage({ searchParams }: SearchProps) {
@@ -24,6 +48,8 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const taskFilter = sp.task || undefined;
   const q = (sp.q ?? '').trim();
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
+  const sort: SortKey = normaliseSort(sp.sort);
+  const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
   const currentProject = await getCurrentProjectName();
 
   // Free-text search across the fields users most commonly want to find
@@ -40,6 +66,20 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       }
     : {};
 
+  // Most sort keys can be delegated to SQLite via Prisma. `duration`
+  // and `diff` are computed post-fetch (finishedAt-startedAt is not a
+  // column; filesChanged is nullable and we want null-last ordering).
+  // When the user picks one of the computed sorts we still ask the DB
+  // for a deterministic order (startedAt desc) as a stable baseline
+  // before re-sorting in memory.
+  const dbOrderBy: Prisma.TaskRunOrderByWithRelationInput | Prisma.TaskRunOrderByWithRelationInput[] =
+    sort === 'status'  ? { status:    dir } :
+    sort === 'task'    ? { task: { name: dir } } :
+    sort === 'project' ? { task: { projectPath: dir } } :
+    sort === 'branch'  ? { branch:    dir } :
+    sort === 'started' ? { startedAt: dir } :
+    { startedAt: 'desc' }; // duration / diff \u2192 in-memory re-sort below
+
   const runs = await db.taskRun.findMany({
     where: {
       ...(statusFilter ? { status: statusFilter } : {}),
@@ -47,10 +87,32 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       ...(currentProject ? { task: { is: { projectPath: currentProject } } } : {}),
       ...qClause,
     },
-    orderBy: { startedAt: 'desc' },
+    orderBy: dbOrderBy,
     take: limit,
     include: { task: { select: { id: true, name: true, projectPath: true } } },
   });
+
+  // In-memory re-sort for computed fields. Tiebreak on startedAt desc
+  // so rows stay deterministic when values collide (e.g. many runs\n  // with filesChanged=null).
+  if (sort === 'duration' || sort === 'diff') {
+    const mult = dir === 'asc' ? 1 : -1;
+    const valOf = (r: (typeof runs)[number]) =>
+      sort === 'duration'
+        ? (r.finishedAt && r.startedAt
+            ? r.finishedAt.getTime() - r.startedAt.getTime()
+            : null)
+        : (r.filesChanged ?? null);
+    runs.sort((a, b) => {
+      const va = valOf(a);
+      const vb = valOf(b);
+      // null/undefined always sink to the bottom regardless of dir:\n      // \"no value\" is less informative than any value, both asc & desc.\n      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      const r = (va - vb) * mult;
+      if (r !== 0) return r;
+      return b.startedAt.getTime() - a.startedAt.getTime();
+    });
+  }
 
   // Resolve TaskRun.dustConversationSId → local Conversation.id in a
   // single query. Stored as a soft reference (no FK) so we do the
@@ -74,6 +136,40 @@ export default async function RunsPage({ searchParams }: SearchProps) {
 
   const statuses = ['all', 'running', 'success', 'failed', 'aborted', 'no-op', 'skipped'];
 
+  // URL builder that preserves the current context (status/task/q)
+  // while patching a subset of keys. Sort + dir are only serialised
+  // when they differ from the default (started desc), keeping
+  // pristine links short.
+  const buildHref = (patch: Partial<{
+    status: string;
+    task: string;
+    q: string;
+    sort: SortKey;
+    dir: SortDir;
+  }>) => {
+    const qs = new URLSearchParams();
+    const merged = {
+      status: patch.status ?? statusFilter ?? 'all',
+      task: patch.task ?? taskFilter ?? '',
+      q: patch.q ?? q,
+      sort: patch.sort ?? sort,
+      dir: patch.dir ?? dir,
+    };
+    if (merged.status && merged.status !== 'all') qs.set('status', merged.status);
+    if (merged.task) qs.set('task', merged.task);
+    if (merged.q) qs.set('q', merged.q);
+    if (merged.sort !== 'started') qs.set('sort', merged.sort);
+    if (merged.dir !== 'desc') qs.set('dir', merged.dir);
+    return `/runs${qs.toString() ? `?${qs}` : ''}`;
+  };
+  const sortHref = (col: SortKey) => {
+    if (sort === col) return buildHref({ dir: dir === 'asc' ? 'desc' : 'asc' });
+    // Durations / diffs / started feel most natural desc first; text-ish fields asc.
+    const defaultDir: SortDir =
+      col === 'started' || col === 'duration' || col === 'diff' ? 'desc' : 'asc';
+    return buildHref({ sort: col, dir: defaultDir });
+  };
+
   return (
     <div className="w-full">
       <div className="flex items-center gap-3 mb-4">
@@ -96,6 +192,8 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         />
         {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
         {taskFilter && <input type="hidden" name="task" value={taskFilter} />}
+        {sort !== 'started' && <input type="hidden" name="sort" value={sort} />}
+        {dir !== 'desc' && <input type="hidden" name="dir" value={dir} />}
         <button
           type="submit"
           className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
@@ -160,13 +258,14 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
             <tr>
-              <th className="py-2">Status</th>
-              <th>Task</th>
-              <th>Project</th>
-              <th>Started</th>
-              <th>Duration</th>
-              <th>Diff</th>
-              <th>Branch</th>
+              <SortableTh col="status"   sort={sort} dir={dir} href={sortHref('status')}>Status</SortableTh>
+              <SortableTh col="task"     sort={sort} dir={dir} href={sortHref('task')}>Task</SortableTh>
+              <SortableTh col="project"  sort={sort} dir={dir} href={sortHref('project')}>Project</SortableTh>
+              <SortableTh col="started"  sort={sort} dir={dir} href={sortHref('started')}>Started</SortableTh>
+              <SortableTh col="duration" sort={sort} dir={dir} href={sortHref('duration')}>Duration</SortableTh>
+              <SortableTh col="diff"     sort={sort} dir={dir} href={sortHref('diff')}>Diff</SortableTh>
+              <SortableTh col="branch"   sort={sort} dir={dir} href={sortHref('branch')}>Branch</SortableTh>
+              <th className="py-2">Chat</th>
               <th></th>
             </tr>
           </thead>
@@ -262,5 +361,50 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         </table>
       )}
     </div>
+  );
+}
+
+/**
+ * Clickable <th> for server-rendered column sorting. Mirrors the
+ * implementation on /tasks so the two pages look and behave
+ * identically. Toggles direction on re-click, otherwise jumps to the
+ * column's default direction (set in sortHref()).
+ */
+function SortableTh({
+  col,
+  sort,
+  dir,
+  href,
+  children,
+}: {
+  col: SortKey;
+  sort: SortKey;
+  dir: SortDir;
+  href: string;
+  children: React.ReactNode;
+}) {
+  const active = sort === col;
+  return (
+    <th className="py-2">
+      <Link
+        href={href}
+        className={
+          'inline-flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-200 ' +
+          (active ? 'text-slate-700 dark:text-slate-200 font-semibold' : '')
+        }
+        aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        {children}
+        {active ? (
+          dir === 'asc' ? (
+            <ChevronUp size={12} />
+          ) : (
+            <ChevronDown size={12} />
+          )
+        ) : (
+          <span className="inline-block w-3" />
+        )}
+      </Link>
+    </th>
   );
 }

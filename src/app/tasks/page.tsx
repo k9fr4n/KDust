@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Clock, ChevronUp, ChevronDown } from 'lucide-react';
+import { Clock, ChevronUp, ChevronDown, MessageCircle } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
@@ -236,24 +236,28 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         )}
       </form>
 
-      {/* Kind */}
-      <div className="flex flex-wrap gap-2 mb-2 text-xs">
+      {/*
+        All three filter groups on a single wrap-aware row. We keep
+        the per-group FilterLabel as an anchor so the eye can land
+        on the category before scanning the pills. `flex-wrap` lets
+        narrow viewports spill onto extra rows without shipping a
+        second horizontal scrollbar.
+      */}
+      <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
         <FilterLabel>Kind:</FilterLabel>
         <Link href={buildHref({ kind: 'all' })} className={pillCls(kind === 'all')}>all</Link>
         <Link href={buildHref({ kind: 'automation' })} className={pillCls(kind === 'automation')}>automation</Link>
         <Link href={buildHref({ kind: 'audit' })} className={pillCls(kind === 'audit')}>audit</Link>
-      </div>
 
-      {/* Enabled */}
-      <div className="flex flex-wrap gap-2 mb-2 text-xs">
+        <span className="mx-1 h-4 w-px bg-slate-200 dark:bg-slate-700" aria-hidden />
+
         <FilterLabel>Enabled:</FilterLabel>
         <Link href={buildHref({ enabled: 'all' })} className={pillCls(enabled === 'all')}>all</Link>
         <Link href={buildHref({ enabled: 'on' })} className={pillCls(enabled === 'on')}>on</Link>
         <Link href={buildHref({ enabled: 'off' })} className={pillCls(enabled === 'off')}>off</Link>
-      </div>
 
-      {/* Last status */}
-      <div className="flex flex-wrap gap-2 mb-2 text-xs">
+        <span className="mx-1 h-4 w-px bg-slate-200 dark:bg-slate-700" aria-hidden />
+
         <FilterLabel>Last run:</FilterLabel>
         <Link href={buildHref({ status: 'all' })} className={pillCls(status === 'all')}>all</Link>
         <Link href={buildHref({ status: 'success' })} className={pillCls(status === 'success')}>success</Link>

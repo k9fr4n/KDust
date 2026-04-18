@@ -348,19 +348,13 @@ export function AdviceBrowser(props: {
           ))}
         </div>
 
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900"
-          title="Filter by category"
-        >
-          <option value="__all__">All categories</option>
-          {Object.entries(POINT_CATEGORIES).map(([key, meta]) => (
-            <option key={key} value={key}>
-              {meta.emoji} {meta.label}
-            </option>
-          ))}
-        </select>
+        {/*
+          The category <select> was removed here: the colored score
+          tiles above (Global + one per category) already expose the
+          same filter with a single click, so the dropdown was pure
+          duplication noise. Filter state (`categoryFilter`) remains
+          \u2014 it's still driven by clicking a tile.
+        */}
 
         <div className="inline-flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900">
           <ArrowUpDown size={11} className="text-slate-400" />

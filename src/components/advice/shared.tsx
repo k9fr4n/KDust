@@ -172,3 +172,71 @@ export function buildChatHrefFromAdvice(opts: {
       : '';
   return `/chat?prompt=${encodeURIComponent(b64)}`;
 }
+
+/**
+ * Build a /chat deep-link that opens a fresh conversation whose
+ * initial message bundles MULTIPLE advice points as context — used by
+ * the cross-project /advices page when the user checks several items
+ * and clicks the bulk "Chat" action.
+ *
+ * The prompt lists each point with its project, axis, severity, rank,
+ * title, description and refs in a compact markdown format the agent
+ * can digest in one shot. Points are grouped by project to minimise
+ * context-switching in the agent's response.
+ */
+export function buildChatHrefForMultipleAdvices(
+  items: Array<{
+    projectName: string;
+    categoryLabel: string;
+    categoryEmoji: string;
+    rank: number | null;
+    point: AdvicePoint;
+  }>,
+): string {
+  if (items.length === 0) return '/chat';
+
+  // Group by project so the agent sees all points for a given project
+  // together (helps it batch file reads and avoid redundant tool use).
+  const byProject = new Map<string, typeof items>();
+  for (const it of items) {
+    const arr = byProject.get(it.projectName) ?? [];
+    arr.push(it);
+    byProject.set(it.projectName, arr);
+  }
+
+  const sections: string[] = [];
+  for (const [projectName, group] of byProject) {
+    const lines: string[] = [`### Project: \`${projectName}\``];
+    for (const it of group) {
+      const refs =
+        it.point.refs && it.point.refs.length > 0
+          ? `\n  Refs: ${it.point.refs.join(', ')}`
+          : '';
+      const rankStr = it.rank ? `#${it.rank} ` : '';
+      lines.push(
+        `- ${rankStr}**${it.point.title}** — ${it.categoryEmoji} ${it.categoryLabel} · severity **${it.point.severity}**\n` +
+          `  ${it.point.description}${refs}`,
+      );
+    }
+    sections.push(lines.join('\n'));
+  }
+
+  const header =
+    items.length === 1
+      ? `I want to discuss the following advice point:`
+      : `I want to discuss the following ${items.length} advice points together:`;
+  const footer =
+    `\n\nFor each point, help me:\n` +
+    `1. Confirm the finding by inspecting the referenced files\n` +
+    `2. Propose a concrete remediation plan (smallest safe change first)\n` +
+    `3. Apply the change when it's low-risk and uncontroversial, or ` +
+    `flag it for review when the trade-offs are non-trivial.\n` +
+    `Batch work by project when possible.`;
+
+  const prompt = `${header}\n\n${sections.join('\n\n')}${footer}`;
+  const b64 =
+    typeof window !== 'undefined'
+      ? btoa(unescape(encodeURIComponent(prompt)))
+      : '';
+  return `/chat?prompt=${encodeURIComponent(b64)}`;
+}

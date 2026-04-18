@@ -10,13 +10,14 @@ import {
   ChevronRight,
   Search,
   X,
+  ArrowUpDown,
 } from 'lucide-react';
 import {
   AdvicePoint,
   SEVERITY_STYLE,
   SEVERITY_WEIGHT,
   ScoreBadge,
-  buildChatHrefFromAdvice,
+  buildChatHrefForMultipleAdvices,
 } from '@/components/advice/shared';
 import {
   POINT_CATEGORIES,
@@ -24,42 +25,39 @@ import {
 } from '@/lib/advice/categories';
 
 /**
- * Static Tailwind class map per color bucket. Built statically (no
- * string interpolation) so Tailwind's JIT picks them up — dynamic
- * `bg-${color}-50` classes would be stripped by purgeCSS at build.
+ * Cross-project priority advice page — v4 (2026-04-18).
+ *
+ * Layout:
+ *   1. Top tiles  : 1 global score tile + 6 per-axis score tiles.
+ *                   When a single project is selected, tiles show
+ *                   the stored scores verbatim; in "All projects"
+ *                   mode, tiles display the average across projects
+ *                   (only counting non-null scores). Clicking a tile
+ *                   filters the list below by that axis; clicking
+ *                   the global tile clears the axis filter.
+ *   2. Toolbar    : project / severity / axis / sort / search.
+ *   3. List       : checkable rows. No per-row Chat link anymore —
+ *                   selection drives a sticky bottom bar that opens
+ *                   a chat with ALL selected items as context.
+ *
+ * The /chat deep-link is built via buildChatHrefForMultipleAdvices()
+ * which groups points by project so the agent batches file reads.
  */
+
+/** Static Tailwind class map so the JIT keeps the color classes. */
 const CATEGORY_CHIP_CLS: Record<string, string> = {
   red: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900',
-  amber:
-    'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900',
-  purple:
-    'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-900',
+  amber: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900',
+  purple: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-900',
   blue: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-900',
-  emerald:
-    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900',
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900',
   cyan: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/30 dark:text-cyan-300 dark:border-cyan-900',
-  slate:
-    'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-300 dark:border-slate-800',
+  slate: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-300 dark:border-slate-800',
 };
-
 function chipCls(color: string): string {
   return CATEGORY_CHIP_CLS[color] ?? CATEGORY_CHIP_CLS.slate;
 }
 
-/**
- * v4 contract (2026-04-18): the agent returns one JSON payload per
- * project with:
- *   - category_scores  : 6 axes (security / performance / …) each
- *                        with `{score, notes}`
- *   - global_score     : overall project health
- *   - points           : up to 15 ranked items, each carrying its own
- *                        `category` + `rank`
- *
- * /api/advice/aggregate exposes this through the `categoryScores`
- * and per-point fields. We keep the DB `category` column around (it
- * still holds "priority" for v4 / old axis keys for legacy rows)
- * mainly for join purposes; the UI groups / filters on point.category.
- */
 type Item = {
   projectId: string;
   projectName: string;
@@ -73,32 +71,16 @@ type Item = {
 };
 
 type FlatPoint = {
+  /** Stable id = projectId#rankInProject. Used for checkbox state. */
+  id: string;
   point: AdvicePoint;
-  /**
-   * 1-based position of this point in the source project's ranked
-   * list. Derived from `point.rank` (v4) or from array index (v3).
-   */
   rankInProject: number;
-  /** Resolved category slug (falls back to the row's category). */
   pointCategory: string;
   item: Item;
 };
 
-/**
- * Cross-project "most critical advice" page — v3 (2026-04-18).
- *
- * v3 change: the default config now produces ONE "priority" category
- * per project with up to 15 globally-ranked points. The page was
- * previously dominated by a per-project score grid + cards per point;
- * it is now a plain list, with a severity filter and a collapsed
- * "per-project scores" row kept as a secondary information block.
- *
- * Sort:
- *   1. point severity desc
- *   2. project score asc   (worst-scored projects surface first)
- *   3. rank-in-project asc (respect the agent's own ordering)
- *   4. generatedAt desc
- */
+type SortKey = 'severity' | 'rank' | 'project' | 'date';
+
 export default function AdvicePage() {
   const [items, setItems] = useState<Item[] | null>(null);
   const [counts, setCounts] = useState<{
@@ -111,34 +93,21 @@ export default function AdvicePage() {
   >('medium');
   const [projectFilter, setProjectFilter] = useState<string>('__all__');
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
+  const [sortKey, setSortKey] = useState<SortKey>('severity');
   const [q, setQ] = useState('');
-  const [showScores, setShowScores] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Normalised free-text search: case-insensitive, trimmed. Matches
-  // point.title / description / refs, plus the project name and
-  // category label so typing "security" or a project acronym works.
-  const qLower = q.trim().toLowerCase();
-  const matchesQuery = (fp: FlatPoint): boolean => {
-    if (!qLower) return true;
-    const { point, item } = fp;
-    const refs = point.refs?.join(' ') ?? '';
-    const cat = pointCategoryMeta(fp.pointCategory).label;
-    const haystack = `${point.title} ${point.description} ${refs} ${item.projectName} ${cat} ${fp.pointCategory}`.toLowerCase();
-    return haystack.includes(qLower);
+  /** ids of selected FlatPoints (for bulk chat). */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
-
-  const hasActiveFilter =
-    qLower.length > 0 ||
-    minSeverity !== 'medium' ||
-    projectFilter !== '__all__' ||
-    categoryFilter !== '__all__';
-  const clearFilters = () => {
-    setQ('');
-    setMinSeverity('medium');
-    setProjectFilter('__all__');
-    setCategoryFilter('__all__');
-  };
+  const clearSelection = () => setSelected(new Set());
 
   useEffect(() => {
     void (async () => {
@@ -154,9 +123,22 @@ export default function AdvicePage() {
     })();
   }, []);
 
-  // Flatten items -> individual points, with resolved category and
-  // rank. Filtering by point-level category (v4) rather than by the
-  // row's category (always "priority" for v4 / legacy axis for v3).
+  const qLower = q.trim().toLowerCase();
+  const hasActiveFilter =
+    qLower.length > 0 ||
+    minSeverity !== 'medium' ||
+    projectFilter !== '__all__' ||
+    categoryFilter !== '__all__' ||
+    sortKey !== 'severity';
+  const clearFilters = () => {
+    setQ('');
+    setMinSeverity('medium');
+    setProjectFilter('__all__');
+    setCategoryFilter('__all__');
+    setSortKey('severity');
+  };
+
+  // Flatten → filter → search → sort.
   const flat: FlatPoint[] = useMemo(() => {
     if (!items) return [];
     const minWeight = SEVERITY_WEIGHT[minSeverity];
@@ -166,104 +148,128 @@ export default function AdvicePage() {
       if (projectFilter !== '__all__' && it.projectId !== projectFilter) continue;
       it.points.forEach((p, idx) => {
         if (SEVERITY_WEIGHT[p.severity] < minWeight) return;
-        // v4 points carry their own category; fall back to the row's
-        // category (works for legacy v3 rows where the row category
-        // WAS the axis).
         const pointCategory = p.category ?? it.category;
-        if (categoryFilter !== '__all__' && pointCategory !== categoryFilter)
-          return;
+        if (categoryFilter !== '__all__' && pointCategory !== categoryFilter) return;
         const rankInProject =
           typeof p.rank === 'number' && p.rank >= 1 ? p.rank : idx + 1;
-        out.push({ point: p, rankInProject, pointCategory, item: it });
+        out.push({
+          id: `${it.projectId}#${rankInProject}#${idx}`,
+          point: p,
+          rankInProject,
+          pointCategory,
+          item: it,
+        });
       });
     }
-    // Apply search AFTER the structural filters so the free-text
-    // search always matches what the user can actually see.
     const searched = qLower
       ? out.filter((fp) => {
           const refs = fp.point.refs?.join(' ') ?? '';
           const cat = pointCategoryMeta(fp.pointCategory).label;
-          const hay =
-            `${fp.point.title} ${fp.point.description} ${refs} ${fp.item.projectName} ${cat} ${fp.pointCategory}`.toLowerCase();
+          const hay = `${fp.point.title} ${fp.point.description} ${refs} ${fp.item.projectName} ${cat}`.toLowerCase();
           return hay.includes(qLower);
         })
       : out;
 
+    const cmpSeverity = (a: FlatPoint, b: FlatPoint) =>
+      SEVERITY_WEIGHT[b.point.severity] - SEVERITY_WEIGHT[a.point.severity];
+    const cmpRank = (a: FlatPoint, b: FlatPoint) =>
+      a.rankInProject - b.rankInProject;
+    const cmpProject = (a: FlatPoint, b: FlatPoint) =>
+      a.item.projectName.localeCompare(b.item.projectName);
+    const cmpDate = (a: FlatPoint, b: FlatPoint) =>
+      new Date(b.item.generatedAt).getTime() -
+      new Date(a.item.generatedAt).getTime();
+
+    const primary =
+      sortKey === 'severity'
+        ? cmpSeverity
+        : sortKey === 'rank'
+          ? cmpRank
+          : sortKey === 'project'
+            ? cmpProject
+            : cmpDate;
+
     searched.sort((a, b) => {
-      const sev =
-        SEVERITY_WEIGHT[b.point.severity] - SEVERITY_WEIGHT[a.point.severity];
-      if (sev !== 0) return sev;
-      const sa = a.item.score ?? 101;
-      const sb = b.item.score ?? 101;
-      if (sa !== sb) return sa - sb;
-      if (a.rankInProject !== b.rankInProject)
-        return a.rankInProject - b.rankInProject;
-      return (
-        new Date(b.item.generatedAt).getTime() -
-        new Date(a.item.generatedAt).getTime()
-      );
+      const p = primary(a, b);
+      if (p !== 0) return p;
+      // Secondary tiebreakers keep the list stable.
+      const s = cmpSeverity(a, b);
+      if (s !== 0) return s;
+      return cmpRank(a, b);
     });
     return searched;
-  }, [items, minSeverity, projectFilter, categoryFilter, qLower]);
+  }, [items, minSeverity, projectFilter, categoryFilter, qLower, sortKey]);
 
-  // Categories shown in the filter dropdown: the 6 canonical axes
-  // (POINT_CATEGORIES) intersected with what actually appears in the
-  // data. Avoids showing "Security" when no security point exists in
-  // the current aggregate, while keeping a stable order.
-  const categories = useMemo(() => {
+  /** Project list for the dropdown, sorted by name. */
+  const projects = useMemo(() => {
     if (!items) return [];
-    const seen = new Set<string>();
-    for (const it of items) {
-      if (!it.points) continue;
-      for (const p of it.points) {
-        seen.add(p.category ?? it.category);
-      }
-    }
-    return Array.from(seen)
-      .map((key) => ({ category: key, ...pointCategoryMeta(key) }))
-      .sort((a, b) => a.sortOrder - b.sortOrder);
+    const seen = new Map<string, string>();
+    for (const it of items) seen.set(it.projectId, it.projectName);
+    return Array.from(seen, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
   }, [items]);
 
-  // Per-project score summary (avg of non-null category scores). In v3
-  // there's typically only 1 category so the average == the single score.
-  const projectSummaries = useMemo(() => {
-    if (!items) return [];
-    const byProject = new Map<
-      string,
-      {
-        projectId: string;
-        projectName: string;
-        scores: number[];
-        points: number;
+  /** Tile scores: per-project when one is selected, average otherwise. */
+  const tileScores = useMemo(() => {
+    if (!items) {
+      return { global: null as number | null, perCat: {} as Record<string, number | null> };
+    }
+    const sourceItems =
+      projectFilter === '__all__'
+        ? items
+        : items.filter((it) => it.projectId === projectFilter);
+
+    // Global = average of row scores across sourceItems (or the
+    // single score if filtered to one project).
+    const globalVals = sourceItems
+      .map((it) => it.score)
+      .filter((s): s is number => typeof s === 'number');
+    const global =
+      globalVals.length > 0
+        ? Math.round(globalVals.reduce((a, b) => a + b, 0) / globalVals.length)
+        : null;
+
+    // Per-axis: aggregate the v4 categoryScores across rows.
+    const perCat: Record<string, number | null> = {};
+    for (const key of Object.keys(POINT_CATEGORIES)) {
+      const vals: number[] = [];
+      for (const it of sourceItems) {
+        const cs = it.categoryScores?.[key];
+        if (cs && typeof cs.score === 'number') vals.push(cs.score);
       }
-    >();
-    for (const it of items) {
-      let row = byProject.get(it.projectId);
-      if (!row) {
-        row = {
-          projectId: it.projectId,
-          projectName: it.projectName,
-          scores: [],
-          points: 0,
+      perCat[key] =
+        vals.length > 0
+          ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
+          : null;
+    }
+    return { global, perCat };
+  }, [items, projectFilter]);
+
+  /** Build the bulk-chat href from the currently selected rows. */
+  const bulkChatHref = useMemo(() => {
+    if (selected.size === 0) return null;
+    const byId = new Map(flat.map((f) => [f.id, f]));
+    const picked = Array.from(selected)
+      .map((id) => byId.get(id))
+      .filter((fp): fp is FlatPoint => !!fp);
+    if (picked.length === 0) return null;
+    return buildChatHrefForMultipleAdvices(
+      picked.map((fp) => {
+        const cm = pointCategoryMeta(fp.pointCategory);
+        return {
+          projectName: fp.item.projectName,
+          categoryLabel: cm.label,
+          categoryEmoji: cm.emoji,
+          rank: fp.rankInProject,
+          point: fp.point,
         };
-        byProject.set(it.projectId, row);
-      }
-      row.points += it.points?.length ?? 0;
-      if (typeof it.score === 'number') row.scores.push(it.score);
-    }
-    return Array.from(byProject.values())
-      .map((r) => ({
-        ...r,
-        avgScore:
-          r.scores.length > 0
-            ? Math.round(r.scores.reduce((a, b) => a + b, 0) / r.scores.length)
-            : null,
-      }))
-      .sort((a, b) => (a.avgScore ?? 101) - (b.avgScore ?? 101));
-  }, [items]);
+      }),
+    );
+  }, [selected, flat]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-24">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Lightbulb size={22} className="text-amber-500" />
@@ -273,9 +279,8 @@ export default function AdvicePage() {
           </span>
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Flat list of the latest priority advice points across every
-          tracked project, sorted by severity, then by project score,
-          then by the agent's own ranking within each project.
+          Select one or more points below to open a chat pre-filled
+          with the full context of your selection.
         </p>
       </div>
 
@@ -290,9 +295,44 @@ export default function AdvicePage() {
         </div>
       ) : (
         <>
-          {/* Search bar (aligned with /runs and /tasks UX) */}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
+          {/* Score tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+            <ScoreTile
+              label="Global"
+              emoji="\u2B50"
+              color="slate"
+              score={tileScores.global}
+              active={categoryFilter === '__all__'}
+              onClick={() => setCategoryFilter('__all__')}
+              title={
+                projectFilter === '__all__'
+                  ? 'Average global score across all projects'
+                  : 'Global score for the selected project'
+              }
+            />
+            {Object.entries(POINT_CATEGORIES).map(([key, meta]) => (
+              <ScoreTile
+                key={key}
+                label={meta.label}
+                emoji={meta.emoji}
+                color={meta.color}
+                score={tileScores.perCat[key] ?? null}
+                active={categoryFilter === key}
+                onClick={() =>
+                  setCategoryFilter(categoryFilter === key ? '__all__' : key)
+                }
+                title={
+                  projectFilter === '__all__'
+                    ? `Average ${meta.label} score across projects (click to filter)`
+                    : `${meta.label} score for the selected project (click to filter)`
+                }
+              />
+            ))}
+          </div>
+
+          {/* Toolbar */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="relative flex-1 min-w-[220px]">
               <Search
                 size={14}
                 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
@@ -301,32 +341,26 @@ export default function AdvicePage() {
                 type="search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search title, description, refs, project, category…"
+                placeholder="Search title, description, refs, project…"
                 className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-8 pr-3 py-1.5 text-sm"
               />
             </div>
-            {hasActiveFilter && (
-              <button
-                onClick={clearFilters}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
-              >
-                <X size={12} /> Clear filters
-              </button>
-            )}
-          </div>
 
-          {/* Toolbar: counts + severity + project + category */}
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            {counts && (
-              <span className="text-slate-500">
-                {counts.projects} project(s) • {counts.advices} advice row(s)
-                • {counts.withScore} scored •{' '}
-                <b className="text-slate-700 dark:text-slate-300">{flat.length}</b>{' '}
-                point(s) shown
-              </span>
-            )}
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900"
+              title="Filter by project"
+            >
+              <option value="__all__">All projects</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
 
-            <div className="ml-auto inline-flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded-md p-0.5">
+            <div className="inline-flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded-md p-0.5">
               <Filter size={11} className="text-slate-400 mx-1" />
               {(
                 [
@@ -352,162 +386,199 @@ export default function AdvicePage() {
             </div>
 
             <select
-              value={projectFilter}
-              onChange={(e) => setProjectFilter(e.target.value)}
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
               className="border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900"
-              title="Filter by project"
+              title="Filter by category"
             >
-              <option value="__all__">All projects</option>
-              {projectSummaries.map((p) => (
-                <option key={p.projectId} value={p.projectId}>
-                  {p.projectName}
-                  {p.avgScore !== null ? ` (score ${p.avgScore})` : ''}
+              <option value="__all__">All categories</option>
+              {Object.entries(POINT_CATEGORIES).map(([key, meta]) => (
+                <option key={key} value={key}>
+                  {meta.emoji} {meta.label}
                 </option>
               ))}
             </select>
 
-            {categories.length > 1 && (
+            <div className="inline-flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900">
+              <ArrowUpDown size={11} className="text-slate-400" />
+              <label htmlFor="sort" className="text-slate-500">Sort:</label>
               <select
-                value={categoryFilter}
-                onChange={(e) => setCategoryFilter(e.target.value)}
-                className="border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900"
-                title="Filter by advice category"
+                id="sort"
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                className="bg-transparent outline-none"
               >
-                <option value="__all__">All categories</option>
-                {categories.map((c) => (
-                  <option key={c.category} value={c.category}>
-                    {c.emoji} {c.label}
-                  </option>
-                ))}
+                <option value="severity">Severity</option>
+                <option value="rank">Rank</option>
+                <option value="project">Project</option>
+                <option value="date">Date</option>
               </select>
+            </div>
+
+            {hasActiveFilter && (
+              <button
+                onClick={clearFilters}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              >
+                <X size={11} /> Clear
+              </button>
             )}
+
+            <span className="ml-auto text-slate-500">
+              {counts && (
+                <>
+                  {counts.projects} project(s) • {counts.advices} row(s)
+                  {' • '}
+                </>
+              )}
+              <b className="text-slate-700 dark:text-slate-300">{flat.length}</b>{' '}
+              point(s)
+              {selected.size > 0 && (
+                <>
+                  {' • '}
+                  <b className="text-brand-600 dark:text-brand-400">
+                    {selected.size} selected
+                  </b>
+                </>
+              )}
+            </span>
           </div>
 
-          {/* Collapsible per-project scores (secondary info) */}
-          <section className="border border-slate-200 dark:border-slate-800 rounded-lg">
-            <button
-              onClick={() => setShowScores((v) => !v)}
-              className="w-full flex items-center gap-2 p-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-900"
-            >
-              {showScores ? (
-                <ChevronDown size={12} />
-              ) : (
-                <ChevronRight size={12} />
-              )}
-              <span className="font-semibold text-slate-600 dark:text-slate-400">
-                Project scores
-              </span>
-              <span className="text-slate-400">
-                ({projectSummaries.length})
-              </span>
-            </button>
-            {showScores && (
-              <div className="border-t border-slate-200 dark:border-slate-800 p-2 space-y-1.5">
-                {projectSummaries.map((p) => {
-                  // Merge category_scores from all rows of the project.
-                  // For v4 there is usually one row per project, but
-                  // we keep the merge logic so mixed v3/v4 data still
-                  // displays without blowing up.
-                  const merged: Record<
-                    string,
-                    { score: number | null; notes: string }
-                  > = {};
-                  for (const it of items ?? []) {
-                    if (it.projectId !== p.projectId) continue;
-                    if (!it.categoryScores) continue;
-                    for (const [k, v] of Object.entries(it.categoryScores)) {
-                      if (!merged[k] || merged[k].score === null) merged[k] = v;
-                    }
-                  }
-                  const hasBreakdown = Object.keys(merged).length > 0;
-                  return (
-                    <div
-                      key={p.projectId}
-                      className="border border-slate-200 dark:border-slate-800 rounded-md text-xs"
-                    >
-                      <Link
-                        href={`/projects/${p.projectId}#advice`}
-                        className="flex items-center justify-between gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-900 min-w-0"
-                        title={`${p.points} point(s) for ${p.projectName}`}
-                      >
-                        <span className="inline-flex items-center gap-1.5 min-w-0">
-                          <Folder
-                            size={11}
-                            className="shrink-0 text-slate-400"
-                          />
-                          <span className="truncate font-medium">
-                            {p.projectName}
-                          </span>
-                          <span className="text-slate-400">
-                            {p.points} pt(s)
-                          </span>
-                        </span>
-                        <ScoreBadge score={p.avgScore} />
-                      </Link>
-                      {hasBreakdown && (
-                        <div className="border-t border-slate-200 dark:border-slate-800 px-1.5 py-1 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-1">
-                          {Object.keys(POINT_CATEGORIES).map((key) => {
-                            const cs = merged[key];
-                            const cm = POINT_CATEGORIES[key];
-                            return (
-                              <div
-                                key={key}
-                                className={
-                                  'rounded px-1.5 py-0.5 border flex items-center justify-between gap-1 ' +
-                                  chipCls(cm.color)
-                                }
-                                title={cs?.notes || cm.label}
-                              >
-                                <span className="truncate">
-                                  {cm.emoji} {cm.label}
-                                </span>
-                                <span className="font-mono font-semibold shrink-0">
-                                  {cs?.score ?? '—'}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+          {/* Bulk-select toolbar above the list */}
+          {flat.length > 0 && (
+            <div className="flex items-center gap-3 text-xs text-slate-500">
+              <button
+                onClick={() =>
+                  setSelected(new Set(flat.map((f) => f.id)))
+                }
+                className="hover:text-slate-800 dark:hover:text-slate-200 hover:underline"
+              >
+                Select all visible ({flat.length})
+              </button>
+              <span>·</span>
+              <button
+                onClick={clearSelection}
+                disabled={selected.size === 0}
+                className="hover:text-slate-800 dark:hover:text-slate-200 hover:underline disabled:opacity-40 disabled:no-underline"
+              >
+                Clear selection
+              </button>
+            </div>
+          )}
 
-          {/* The list */}
+          {/* List */}
           {flat.length === 0 ? (
             <p className="text-xs italic text-slate-400 p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-md text-center">
-              No advice matches the current filters. Try clearing the
-              search, lowering the severity threshold, or selecting
-              “All projects” / “All categories”.
+              No advice matches the current filters.
             </p>
           ) : (
             <ul className="divide-y divide-slate-200 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900">
-              {flat.map((row, i) => (
-                <AdviceListRow key={i} row={row} />
+              {flat.map((row) => (
+                <AdviceListRow
+                  key={row.id}
+                  row={row}
+                  selected={selected.has(row.id)}
+                  onToggle={() => toggleSelect(row.id)}
+                />
               ))}
             </ul>
           )}
         </>
+      )}
+
+      {/* Sticky bottom action bar — only visible when items are selected */}
+      {selected.size > 0 && bulkChatHref && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-4 py-3 flex items-center gap-3 shadow-lg">
+          <span className="text-sm">
+            <b>{selected.size}</b> point{selected.size > 1 ? 's' : ''} selected
+          </span>
+          <button
+            onClick={clearSelection}
+            className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 hover:underline"
+          >
+            Clear
+          </button>
+          <Link
+            href={bulkChatHref}
+            className="ml-auto inline-flex items-center gap-2 px-3 py-1.5 rounded bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium"
+          >
+            <MessageSquarePlus size={14} />
+            Open chat with {selected.size} selected
+          </Link>
+        </div>
       )}
     </div>
   );
 }
 
 /**
- * Single list row. Click to expand description + refs; Chat button
- * opens a pre-filled /chat conversation about this point.
+ * Top tile showing one score. Clickable to toggle the category
+ * filter; the tile is highlighted when it drives the current filter.
  */
-function AdviceListRow({ row }: { row: FlatPoint }) {
+function ScoreTile(props: {
+  label: string;
+  emoji: string;
+  color: string;
+  score: number | null;
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+}) {
+  const { label, emoji, color, score, active, onClick, title } = props;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={
+        'flex flex-col items-start gap-0.5 rounded-lg p-2 border transition ' +
+        'hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-400 ' +
+        chipCls(color) +
+        (active ? ' ring-2 ring-brand-400' : '')
+      }
+    >
+      <span className="text-[10px] uppercase tracking-wide font-semibold opacity-80">
+        {emoji} {label}
+      </span>
+      <span className="text-2xl font-bold font-mono">
+        {score === null ? '—' : score}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Single list row with checkbox + expandable description/refs. No
+ * per-row Chat link: bulk action goes through the sticky bottom bar.
+ */
+function AdviceListRow(props: {
+  row: FlatPoint;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const { row, selected, onToggle } = props;
   const [expanded, setExpanded] = useState(false);
   const { point, item, rankInProject, pointCategory } = row;
   const catMeta = pointCategoryMeta(pointCategory);
 
   return (
-    <li className="px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900/50">
+    <li
+      className={
+        'px-3 py-2 ' +
+        (selected
+          ? 'bg-brand-50 dark:bg-brand-950/20'
+          : 'hover:bg-slate-50 dark:hover:bg-slate-900/50')
+      }
+    >
       <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          className="mt-1 shrink-0 accent-brand-600"
+          aria-label="Select this advice point"
+        />
+
         <button
           onClick={() => setExpanded((v) => !v)}
           className="shrink-0 mt-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
@@ -527,14 +598,11 @@ function AdviceListRow({ row }: { row: FlatPoint }) {
 
         <span
           className="shrink-0 text-[10px] font-mono text-slate-400 mt-1"
-          title="Rank inside the project's priority list"
+          title="Rank in the project's priority list"
         >
           #{rankInProject}
         </span>
 
-        {/* Point-level category chip (v4). Uses the shared palette from
-            POINT_CATEGORIES so /advices and the per-project pages stay
-            visually consistent. */}
         <span
           className={
             'shrink-0 text-[10px] font-medium rounded px-1.5 py-0.5 mt-0.5 border ' +
@@ -559,26 +627,12 @@ function AdviceListRow({ row }: { row: FlatPoint }) {
             >
               <Folder size={10} /> {item.projectName}
             </Link>
-            <span>•</span>
+            <span>·</span>
             <span>{new Date(item.generatedAt).toLocaleDateString()}</span>
           </div>
         </div>
 
-        <div className="shrink-0 flex items-center gap-1.5">
-          <ScoreBadge score={item.score} />
-          <a
-            href={buildChatHrefFromAdvice({
-              label: catMeta.label,
-              emoji: catMeta.emoji,
-              point,
-              projectName: item.projectName,
-            })}
-            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-950/30"
-            title="Open a new chat pre-filled with this advice"
-          >
-            <MessageSquarePlus size={10} /> Chat
-          </a>
-        </div>
+        <ScoreBadge score={item.score} />
       </div>
 
       {expanded && (

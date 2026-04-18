@@ -41,10 +41,21 @@ export type AuditSlot = {
   } | null;
 };
 
+/**
+ * Severity pill palette, aligned with the A..F score grades defined
+ * in `scoreColor()` below so the whole UI speaks ONE color language:
+ *   low      \u2192 green  (grade A-ish)
+ *   medium   \u2192 amber  (grade C)
+ *   high     \u2192 orange (grade D)
+ *   critical \u2192 red    (grade F)
+ * Previously `low` used slate which read as "neutral / no data"
+ * instead of "minor but still valid". The new palette is also more
+ * consistent with the traffic-light convention users expect.
+ */
 export const SEVERITY_STYLE: Record<AuditPoint['severity'], string> = {
-  low: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  medium: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
-  high: 'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300',
+  low:      'bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300',
+  medium:   'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
+  high:     'bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-300',
   critical: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300',
 };
 

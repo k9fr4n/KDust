@@ -14,7 +14,6 @@ import {
   AuditPoint,
   SEVERITY_STYLE,
   SEVERITY_WEIGHT,
-  ScoreBadge,
   buildBulkAuditPrompt,
   stashPromptAndGoToChat,
   BulkAuditItem,
@@ -70,8 +69,38 @@ const CATEGORY_BORDER_CLS: Record<string, string> = {
   cyan: 'border-l-cyan-500',
   slate: 'border-l-slate-500',
 };
+
+/**
+ * Soft row tint per category: a lighter wash than the chip so the
+ * row stays readable while picking up the tile's identity color.
+ * Applied ALWAYS (not just when selected) so the list visually groups
+ * points by category at a glance \u2014 matches the top score tiles.
+ */
+const CATEGORY_ROW_TINT_CLS: Record<string, string> = {
+  red:     'bg-red-50/60 dark:bg-red-950/10',
+  amber:   'bg-amber-50/60 dark:bg-amber-950/10',
+  purple:  'bg-purple-50/60 dark:bg-purple-950/10',
+  blue:    'bg-blue-50/60 dark:bg-blue-950/10',
+  emerald: 'bg-emerald-50/60 dark:bg-emerald-950/10',
+  cyan:    'bg-cyan-50/60 dark:bg-cyan-950/10',
+  slate:   'bg-slate-50/60 dark:bg-slate-900/30',
+};
+/** Stronger row tint when the row is selected (same hue, more saturation). */
+const CATEGORY_ROW_TINT_SELECTED_CLS: Record<string, string> = {
+  red:     'bg-red-100 dark:bg-red-950/40',
+  amber:   'bg-amber-100 dark:bg-amber-950/40',
+  purple:  'bg-purple-100 dark:bg-purple-950/40',
+  blue:    'bg-blue-100 dark:bg-blue-950/40',
+  emerald: 'bg-emerald-100 dark:bg-emerald-950/40',
+  cyan:    'bg-cyan-100 dark:bg-cyan-950/40',
+  slate:   'bg-slate-100 dark:bg-slate-800/60',
+};
 function chipCls(color: string): string {
   return CATEGORY_CHIP_CLS[color] ?? CATEGORY_CHIP_CLS.slate;
+}
+function rowTintCls(color: string, selected: boolean): string {
+  const src = selected ? CATEGORY_ROW_TINT_SELECTED_CLS : CATEGORY_ROW_TINT_CLS;
+  return src[color] ?? src.slate;
 }
 
 export type AuditBrowserItem = {
@@ -163,10 +192,17 @@ export function AuditBrowser(props: {
     for (const it of items) {
       if (!it.points) continue;
       if (scopedProjectId && it.projectId !== scopedProjectId) continue;
+      // BUG-FIX: filter on the ROW's category (it.category) \u2014 this is
+      // what the top score tiles aggregate on. Previously we were
+      // using `p.category ?? it.category`, which silently broke the
+      // tile filter whenever the agent emitted a per-point category
+      // that didn't match the tile key (e.g. a "security" ProjectAudit
+      // row with a point marked category='infra' would be invisible
+      // when the Security tile was active). Tiles + list now agree.
+      if (categoryFilter !== '__all__' && it.category !== categoryFilter) continue;
       it.points.forEach((p, idx) => {
         if (SEVERITY_WEIGHT[p.severity] < minWeight) return;
-        const pointCategory = p.category ?? it.category;
-        if (categoryFilter !== '__all__' && pointCategory !== categoryFilter) return;
+        const pointCategory = it.category;
         const rankInProject =
           typeof p.rank === 'number' && p.rank >= 1 ? p.rank : idx + 1;
         out.push({
@@ -552,6 +588,19 @@ function ScoreTile(props: {
   );
 }
 
+/**
+ * Row rendering for the audit browser.
+ *
+ * UX contract (v5 UX pass):
+ *  - NO checkbox. The whole <li> toggles selection on click.
+ *  - NO per-row score badge (score already shown in the top tile).
+ *  - Background is tinted with the category color, matching the top
+ *    tile color. Tint saturates when the row is selected.
+ *  - Severity pill uses a traffic-light palette (green/amber/orange/red)
+ *    aligned with the A..F score grades for visual consistency.
+ *  - Nested <Link> / <button> elements stop propagation so clicking
+ *    the project link or any action inside doesn't toggle selection.
+ */
 function AuditListRow(props: {
   row: FlatPoint;
   selected: boolean;
@@ -562,39 +611,49 @@ function AuditListRow(props: {
   const { row, selected, disabled, hideProject, onToggle } = props;
   const { point, item, rankInProject, pointCategory } = row;
   const catMeta = pointCategoryMeta(pointCategory);
-  const borderColorCls =
-    selected
-      ? (CATEGORY_BORDER_CLS[catMeta.color] ?? CATEGORY_BORDER_CLS.slate)
-      : 'border-l-transparent';
+  const borderColorCls = selected
+    ? (CATEGORY_BORDER_CLS[catMeta.color] ?? CATEGORY_BORDER_CLS.slate)
+    : 'border-l-transparent';
+
+  const handleClick = () => {
+    if (disabled) return;
+    onToggle();
+  };
+  const handleKey = (e: React.KeyboardEvent<HTMLLIElement>) => {
+    if (disabled) return;
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      onToggle();
+    }
+  };
 
   return (
     <li
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-pressed={selected}
+      aria-disabled={disabled}
+      onClick={handleClick}
+      onKeyDown={handleKey}
+      title={
+        disabled
+          ? 'Selection is locked to another project. Clear the current selection to pick points from a different project.'
+          : selected
+            ? 'Click to deselect'
+            : 'Click to select'
+      }
       className={
-        'px-3 py-2.5 border-l-4 transition ' +
+        'px-3 py-2.5 border-l-4 transition select-none ' +
         borderColorCls +
+        ' ' +
+        rowTintCls(catMeta.color, selected) +
         ' ' +
         (disabled
           ? 'opacity-50 cursor-not-allowed'
-          : selected
-            ? 'bg-slate-50 dark:bg-slate-800/40'
-            : 'hover:bg-slate-50 dark:hover:bg-slate-900/50')
+          : 'cursor-pointer hover:brightness-[0.98] dark:hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:ring-inset')
       }
     >
       <div className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          checked={selected}
-          disabled={disabled}
-          onChange={onToggle}
-          className="mt-1 shrink-0 accent-brand-600"
-          aria-label="Select this audit point"
-          title={
-            disabled
-              ? 'Selection is locked to another project. Clear the current selection to pick points from a different project.'
-              : 'Select this point'
-          }
-        />
-
         <span
           className={
             'shrink-0 text-[10px] uppercase tracking-wide font-bold rounded px-1.5 py-0.5 mt-0.5 ' +
@@ -605,7 +664,7 @@ function AuditListRow(props: {
         </span>
 
         <span
-          className="shrink-0 text-[10px] font-mono text-slate-400 mt-1"
+          className="shrink-0 text-[10px] font-mono text-slate-500 mt-1"
           title="Rank in the project's priority list"
         >
           #{rankInProject}
@@ -623,13 +682,13 @@ function AuditListRow(props: {
 
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">{point.title}</p>
-          {/* Description + refs are ALWAYS visible — no expand/collapse. */}
+          {/* Description + refs are ALWAYS visible \u2014 no expand/collapse. */}
           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             {point.description}
           </p>
           {point.refs && point.refs.length > 0 && (
             <p className="text-[10px] font-mono text-slate-500 mt-1">
-              {point.refs.join(' • ')}
+              {point.refs.join(' \u2022 ')}
             </p>
           )}
           <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1.5">
@@ -637,11 +696,12 @@ function AuditListRow(props: {
               <>
                 <Link
                   href={`/projects/${item.projectId}#audits`}
+                  onClick={(e) => e.stopPropagation()}
                   className="inline-flex items-center gap-1 hover:underline"
                 >
                   <Folder size={10} /> {item.projectName}
                 </Link>
-                <span>·</span>
+                <span>\u00b7</span>
               </>
             )}
             <span>
@@ -649,8 +709,6 @@ function AuditListRow(props: {
             </span>
           </div>
         </div>
-
-        <ScoreBadge score={item.score} />
       </div>
     </li>
   );

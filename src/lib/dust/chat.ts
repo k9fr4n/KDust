@@ -25,51 +25,43 @@ export interface StartMessageResult {
  * future refactor can re-introduce the `-m` billing equivalent by
  * accident. Callers must pick a value from `NonBilledOrigin`.
  */
-export type NonBilledOrigin =
-  | 'web'
-  | 'cli'
-  | 'triggered'
-  | 'extension'
-  | 'slack'
-  | 'teams'
-  | 'gsheet'
-  | 'email'
-  | 'zendesk'
-  | 'raycast'
-  | 'zapier'
-  | 'n8n'
-  | 'make'
-  | 'excel'
-  | 'powerpoint'
-  | 'onboarding_conversation';
+// Policy 2026-04-18: KDust only ever emits 'cli'.
+// - 'web' is rejected by the API since 2026-04-18 (non-web clients forbidden).
+// - 'cli_programmatic' / 'api' / 'triggered_programmatic' land in the
+//   billed-API bucket (same as dust -m). Not wanted — all KDust runs
+//   are human-triggered, even the scheduled ones.
+// Matches the Dust CLI v0.4.5 interactive TUI (human usage bucket).
+export type NonBilledOrigin = 'cli';
 
 /**
  * At runtime, defense-in-depth: if somebody bypasses the type system
  * (e.g. an `as any` cast or a string coming from the wire), we refuse
  * to forward programmatic origins to Dust and fall back to 'web'.
  */
-const BILLED_ORIGINS = new Set([
+// Runtime guard: if any caller somehow passes a non-'cli' string
+// (bug / wire input / as-any cast), log it loudly and coerce back to
+// 'cli'. This keeps the billing bucket locked to the human side.
+const FORBIDDEN_ORIGINS = new Set([
   'api',
   'cli_programmatic',
   'triggered_programmatic',
+  'web',
 ]);
 
 function safeOrigin(o: string | undefined | null): NonBilledOrigin {
-  if (!o || BILLED_ORIGINS.has(o)) {
-    if (o) {
-      console.warn(
-        `[chat] BLOCKED programmatic origin="${o}" \u2014 forcing 'web' to avoid API billing`,
-      );
-    }
-    return 'web';
+  if (o && o !== 'cli') {
+    console.warn(
+      `[chat] coercing origin="${o}" -> 'cli' (only human bucket allowed${
+        FORBIDDEN_ORIGINS.has(o) ? '; explicitly forbidden' : ''
+      })`,
+    );
   }
-  return o as NonBilledOrigin;
+  return 'cli';
 }
 
 function userContext(
   mcpServerIds?: string[] | null,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _origin: NonBilledOrigin = 'web',
+  origin: NonBilledOrigin = 'cli',
 ) {
   return {
     username: 'kdust',
@@ -77,16 +69,12 @@ function userContext(
     email: null,
     fullName: 'KDust',
     profilePictureUrl: null,
-    // NEVER set this to 'api' / 'cli_programmatic' / 'triggered_programmatic'
-    // \u2014 those flip the conversation into programmatic billing on Dust's
-    // side (same bucket as the CLI's `-m` flag). See NonBilledOrigin.
-    // origin: intentionally omitted. Dust API now returns 400 "This
-    // origin is not allowed. Remove the origin from the context
-    // property." (2026-04-18). The billing bucket is now inferred
-    // server-side from the API key class (user vs workspace). KDust
-    // uses a user/personal key -> human usage bucket, same as the web
-    // UI. The `origin` parameter is still threaded through callers
-    // for log correlation; it's just not forwarded to the API.
+    // Always 'cli' (human usage bucket, matches Dust CLI interactive
+    // TUI). Verified against dust-cli v0.4.5 dist/index.js.
+    // Previously omitted (2026-04-18 morning) after Dust started
+    // rejecting origin="web" with 400; explicit 'cli' is the
+    // correct fix confirmed by inspecting the official CLI source.
+    origin: safeOrigin(origin),
     clientSideMCPServerIds:
       mcpServerIds && mcpServerIds.length > 0 ? mcpServerIds : null,
     selectedMCPServerViewIds: null,
@@ -106,7 +94,7 @@ export async function createDustConversation(
    * the /chat UI); the cron runner overrides with 'triggered' to
    * signal schedule-driven but still human-billed usage.
    */
-  origin: NonBilledOrigin = 'web',
+  origin: NonBilledOrigin = 'cli',
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
@@ -141,7 +129,7 @@ export async function postUserMessage(
   content: string,
   mcpServerIds?: string[] | null,
   /** See createDustConversation for origin billing policy. */
-  origin: NonBilledOrigin = 'web',
+  origin: NonBilledOrigin = 'cli',
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');

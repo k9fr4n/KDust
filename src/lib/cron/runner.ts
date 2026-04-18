@@ -164,7 +164,7 @@ export async function runTask(taskId: string): Promise<void> {
 
       await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
       const convTitle = `[advice:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
-      const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'triggered');
+      const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'cli');
       const ac = new AbortController();
       activeRuns.set(run.id, ac);
       const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
@@ -366,7 +366,7 @@ export async function runTask(taskId: string): Promise<void> {
     // [5] Dust agent ---------------------------------------------------------
     await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
     const convTitle = `[cron] ${job.name} @ ${new Date().toISOString()}`;
-    const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'triggered');
+    const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'cli');
     // Stamp the TaskRun with the Dust conversation sId ASAP so the
     // /runs page can show a "Chat" link even if the run later fails
     // mid-stream. Fire-and-forget — not worth aborting for.

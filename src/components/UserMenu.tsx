@@ -113,7 +113,7 @@ export function UserMenu() {
             )}
           </div>
 
-          <Link href="/projects" onClick={() => setOpen(false)} className={item} role="menuitem">
+          <Link href="/settings/projects" onClick={() => setOpen(false)} className={item} role="menuitem">
             <FolderGit2 size={16} /> Projects
           </Link>
           <Link href="/settings" onClick={() => setOpen(false)} className={item} role="menuitem">

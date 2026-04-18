@@ -3,7 +3,6 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   Folder,
-  ArrowLeft,
   Clock,
   Settings2,
   Lightbulb,
@@ -151,13 +150,7 @@ export default function ProjectDashboardPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link
-          href="/projects"
-          className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
-        >
-          <ArrowLeft size={14} /> All projects
-        </Link>
-        <h1 className="text-2xl font-bold mt-2 flex items-center gap-2">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
           <Folder size={22} /> {project.name}
         </h1>
         <p className="text-xs text-slate-500 font-mono mt-1">

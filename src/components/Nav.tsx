@@ -9,14 +9,6 @@ export async function Nav() {
   const current = await getCurrentProject();
   const projectScoped = !!current;
 
-  // "Advice" shortcut:
-  //   - with a current project scoped \u2192 jump straight to that project's
-  //     advice panel (/projects/:id#advice)
-  //   - with no project scoped ("All projects") \u2192 open the cross-project
-  //     digest (/advice) which ranks the most critical advice from
-  //     every tracked project.
-  // Either way the link is enabled (advice is no longer project-gated).
-  const adviceHref = current ? `/projects/${current.id}#advice` : '/advices';
 
   // Order (per product ask): Dashboard, Conversations, Chat, Runs,
   // Crons, Advice. Project-scoped routes are locked when no project
@@ -32,7 +24,7 @@ export async function Nav() {
     { href: '/chat', label: 'Chat', iconName: 'MessageSquare', requiresProject: true },
     { href: '/runs', label: 'Runs', iconName: 'Activity' },
     { href: '/tasks', label: 'Tasks', iconName: 'Clock' },
-    { href: adviceHref, label: 'Advices', iconName: 'Lightbulb' },
+    { href: '/advices', label: 'Advices', iconName: 'Lightbulb' },
   ];
 
   return (

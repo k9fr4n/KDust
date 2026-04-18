@@ -247,7 +247,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           icon={<Activity size={18} />}
         />
         <StatTile
-          href="/projects"
+          href="/settings/projects"
           value={nbProjectsDb}
           label="projects"
           color="teal"

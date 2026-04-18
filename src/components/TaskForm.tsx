@@ -146,7 +146,7 @@ export function TaskForm({
         </select>
         {projects.length === 0 && (
           <span className="text-xs text-amber-600 dark:text-amber-400">
-            No project declared. Add one in the <a href="/projects" className="underline">Projects</a> tab.
+            No project declared. Add one in the <a href="/settings/projects" className="underline">Projects</a> tab.
           </span>
         )}
       </label>

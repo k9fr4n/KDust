@@ -16,3 +16,4 @@ prisma/migrations/dev.db*
 /data/
 tsconfig.tsbuildinfo
 prisma/dev.db
+prisma/prisma/

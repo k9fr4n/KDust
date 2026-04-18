@@ -135,7 +135,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
           href="/crons/new"
           className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"
         >
-          + New cron
+          + New task
         </Link>
       </div>
 

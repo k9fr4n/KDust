@@ -184,7 +184,7 @@ export default function ProjectDashboardPage({
       <section>
         <h2 className="text-lg font-semibold flex items-center gap-2 mb-3 flex-wrap">
           <Clock size={18} />
-          Project crons
+          Project tasks
           <span className="text-xs font-normal text-slate-500">
             — {crons.length} active
           </span>

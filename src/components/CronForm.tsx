@@ -107,7 +107,17 @@ export function CronForm({
 
   return (
     <form onSubmit={submit} className="max-w-2xl space-y-4">
-      <h1 className="text-2xl font-bold">{isEdit ? 'Edit cron' : 'New cron'}</h1>
+      <h1 className="text-2xl font-bold">{isEdit ? 'Edit task' : 'New task'}</h1>
+
+      {/* Auto-scheduling has been removed from KDust v2. Tasks are
+          manual-trigger only ("Run now" button). The schedule / timezone
+          fields below are kept for backwards compatibility (existing
+          rows still carry a value) but are NEVER consulted at runtime. */}
+      <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+        ℹ️ Tasks no longer run on a schedule \u2014 trigger them manually
+        from the task page (<em>Run now</em>). The cron expression below
+        is informational only and is ignored by the runner.
+      </div>
 
       <label className="block">
         <span className="text-sm">Name</span>
@@ -116,12 +126,12 @@ export function CronForm({
 
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
-          <span className="text-sm">Cron expression</span>
-          <input className={`${field} font-mono`} value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value })} required />
+          <span className="text-sm">Cron expression <span className="text-slate-400">(unused)</span></span>
+          <input className={`${field} font-mono opacity-60`} value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value })} required />
         </label>
         <label className="block">
-          <span className="text-sm">Timezone</span>
-          <input className={field} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} required />
+          <span className="text-sm">Timezone <span className="text-slate-400">(unused)</span></span>
+          <input className={`${field} opacity-60`} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} required />
         </label>
       </div>
 

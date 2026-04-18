@@ -200,6 +200,33 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       if (streamErr) throw new Error(`agent stream error: ${streamErr}`);
       if (!agentText.trim()) throw new Error('agent returned empty response');
 
+      // Persist the conversation so the manually-launched task shows up
+      // in /conversations history (same audit trail as the automation
+      // branch below). Best-effort: a write failure here must not abort
+      // the advice pipeline — the ProjectAdvice upsert is the source of
+      // truth for the score/points display.
+      try {
+        await db.conversation.create({
+          data: {
+            dustConversationSId: conv.dustConversationSId,
+            agentSId: job.agentSId,
+            agentName: job.agentName ?? null,
+            title: convTitle,
+            projectName: project.name,
+            messages: {
+              create: [
+                { role: 'user', content: job.prompt },
+                { role: 'agent', content: agentText },
+              ],
+            },
+          },
+        });
+      } catch (e) {
+        console.warn(
+          `[cron/advice] could not persist conv: ${(e as Error).message}`,
+        );
+      }
+
       // Parse the JSON block. If parsing fails we still persist rawOutput
       // (in CronRun.output) but mark the run 'failed' with a clear reason
       // so the user can see the malformed response and iterate on the

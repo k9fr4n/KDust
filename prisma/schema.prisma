@@ -52,6 +52,27 @@ model Message {
   content        String
   attachments    String?      // JSON array
   createdAt      DateTime     @default(now())
+
+  // --- v4: Dust stream instrumentation ---
+  // Captured from the SSE event loop in src/lib/dust/chat.ts at
+  // agent_message_success. Populated only for role='agent' messages;
+  // user messages leave these at their defaults (null / 0).
+  //
+  // streamStats is the raw per-event-type count Map serialised as
+  // JSON, e.g. {"generation_tokens":47,"tool_call_started":17,...}.
+  // Kept as a blob (not a separate table) so the schema can evolve
+  // as Dust adds/renames events without a migration.
+  streamStats    String?
+  // Cheap pre-aggregated counters used by /settings/usage for SUM
+  // queries without JSON parsing.
+  toolCalls      Int          @default(0)    // # of tool_call_started
+  // Distinct tool names invoked during this turn, JSON array of strings
+  // (e.g. ["fs.read","bash","fsWrite"]). Empty array when no tools.
+  toolNames      String       @default("[]")
+  // Wall-clock duration of the stream loop, milliseconds. Null for
+  // legacy rows and when the stream was aborted.
+  durationMs     Int?
+
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])

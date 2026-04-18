@@ -171,8 +171,9 @@ export async function runTask(taskId: string): Promise<void> {
       let streamErr: string | null = null;
       let partial = '';
       let lastFlush = Date.now();
+      let agentStats: import('../dust/chat').StreamStats | null = null;
       try {
-        agentText = await streamAgentReply(
+        const reply = await streamAgentReply(
           conv.conversation,
           conv.userMessageSId,
           ac.signal,
@@ -190,6 +191,8 @@ export async function runTask(taskId: string): Promise<void> {
             }
           },
         );
+        agentText = reply.content;
+        agentStats = reply.stats;
       } finally {
         clearTimeout(killTimer);
         activeRuns.delete(run.id);
@@ -216,7 +219,16 @@ export async function runTask(taskId: string): Promise<void> {
             messages: {
               create: [
                 { role: 'user', content: job.prompt },
-                { role: 'agent', content: agentText },
+                {
+                  role: 'agent',
+                  content: agentText,
+                  streamStats: agentStats
+                    ? JSON.stringify(agentStats.eventCounts)
+                    : null,
+                  toolCalls: agentStats?.toolCalls ?? 0,
+                  toolNames: JSON.stringify(agentStats?.toolNames ?? []),
+                  durationMs: agentStats?.durationMs ?? null,
+                },
               ],
             },
           },
@@ -380,8 +392,9 @@ export async function runTask(taskId: string): Promise<void> {
         .update({ where: { id: run.id }, data: { output: partial } })
         .catch(() => { /* ignore */ });
     };
+    let agentStats2: import('../dust/chat').StreamStats | null = null;
     try {
-      agentText = await streamAgentReply(
+      const reply = await streamAgentReply(
         conv.conversation,
         conv.userMessageSId,
         ac.signal,
@@ -397,6 +410,8 @@ export async function runTask(taskId: string): Promise<void> {
           }
         },
       );
+      agentText = reply.content;
+      agentStats2 = reply.stats;
       // Final flush so the last tokens are visible before we move to [6].
       partial = agentText;
       flushPartial();
@@ -422,7 +437,16 @@ export async function runTask(taskId: string): Promise<void> {
           messages: {
             create: [
               { role: 'user', content: job.prompt },
-              { role: 'agent', content: agentText },
+              {
+                role: 'agent',
+                content: agentText,
+                streamStats: agentStats2
+                  ? JSON.stringify(agentStats2.eventCounts)
+                  : null,
+                toolCalls: agentStats2?.toolCalls ?? 0,
+                toolNames: JSON.stringify(agentStats2?.toolNames ?? []),
+                durationMs: agentStats2?.durationMs ?? null,
+              },
             ],
           },
         },

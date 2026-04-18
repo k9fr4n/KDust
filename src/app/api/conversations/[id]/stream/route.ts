@@ -66,7 +66,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       };
 
       try {
-        const finalContent = await streamAgentReply(
+        const { content: finalContent, stats } = await streamAgentReply(
           convRes.value,
           userMessageSId,
           abortCtrl.signal,
@@ -82,7 +82,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           },
         );
         await db.message.create({
-          data: { conversationId: id, role: 'agent', content: finalContent },
+          data: {
+            conversationId: id,
+            role: 'agent',
+            content: finalContent,
+            streamStats: JSON.stringify(stats.eventCounts),
+            toolCalls: stats.toolCalls,
+            toolNames: JSON.stringify(stats.toolNames),
+            durationMs: stats.durationMs,
+          },
         });
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });
       } catch (err) {

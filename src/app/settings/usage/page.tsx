@@ -14,6 +14,8 @@ import {
   Clock,
   Minus,
   Hash,
+  Wrench,
+  Zap,
 } from 'lucide-react';
 
 /**
@@ -83,6 +85,12 @@ export default async function UsagePage() {
     convDailyRaw,
     tokenByRoleRaw,
     tokenDailyRaw,
+    // Dust stream observability (agent messages only)
+    streamAggRaw,
+    toolCallsDailyRaw,
+    eventTypeAggRaw,
+    topToolConvsRaw,
+    slowestMsgsRaw,
   ] = await Promise.all([
     db.conversation.count(),
     db.message.count(),
@@ -195,6 +203,86 @@ export default async function UsagePage() {
          GROUP BY day ORDER BY day ASC`,
       thirtyDaysAgo.toISOString(),
     ),
+    // ─── Dust stream observability ─────────────────────────────
+    // Aggregate tool-call / stream-duration totals (agent msgs only).
+    // Legacy rows before the schema bump have toolCalls=0 & durationMs=NULL.
+    db.$queryRawUnsafe<
+      {
+        nMsgs: bigint | number;
+        nMsgsWithStats: bigint | number;
+        totalToolCalls: bigint | number;
+        totalDurationMs: bigint | number;
+        maxToolCalls: bigint | number;
+        recentToolCalls: bigint | number;
+        recentDurationMs: bigint | number;
+      }[]
+    >(
+      `SELECT
+         COUNT(*) AS nMsgs,
+         COALESCE(SUM(CASE WHEN streamStats IS NOT NULL THEN 1 ELSE 0 END), 0) AS nMsgsWithStats,
+         COALESCE(SUM(toolCalls), 0) AS totalToolCalls,
+         COALESCE(SUM(durationMs), 0) AS totalDurationMs,
+         COALESCE(MAX(toolCalls), 0) AS maxToolCalls,
+         COALESCE(SUM(CASE WHEN createdAt >= ? THEN toolCalls ELSE 0 END), 0) AS recentToolCalls,
+         COALESCE(SUM(CASE WHEN createdAt >= ? THEN durationMs ELSE 0 END), 0) AS recentDurationMs
+       FROM Message WHERE role='agent'`,
+      thirtyDaysAgo.toISOString(),
+      thirtyDaysAgo.toISOString(),
+    ),
+    // Daily tool-call sum for sparkline (30d).
+    db.$queryRawUnsafe<{ day: string; n: bigint | number }[]>(
+      `SELECT strftime('%Y-%m-%d', createdAt) AS day,
+              COALESCE(SUM(toolCalls), 0) AS n
+         FROM Message
+         WHERE role='agent' AND createdAt >= ?
+         GROUP BY day ORDER BY day ASC`,
+      thirtyDaysAgo.toISOString(),
+    ),
+    // All streamStats JSON blobs (30d window) — parsed in JS to
+    // aggregate event types. streamStats is small (<300 bytes) so
+    // full-text SUM would be inaccurate; parsing is the correct path.
+    // We also fetch toolNames for the "top tools" leaderboard.
+    db.message.findMany({
+      where: {
+        role: 'agent',
+        createdAt: { gte: thirtyDaysAgo },
+        NOT: { streamStats: null },
+      },
+      select: { streamStats: true, toolNames: true },
+    }),
+    // Conversations with the most tool-heavy agent turns (agent msg
+    // with max toolCalls wins). Useful to spot "the agent did 80 tool
+    // calls in one turn" outliers.
+    db.message.findMany({
+      where: { role: 'agent', toolCalls: { gt: 0 } },
+      orderBy: { toolCalls: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        toolCalls: true,
+        toolNames: true,
+        durationMs: true,
+        createdAt: true,
+        conversation: {
+          select: { id: true, title: true, agentName: true, projectName: true },
+        },
+      },
+    }),
+    // Slowest stream turns (useful to debug agent hangs).
+    db.message.findMany({
+      where: { role: 'agent', durationMs: { gt: 0 } },
+      orderBy: { durationMs: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        durationMs: true,
+        toolCalls: true,
+        createdAt: true,
+        conversation: {
+          select: { id: true, title: true, agentName: true, projectName: true },
+        },
+      },
+    }),
   ]);
 
   // Resolve run-by-task groupBy → task metadata in a separate findMany.
@@ -281,6 +369,72 @@ export default async function UsagePage() {
     day: r.day,
     n: Math.round(r.n / CHARS_PER_TOKEN),
   }));
+
+  // Stream observability aggregates.
+  const streamAgg = streamAggRaw[0] ?? {
+    nMsgs: 0,
+    nMsgsWithStats: 0,
+    totalToolCalls: 0,
+    totalDurationMs: 0,
+    maxToolCalls: 0,
+    recentToolCalls: 0,
+    recentDurationMs: 0,
+  };
+  const nAgentMsgs = Number(streamAgg.nMsgs);
+  const nAgentMsgsWithStats = Number(streamAgg.nMsgsWithStats);
+  const totalToolCalls = Number(streamAgg.totalToolCalls);
+  const totalDurationMs = Number(streamAgg.totalDurationMs);
+  const maxToolCalls = Number(streamAgg.maxToolCalls);
+  const recentToolCalls = Number(streamAgg.recentToolCalls);
+  const recentDurationMs = Number(streamAgg.recentDurationMs);
+  const avgToolCalls =
+    nAgentMsgsWithStats > 0 ? totalToolCalls / nAgentMsgsWithStats : 0;
+  const avgDurationMs =
+    nAgentMsgsWithStats > 0 ? totalDurationMs / nAgentMsgsWithStats : 0;
+  const toolCallsDaily = denseSeries(
+    toolCallsDailyRaw.map((r) => ({ day: r.day, n: BigInt(Number(r.n)) })),
+  );
+
+  // Parse streamStats JSON blobs + toolNames to build aggregates over
+  // the 30-day window. Parsing is bounded (one row = one tiny JSON
+  // object) so this is O(n) with a tiny constant — acceptable even
+  // with 100k agent messages.
+  const eventCountAgg = new Map<string, number>();
+  const toolCountAgg = new Map<string, number>();
+  for (const m of eventTypeAggRaw) {
+    if (m.streamStats) {
+      try {
+        const obj = JSON.parse(m.streamStats) as Record<string, number>;
+        for (const [k, v] of Object.entries(obj)) {
+          eventCountAgg.set(k, (eventCountAgg.get(k) ?? 0) + Number(v));
+        }
+      } catch {
+        /* skip malformed */
+      }
+    }
+    if (m.toolNames) {
+      try {
+        const arr = JSON.parse(m.toolNames) as string[];
+        if (Array.isArray(arr)) {
+          for (const t of arr) {
+            toolCountAgg.set(t, (toolCountAgg.get(t) ?? 0) + 1);
+          }
+        }
+      } catch {
+        /* skip malformed */
+      }
+    }
+  }
+  const topEventTypes = Array.from(eventCountAgg.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+  const topTools = Array.from(toolCountAgg.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12);
+  const totalEventsStreamed = Array.from(eventCountAgg.values()).reduce(
+    (a, b) => a + b,
+    0,
+  );
 
   const sum = (s: { n: number }[]) => s.reduce((a, b) => a + b.n, 0);
   const runStatus = Object.fromEntries(
@@ -494,6 +648,229 @@ export default async function UsagePage() {
         >
           <Sparkline series={convDaily} color="bg-purple-400" />
         </TimelineCard>
+      </section>
+
+      {/* ─── Dust API stream observability ─────────────────── */}
+      <section>
+        <h2 className="text-lg font-semibold flex items-center gap-2 mb-2">
+          <Zap size={16} className="text-amber-500" /> Dust API calls &amp; tools
+          <span className="text-[10px] font-normal text-slate-400">
+            ({nAgentMsgsWithStats.toLocaleString()} / {nAgentMsgs.toLocaleString()} agent messages instrumented)
+          </span>
+        </h2>
+        {nAgentMsgsWithStats === 0 ? (
+          <div className="border border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-white dark:bg-slate-900 text-sm text-slate-500">
+            No stream statistics yet. Send a message or trigger a task
+            after this build is deployed — new agent messages will be
+            instrumented automatically.
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <KPI
+                icon={<Wrench size={14} />}
+                label="Total tool calls"
+                value={totalToolCalls}
+                sub={`${recentToolCalls.toLocaleString()} in last 30d`}
+              />
+              <KPI
+                icon={<Wrench size={14} />}
+                label="Avg / agent msg"
+                value={Math.round(avgToolCalls * 10) / 10}
+                sub={`max in a single turn: ${maxToolCalls}`}
+                title="Average number of MCP tool calls per agent turn."
+              />
+              <KPI
+                icon={<Clock size={14} />}
+                label="Avg stream time"
+                value={Math.round(avgDurationMs / 100) / 10}
+                sub={`seconds; 30d sum: ${(recentDurationMs / 1000 / 60).toFixed(1)} min`}
+                title="Wall-clock duration of the Dust SSE stream per agent turn (sec)."
+              />
+              <KPI
+                icon={<Activity size={14} />}
+                label="Stream events"
+                value={totalEventsStreamed}
+                sub="all event types combined"
+                title="Every SSE event Dust emitted over the stream (generation_tokens, tool_call_started, …)."
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Card title="Top tools invoked" icon={<Wrench size={14} />}>
+                <RankedList
+                  items={topTools.map(([name, count]) => ({
+                    label: name,
+                    count,
+                  }))}
+                  empty="No tool calls yet"
+                />
+                <p className="text-[10px] text-slate-400 mt-2">
+                  One per distinct tool per agent turn (duplicates
+                  within the same turn not counted).
+                </p>
+              </Card>
+
+              <Card title="Stream event types (30d)" icon={<Activity size={14} />}>
+                <ul className="text-xs space-y-1 font-mono">
+                  {topEventTypes.map(([name, count]) => {
+                    const max = topEventTypes[0]?.[1] ?? 1;
+                    const pct = Math.round((count / max) * 100);
+                    return (
+                      <li key={name} className="flex items-center gap-2">
+                        <span
+                          className="truncate text-slate-600 dark:text-slate-400"
+                          title={name}
+                        >
+                          {name}
+                        </span>
+                        <span className="flex-1 h-1.5 bg-slate-100 dark:bg-slate-800 rounded overflow-hidden">
+                          <span
+                            className={
+                              'block h-full ' +
+                              (name === 'generation_tokens'
+                                ? 'bg-brand-400'
+                                : name.startsWith('tool_')
+                                ? 'bg-amber-400'
+                                : name === 'agent_action_success'
+                                ? 'bg-green-400'
+                                : 'bg-slate-400')
+                            }
+                            style={{ width: `${pct}%` }}
+                          />
+                        </span>
+                        <span className="w-12 text-right">{count.toLocaleString()}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Card>
+
+              <TimelineCard
+                title="Tool calls / day (30d)"
+                total={toolCallsDaily.reduce((a, b) => a + b.n, 0)}
+                last7={toolCallsDaily.slice(-7).reduce((a, b) => a + b.n, 0)}
+              >
+                <Sparkline series={toolCallsDaily} color="bg-amber-400" />
+              </TimelineCard>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <Card
+                title="Tool-heaviest agent turns"
+                icon={<Wrench size={14} />}
+              >
+                <table className="w-full text-xs">
+                  <thead className="text-left text-[10px] text-slate-500">
+                    <tr>
+                      <th className="py-1">Conversation</th>
+                      <th className="py-1 text-right">Tools</th>
+                      <th className="py-1 text-right">Time</th>
+                      <th className="py-1 text-right">When</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topToolConvsRaw.map((m) => (
+                      <tr
+                        key={m.id}
+                        className="border-t border-slate-200 dark:border-slate-800"
+                      >
+                        <td className="py-1">
+                          <Link
+                            href={`/conversations/${m.conversation.id}`}
+                            className="hover:underline truncate block max-w-[14rem]"
+                          >
+                            {m.conversation.title}
+                          </Link>
+                          <span className="text-[10px] text-slate-400">
+                            {m.conversation.agentName ?? '-'} ·{' '}
+                            {m.conversation.projectName ?? '(global)'}
+                          </span>
+                        </td>
+                        <td className="py-1 text-right font-mono">
+                          {m.toolCalls}
+                        </td>
+                        <td className="py-1 text-right font-mono text-slate-500">
+                          {m.durationMs
+                            ? `${(m.durationMs / 1000).toFixed(1)}s`
+                            : '—'}
+                        </td>
+                        <td className="py-1 text-right text-[10px] text-slate-400">
+                          {new Date(m.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                    {topToolConvsRaw.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={4}
+                          className="py-3 text-slate-400 italic text-center"
+                        >
+                          No tool-using turns yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </Card>
+
+              <Card title="Slowest agent turns" icon={<Clock size={14} />}>
+                <table className="w-full text-xs">
+                  <thead className="text-left text-[10px] text-slate-500">
+                    <tr>
+                      <th className="py-1">Conversation</th>
+                      <th className="py-1 text-right">Duration</th>
+                      <th className="py-1 text-right">Tools</th>
+                      <th className="py-1 text-right">When</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slowestMsgsRaw.map((m) => (
+                      <tr
+                        key={m.id}
+                        className="border-t border-slate-200 dark:border-slate-800"
+                      >
+                        <td className="py-1">
+                          <Link
+                            href={`/conversations/${m.conversation.id}`}
+                            className="hover:underline truncate block max-w-[14rem]"
+                          >
+                            {m.conversation.title}
+                          </Link>
+                          <span className="text-[10px] text-slate-400">
+                            {m.conversation.agentName ?? '-'} ·{' '}
+                            {m.conversation.projectName ?? '(global)'}
+                          </span>
+                        </td>
+                        <td className="py-1 text-right font-mono">
+                          {m.durationMs
+                            ? `${(m.durationMs / 1000).toFixed(1)}s`
+                            : '—'}
+                        </td>
+                        <td className="py-1 text-right font-mono text-slate-500">
+                          {m.toolCalls}
+                        </td>
+                        <td className="py-1 text-right text-[10px] text-slate-400">
+                          {new Date(m.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                    {slowestMsgsRaw.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={4}
+                          className="py-3 text-slate-400 italic text-center"
+                        >
+                          No instrumented turns yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
+          </>
+        )}
       </section>
 
       {/* Run status distribution + task kind */}

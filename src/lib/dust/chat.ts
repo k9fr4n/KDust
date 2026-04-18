@@ -166,8 +166,33 @@ export async function postUserMessage(
 }
 
 /**
+ * Observability payload surfaced when the stream ends. Persisted on
+ * the corresponding agent Message row by the callers, so /settings/usage
+ * can aggregate per-day / per-tool / per-conversation.
+ *
+ * `eventCounts` mirrors the console log's event-counts map exactly
+ * (every event type Dust emitted during this turn with its cardinality).
+ * It's a superset of the specialised counters (`toolCalls`, `genEvents`)
+ * which are just pre-extracted for index-friendly SUM queries.
+ */
+export interface StreamStats {
+  eventCounts: Record<string, number>;
+  toolCalls: number;
+  toolNames: string[];
+  genEvents: number; // alias of eventCounts.generation_tokens for convenience
+  durationMs: number;
+}
+
+/**
  * Stream les événements de l'agent en réponse à un message utilisateur.
  * Appelle `onToken` pour chaque delta de texte et retourne la réponse finale complète.
+ *
+ * Returns the final text AND a StreamStats object capturing the event
+ * traffic observed during the stream. The stats are advisory — they
+ * are NOT the authoritative LLM token count (Dust doesn't expose
+ * usage metadata on this endpoint) but they give a faithful picture
+ * of what the agent did: # of tool calls, which tools, stream
+ * duration, per-event-type cardinality.
  */
 export async function streamAgentReply(
   conversation: any,
@@ -177,7 +202,7 @@ export async function streamAgentReply(
     kind: 'token' | 'cot' | 'error' | 'done' | 'tool_call' | 'agent_message_id',
     data: string,
   ) => void,
-): Promise<string> {
+): Promise<{ content: string; stats: StreamStats }> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
 
@@ -192,6 +217,16 @@ export async function streamAgentReply(
   let finalContent = '';
   let agentMessageSIdEmitted = false;
   const seenTypes = new Map<string, number>();
+  // Distinct MCP tool names (preserves first-seen order for the UI).
+  const toolNamesSet = new Set<string>();
+  const startedAt = Date.now();
+  const buildStats = (): StreamStats => ({
+    eventCounts: Object.fromEntries(seenTypes.entries()),
+    toolCalls: seenTypes.get('tool_call_started') ?? 0,
+    toolNames: Array.from(toolNamesSet),
+    genEvents: seenTypes.get('generation_tokens') ?? 0,
+    durationMs: Date.now() - startedAt,
+  });
   const maybeEmitAgentMessageId = (ev: any) => {
     if (agentMessageSIdEmitted) return;
     const mid = ev?.messageId ?? ev?.message?.sId;
@@ -272,7 +307,7 @@ export async function streamAgentReply(
           Object.fromEntries(seenTypes.entries()),
         );
         onEvent('done', finalContent);
-        return finalContent;
+        return { content: finalContent, stats: buildStats() };
       }
       case 'agent_error':
       case 'user_message_error': {
@@ -283,5 +318,5 @@ export async function streamAgentReply(
     }
   }
   onEvent('done', finalContent);
-  return finalContent;
+  return { content: finalContent, stats: buildStats() };
 }

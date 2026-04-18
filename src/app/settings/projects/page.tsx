@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/Button';
-import { RefreshCw, Trash2, Plus, Folder, LayoutDashboard } from 'lucide-react';
+import { RefreshCw, Trash2, Plus, Folder, LayoutDashboard, ArrowLeft } from 'lucide-react';
 
 type P = {
   id: string;
@@ -126,7 +126,15 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Git projects</h1>
+      <div>
+        <Link
+          href="/settings"
+          className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
+        >
+          <ArrowLeft size={14} /> Settings
+        </Link>
+        <h1 className="text-2xl font-bold mt-2">Git projects</h1>
+      </div>
 
       <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto_auto] gap-2 items-end">
         <label className="block">

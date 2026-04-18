@@ -10,7 +10,7 @@ import {
 export const dynamic = 'force-dynamic';
 
 /**
- * Back-office hub. Each concern has its own dedicated route; this
+ * Settings hub. Each concern has its own dedicated route; this
  * page is just a navigation index. Previously the global app
  * settings form lived inline here — moved to /settings/global so
  * each tile has a symmetric UX and this page stays scannable.
@@ -59,7 +59,7 @@ export default function SettingsIndex() {
 
   return (
     <div className="max-w-3xl space-y-4">
-      <h1 className="text-2xl font-bold">Back-office</h1>
+      <h1 className="text-2xl font-bold">Settings</h1>
       <p className="text-sm text-slate-500">
         Administrative sections. Pick a category to configure or
         inspect KDust.

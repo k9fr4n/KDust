@@ -423,9 +423,3 @@ function SortableTh({
     </th>
   );
 }
-   <span className="inline-block w-3" />
-        )}
-      </Link>
-    </th>
-  );
-}

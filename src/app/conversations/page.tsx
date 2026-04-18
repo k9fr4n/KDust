@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { MessageSquare, Pin } from 'lucide-react';
 import { db } from '@/lib/db';
+import { getCurrentProjectName } from '@/lib/current-project';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 
 export const dynamic = 'force-dynamic';
@@ -17,18 +18,20 @@ type SearchProps = {
  *   ?q=<text>          case-insensitive title substring
  *   ?limit=<n>         default 100, max 500
  *
- * Scope: NO project filter. This page intentionally shows every
- * conversation (global + per-project) so the user has a single
- * unified list — per-project views are still reachable from
- * /projects/:id and via the project label on each row.
+ * Project scope: driven by the top navbar project selector
+ * (kdust_project cookie). No per-page project filter UI.
+ *   - no cookie ("All projects") → every conversation, global + all projects
+ *   - cookie set                 → only that project's conversations
  */
 export default async function ConversationsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
+  const cookieProject = await getCurrentProjectName();
   const agentFilter = sp.agent ?? undefined;
   const q = (sp.q ?? '').trim();
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
 
   const where: Record<string, unknown> = {};
+  if (cookieProject) where.projectName = cookieProject;
   if (agentFilter) where.agentSId = agentFilter;
   if (q) where.title = { contains: q };
 
@@ -39,7 +42,6 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
     include: { _count: { select: { messages: true } } },
   });
 
-  // Distinct agents for the filter chips.
   const allAgents = await db.conversation.findMany({
     select: { agentSId: true, agentName: true },
     distinct: ['agentSId'],
@@ -50,11 +52,17 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
     <div className="w-full">
       <div className="flex items-center gap-3 mb-4">
         <MessageSquare className="text-slate-400" />
-        <h1 className="text-2xl font-bold">Conversations</h1>
+        <h1 className="text-2xl font-bold">
+          Conversations
+          {cookieProject && (
+            <span className="ml-2 text-base font-normal text-slate-500">
+              · {cookieProject}
+            </span>
+          )}
+        </h1>
         <span className="text-sm text-slate-500 ml-auto">{conversations.length} shown</span>
       </div>
 
-      {/* Search */}
       <form method="get" action="/conversations" className="mb-4 flex gap-2">
         <input
           type="search"
@@ -82,7 +90,9 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
 
       {allAgents.length > 1 && (
         <div className="flex flex-wrap gap-2 mb-4 text-xs">
-          <FilterPill label="Agent:" value={agentFilter ?? 'all'} />
+          <span className="text-slate-500 self-center">
+            Agent: <span className="font-mono text-slate-700 dark:text-slate-300">{agentFilter ?? 'all'}</span>
+          </span>
           <Link
             href={buildHref({ agent: undefined, q })}
             className={pillCls(!agentFilter)}
@@ -121,9 +131,6 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  {/* Project first, then agent — project is the most
-                      meaningful grouping dimension for users, the
-                      agent is secondary metadata. */}
                   <span className="font-mono">
                     {c.projectName ? c.projectName : <em className="italic">global</em>}
                   </span>
@@ -150,21 +157,7 @@ function pillCls(active: boolean) {
   ].join(' ');
 }
 
-function FilterPill({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="text-slate-500 self-center">
-      {label} <span className="font-mono text-slate-700 dark:text-slate-300">{value}</span>
-    </span>
-  );
-}
-
-function buildHref({
-  agent,
-  q,
-}: {
-  agent?: string;
-  q?: string;
-}) {
+function buildHref({ agent, q }: { agent?: string; q?: string }) {
   const qs = new URLSearchParams();
   if (agent) qs.set('agent', agent);
   if (q) qs.set('q', q);

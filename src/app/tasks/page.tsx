@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Clock } from 'lucide-react';
 import { db } from '@/lib/db';
+import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import type { Prisma } from '@prisma/client';
 
@@ -36,6 +37,7 @@ type SearchProps = {
  */
 export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
+  const cookieProject = await getCurrentProjectName();
   const q = (sp.q ?? '').trim();
   const kind: Kind = sp.kind ?? 'all';
   const enabled: EnabledFlag = sp.enabled ?? 'all';
@@ -43,6 +45,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '200', 10) || 200));
 
   const where: Prisma.TaskWhereInput = {};
+  if (cookieProject) where.projectPath = cookieProject;
   if (q) where.name = { contains: q };
   if (kind !== 'all') where.kind = kind;
   if (enabled === 'on') where.enabled = true;
@@ -89,7 +92,14 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     <div className="w-full">
       <div className="flex items-center gap-3 mb-4">
         <Clock className="text-slate-400" />
-        <h1 className="text-2xl font-bold">Tasks</h1>
+        <h1 className="text-2xl font-bold">
+          Tasks
+          {cookieProject && (
+            <span className="ml-2 text-base font-normal text-slate-500">
+              · {cookieProject}
+            </span>
+          )}
+        </h1>
         <span className="text-sm text-slate-500 ml-auto">{filtered.length} shown</span>
         <Link
           href="/tasks/new"

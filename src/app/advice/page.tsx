@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   Lightbulb,
-  ExternalLink,
   MessageSquarePlus,
   Folder,
   Filter,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import {
   AdvicePoint,
@@ -17,8 +18,8 @@ import {
 } from '@/components/advice/shared';
 
 /**
- * Shape returned by /api/advice/aggregate. One row per (project,
- * category) latest advice.
+ * Shape returned by /api/advice/aggregate. One row per
+ * (project, category) pair carrying the latest stored advice.
  */
 type Item = {
   projectId: string;
@@ -33,23 +34,25 @@ type Item = {
 
 type FlatPoint = {
   point: AdvicePoint;
+  /** 1-based position of this point in the source project's ranked list. */
+  rankInProject: number;
   item: Item;
 };
 
 /**
- * Cross-project "most critical advice" page. Reached from the Nav
- * when no current project is scoped (the per-project view stays at
- * /projects/:id#advice).
+ * Cross-project "most critical advice" page — v3 (2026-04-18).
  *
- * Sorting strategy (client-side):
- *   1. point severity desc  (critical > high > medium > low)
- *   2. category score asc   (worst scores surface first as tiebreak)
- *   3. generatedAt desc     (recent wins on equal severity/score)
+ * v3 change: the default config now produces ONE "priority" category
+ * per project with up to 15 globally-ranked points. The page was
+ * previously dominated by a per-project score grid + cards per point;
+ * it is now a plain list, with a severity filter and a collapsed
+ * "per-project scores" row kept as a secondary information block.
  *
- * A severity filter (Top critical / Top high+ / All) lets the user
- * zoom in on what matters. Each point links to:
- *   - the project dashboard (Folder icon)
- *   - a fresh Chat deep-link pre-filled with the advice (Chat icon)
+ * Sort:
+ *   1. point severity desc
+ *   2. project score asc   (worst-scored projects surface first)
+ *   3. rank-in-project asc (respect the agent's own ordering)
+ *   4. generatedAt desc
  */
 export default function AdvicePage() {
   const [items, setItems] = useState<Item[] | null>(null);
@@ -58,9 +61,11 @@ export default function AdvicePage() {
     advices: number;
     withScore: number;
   } | null>(null);
-  const [minSeverity, setMinSeverity] = useState<'critical' | 'high' | 'low'>(
-    'high',
-  );
+  const [minSeverity, setMinSeverity] = useState<
+    'critical' | 'high' | 'medium' | 'low'
+  >('medium');
+  const [projectFilter, setProjectFilter] = useState<string>('__all__');
+  const [showScores, setShowScores] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -77,60 +82,61 @@ export default function AdvicePage() {
     })();
   }, []);
 
-  // Flatten (project, category) → list of points with shared item ref.
-  // Then sort + filter according to minSeverity.
+  // Flatten (project, category) → list of points, then sort + filter.
   const flat: FlatPoint[] = useMemo(() => {
     if (!items) return [];
-    const minWeight =
-      minSeverity === 'critical'
-        ? SEVERITY_WEIGHT.critical
-        : minSeverity === 'high'
-          ? SEVERITY_WEIGHT.high
-          : SEVERITY_WEIGHT.low;
+    const minWeight = SEVERITY_WEIGHT[minSeverity];
     const out: FlatPoint[] = [];
     for (const it of items) {
       if (!it.points) continue;
-      for (const p of it.points) {
-        if (SEVERITY_WEIGHT[p.severity] < minWeight) continue;
-        out.push({ point: p, item: it });
-      }
+      if (projectFilter !== '__all__' && it.projectId !== projectFilter) continue;
+      it.points.forEach((p, idx) => {
+        if (SEVERITY_WEIGHT[p.severity] < minWeight) return;
+        out.push({ point: p, rankInProject: idx + 1, item: it });
+      });
     }
     out.sort((a, b) => {
-      const sev = SEVERITY_WEIGHT[b.point.severity] - SEVERITY_WEIGHT[a.point.severity];
+      const sev =
+        SEVERITY_WEIGHT[b.point.severity] - SEVERITY_WEIGHT[a.point.severity];
       if (sev !== 0) return sev;
-      // Worst score first; null scores last on this tie so graded
-      // rows surface over un-graded ones.
       const sa = a.item.score ?? 101;
       const sb = b.item.score ?? 101;
       if (sa !== sb) return sa - sb;
+      if (a.rankInProject !== b.rankInProject)
+        return a.rankInProject - b.rankInProject;
       return (
         new Date(b.item.generatedAt).getTime() -
         new Date(a.item.generatedAt).getTime()
       );
     });
     return out;
-  }, [items, minSeverity]);
+  }, [items, minSeverity, projectFilter]);
 
-  // Per-project score summary (average of non-null category scores).
+  // Per-project score summary (avg of non-null category scores). In v3
+  // there's typically only 1 category so the average == the single score.
   const projectSummaries = useMemo(() => {
     if (!items) return [];
     const byProject = new Map<
       string,
-      { projectId: string; projectName: string; scores: number[]; cats: number }
+      {
+        projectId: string;
+        projectName: string;
+        scores: number[];
+        points: number;
+      }
     >();
     for (const it of items) {
-      const k = it.projectName;
-      let row = byProject.get(k);
+      let row = byProject.get(it.projectId);
       if (!row) {
         row = {
           projectId: it.projectId,
           projectName: it.projectName,
           scores: [],
-          cats: 0,
+          points: 0,
         };
-        byProject.set(k, row);
+        byProject.set(it.projectId, row);
       }
-      row.cats++;
+      row.points += it.points?.length ?? 0;
       if (typeof it.score === 'number') row.scores.push(it.score);
     }
     return Array.from(byProject.values())
@@ -141,27 +147,23 @@ export default function AdvicePage() {
             ? Math.round(r.scores.reduce((a, b) => a + b, 0) / r.scores.length)
             : null,
       }))
-      .sort((a, b) => {
-        const sa = a.avgScore ?? 101;
-        const sb = b.avgScore ?? 101;
-        return sa - sb;
-      });
+      .sort((a, b) => (a.avgScore ?? 101) - (b.avgScore ?? 101));
   }, [items]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Lightbulb size={22} className="text-amber-500" />
           Advice
           <span className="text-xs font-normal text-slate-500">
-            — cross-project digest
+            — cross-project priority list
           </span>
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Latest advice points from every tracked project, sorted by
-          severity then by worst category score. Use the project switcher
-          (top bar) to dive into a single project's dashboard.
+          Flat list of the latest priority advice points across every
+          tracked project, sorted by severity, then by project score,
+          then by the agent's own ranking within each project.
         </p>
       </div>
 
@@ -170,154 +172,208 @@ export default function AdvicePage() {
       ) : !items || items.length === 0 ? (
         <div className="border border-dashed border-slate-300 dark:border-slate-700 rounded-md p-6 text-center">
           <p className="text-sm text-slate-500">
-            No advice has been generated yet. Go to a project dashboard
-            and click <b>Run all advice sequentially</b> under{' '}
-            <b>Project tasks</b>.
+            No advice generated yet. Open a project dashboard and
+            click <b>Run</b> on its Priority advice task.
           </p>
         </div>
       ) : (
         <>
-          {/* Counters */}
-          {counts && (
-            <div className="text-xs text-slate-500 flex flex-wrap gap-4">
-              <span>{counts.projects} project(s)</span>
-              <span>{counts.advices} advice row(s)</span>
-              <span>{counts.withScore} scored</span>
-            </div>
-          )}
+          {/* Compact toolbar: counts + severity filter + project filter */}
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {counts && (
+              <span className="text-slate-500">
+                {counts.projects} project(s) • {counts.advices} advice row(s)
+                • {counts.withScore} scored •{' '}
+                <b className="text-slate-700 dark:text-slate-300">{flat.length}</b>{' '}
+                point(s) shown
+              </span>
+            )}
 
-          {/* Per-project score overview */}
-          <section>
-            <h2 className="text-sm font-semibold mb-2 text-slate-600 dark:text-slate-400">
-              Project scores
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
-              {projectSummaries.map((p) => (
-                <Link
-                  key={p.projectId}
-                  href={`/projects/${p.projectId}#advice`}
-                  className="flex items-center justify-between gap-2 border border-slate-200 dark:border-slate-800 rounded-md p-2 hover:bg-slate-50 dark:hover:bg-slate-900 min-w-0"
-                  title={`${p.cats} category advice(s) for ${p.projectName}`}
+            <div className="ml-auto inline-flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded-md p-0.5">
+              <Filter size={11} className="text-slate-400 mx-1" />
+              {(
+                [
+                  ['critical', 'Critical'],
+                  ['high', 'High+'],
+                  ['medium', 'Medium+'],
+                  ['low', 'All'],
+                ] as const
+              ).map(([k, lbl]) => (
+                <button
+                  key={k}
+                  onClick={() => setMinSeverity(k)}
+                  className={
+                    'px-2 py-0.5 rounded ' +
+                    (minSeverity === k
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                      : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800')
+                  }
                 >
-                  <span className="inline-flex items-center gap-1.5 text-sm min-w-0">
-                    <Folder size={12} className="shrink-0 text-slate-400" />
-                    <span className="truncate">{p.projectName}</span>
-                  </span>
-                  <ScoreBadge score={p.avgScore} />
-                </Link>
+                  {lbl}
+                </button>
               ))}
             </div>
-          </section>
 
-          {/* Severity filter */}
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400">
-                Most critical advice
-                <span className="text-xs font-normal text-slate-400 ml-2">
-                  ({flat.length} point{flat.length === 1 ? '' : 's'})
-                </span>
-              </h2>
-              <div className="inline-flex items-center gap-1 text-xs border border-slate-200 dark:border-slate-800 rounded-md p-0.5">
-                <Filter size={11} className="text-slate-400 mx-1" />
-                {(
-                  [
-                    ['critical', 'Critical only'],
-                    ['high', 'High+'],
-                    ['low', 'All'],
-                  ] as const
-                ).map(([k, lbl]) => (
-                  <button
-                    key={k}
-                    onClick={() => setMinSeverity(k)}
-                    className={
-                      'px-2 py-0.5 rounded ' +
-                      (minSeverity === k
-                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
-                        : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800')
-                    }
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900"
+              title="Filter by project"
+            >
+              <option value="__all__">All projects</option>
+              {projectSummaries.map((p) => (
+                <option key={p.projectId} value={p.projectId}>
+                  {p.projectName}
+                  {p.avgScore !== null ? ` (score ${p.avgScore})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Collapsible per-project scores (secondary info) */}
+          <section className="border border-slate-200 dark:border-slate-800 rounded-lg">
+            <button
+              onClick={() => setShowScores((v) => !v)}
+              className="w-full flex items-center gap-2 p-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-900"
+            >
+              {showScores ? (
+                <ChevronDown size={12} />
+              ) : (
+                <ChevronRight size={12} />
+              )}
+              <span className="font-semibold text-slate-600 dark:text-slate-400">
+                Project scores
+              </span>
+              <span className="text-slate-400">
+                ({projectSummaries.length})
+              </span>
+            </button>
+            {showScores && (
+              <div className="border-t border-slate-200 dark:border-slate-800 p-2 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-1.5">
+                {projectSummaries.map((p) => (
+                  <Link
+                    key={p.projectId}
+                    href={`/projects/${p.projectId}#advice`}
+                    className="flex items-center justify-between gap-2 border border-slate-200 dark:border-slate-800 rounded-md p-1.5 hover:bg-slate-50 dark:hover:bg-slate-900 min-w-0 text-xs"
+                    title={`${p.points} point(s) for ${p.projectName}`}
                   >
-                    {lbl}
-                  </button>
+                    <span className="inline-flex items-center gap-1.5 min-w-0">
+                      <Folder size={11} className="shrink-0 text-slate-400" />
+                      <span className="truncate">{p.projectName}</span>
+                    </span>
+                    <ScoreBadge score={p.avgScore} />
+                  </Link>
                 ))}
               </div>
-            </div>
-
-            {flat.length === 0 ? (
-              <p className="text-xs italic text-slate-400">
-                No advice matches this severity filter. Try lowering it.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {flat.map((row, i) => (
-                  <li
-                    key={i}
-                    className="border border-slate-200 dark:border-slate-800 rounded-lg p-3 bg-white dark:bg-slate-900"
-                  >
-                    <div className="flex items-start gap-2 mb-1 flex-wrap">
-                      <span
-                        className={
-                          'shrink-0 text-[10px] uppercase tracking-wide font-bold rounded px-1.5 py-0.5 ' +
-                          SEVERITY_STYLE[row.point.severity]
-                        }
-                      >
-                        {row.point.severity}
-                      </span>
-                      <span className="text-sm font-semibold flex-1 min-w-0">
-                        {row.point.title}
-                      </span>
-                      <ScoreBadge score={row.item.score} />
-                    </div>
-                    <div className="text-[10px] text-slate-500 mb-2 flex items-center gap-2 flex-wrap">
-                      <Link
-                        href={`/projects/${row.item.projectId}#advice`}
-                        className="inline-flex items-center gap-1 hover:underline"
-                      >
-                        <Folder size={10} /> {row.item.projectName}
-                      </Link>
-                      <span>•</span>
-                      <span className="inline-flex items-center gap-1">
-                        {row.item.emoji} {row.item.label}
-                      </span>
-                      <span>•</span>
-                      <span>
-                        {new Date(row.item.generatedAt).toLocaleString()}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      {row.point.description}
-                    </p>
-                    {row.point.refs && row.point.refs.length > 0 && (
-                      <p className="text-[10px] font-mono text-slate-500 mt-1">
-                        {row.point.refs.join(' • ')}
-                      </p>
-                    )}
-                    <div className="mt-2 flex gap-2">
-                      <Link
-                        href={`/projects/${row.item.projectId}#advice`}
-                        className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      >
-                        <ExternalLink size={10} /> Open project
-                      </Link>
-                      <a
-                        href={buildChatHrefFromAdvice({
-                          label: row.item.label,
-                          emoji: row.item.emoji,
-                          point: row.point,
-                          projectName: row.item.projectName,
-                        })}
-                        className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-950/30"
-                      >
-                        <MessageSquarePlus size={10} /> Chat about this
-                      </a>
-                    </div>
-                  </li>
-                ))}
-              </ul>
             )}
           </section>
+
+          {/* The list */}
+          {flat.length === 0 ? (
+            <p className="text-xs italic text-slate-400 p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-md text-center">
+              No advice matches the current filter. Try lowering the severity
+              threshold or selecting “All projects”.
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-200 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900">
+              {flat.map((row, i) => (
+                <AdviceListRow key={i} row={row} />
+              ))}
+            </ul>
+          )}
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Single list row. Click to expand description + refs; Chat button
+ * opens a pre-filled /chat conversation about this point.
+ */
+function AdviceListRow({ row }: { row: FlatPoint }) {
+  const [expanded, setExpanded] = useState(false);
+  const { point, item, rankInProject } = row;
+
+  return (
+    <li className="px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900/50">
+      <div className="flex items-start gap-2">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="shrink-0 mt-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+
+        <span
+          className={
+            'shrink-0 text-[10px] uppercase tracking-wide font-bold rounded px-1.5 py-0.5 mt-0.5 ' +
+            SEVERITY_STYLE[point.severity]
+          }
+        >
+          {point.severity}
+        </span>
+
+        <span
+          className="shrink-0 text-[10px] font-mono text-slate-400 mt-1"
+          title="Rank inside the project's priority list"
+        >
+          #{rankInProject}
+        </span>
+
+        <div className="flex-1 min-w-0">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="text-left text-sm font-medium w-full truncate hover:underline"
+          >
+            {point.title}
+          </button>
+          <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+            <Link
+              href={`/projects/${item.projectId}#advice`}
+              className="inline-flex items-center gap-1 hover:underline"
+            >
+              <Folder size={10} /> {item.projectName}
+            </Link>
+            <span>•</span>
+            <span className="inline-flex items-center gap-1">
+              {item.emoji} {item.label}
+            </span>
+            <span>•</span>
+            <span>{new Date(item.generatedAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+
+        <div className="shrink-0 flex items-center gap-1.5">
+          <ScoreBadge score={item.score} />
+          <a
+            href={buildChatHrefFromAdvice({
+              label: item.label,
+              emoji: item.emoji,
+              point,
+              projectName: item.projectName,
+            })}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-950/30"
+            title="Open a new chat pre-filled with this advice"
+          >
+            <MessageSquarePlus size={10} /> Chat
+          </a>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="ml-14 mt-2 mb-1 space-y-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400">
+            {point.description}
+          </p>
+          {point.refs && point.refs.length > 0 && (
+            <p className="text-[10px] font-mono text-slate-500">
+              {point.refs.join(' • ')}
+            </p>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

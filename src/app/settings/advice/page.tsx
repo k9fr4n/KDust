@@ -1,16 +1,16 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
   Plus,
   Save,
   Trash2,
-  Radio,
   Lock,
-  Share2,
   Lightbulb,
   AlertTriangle,
+  Info,
+  Archive,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
 
@@ -26,12 +26,29 @@ type Def = {
   builtIn: boolean;
 };
 
+/** v1 legacy builtin slugs, demoted by the v3 one-shot migration. */
+const LEGACY_KEYS = new Set([
+  'security',
+  'performance',
+  'code_quality',
+  'improvement',
+  'documentation',
+  'code_coverage',
+]);
+
 /**
- * Admin page to manage advice category templates. Any edit here only
- * affects FUTURE project provisioning — existing per-project tasks
- * keep their values so user customisations aren't stomped. Use the
- * "Propager" button on a row to force-provision the template onto
- * projects that don't yet have it.
+ * Admin page to manage advice category templates.
+ *
+ * v3 model (2026-04-18): the default ships a SINGLE built-in
+ * "priority" category that covers security, performance, code
+ * quality, improvement, documentation and test coverage in ONE pass
+ * and returns a global TOP-15 ranked list. The former 6 per-area
+ * builtins are preserved in the DB (demoted to non-builtin, disabled)
+ * so the user can review history and explicitly clean them up.
+ *
+ * Schedule field is NOT editable: KDust v2 removed the cron scheduler
+ * so every task is manual-trigger. We keep the column in the schema
+ * for back-compat but hide it from the UI.
  */
 export default function AdviceSettingsPage() {
   const [defs, setDefs] = useState<Def[]>([]);
@@ -62,13 +79,15 @@ export default function AdviceSettingsPage() {
         label: d.label,
         emoji: d.emoji,
         prompt: d.prompt,
-        schedule: d.schedule,
         enabled: d.enabled,
         sortOrder: d.sortOrder,
       }),
     });
     if (r.ok) {
-      notify('ok', `"${d.label}" saved. (Only affects future projects.)`);
+      notify(
+        'ok',
+        `"${d.label}" saved. Use “Overwrite everywhere” to also push this to existing projects.`,
+      );
       await load();
     } else {
       const j = await r.json().catch(() => ({}));
@@ -78,11 +97,20 @@ export default function AdviceSettingsPage() {
 
   const remove = async (d: Def) => {
     if (d.builtIn) return;
-    if (!confirm(`Delete category "${d.label}"?\n\nThis will also delete all associated tasks and advice on ALL projects.`)) return;
+    if (
+      !confirm(
+        `Delete category "${d.label}"?\n\n` +
+          `This will also delete all advice tasks and past results for this category on EVERY project.`,
+      )
+    )
+      return;
     const r = await fetch(`/api/advice/defaults/${d.id}`, { method: 'DELETE' });
     if (r.ok) {
       const j = await r.json();
-      notify('ok', `Deleted: ${j.cascade.tasks} cron(s) + ${j.cascade.advices} advice(s).`);
+      notify(
+        'ok',
+        `Deleted. Cascaded: ${j.cascade.tasks} task(s) + ${j.cascade.advices} advice row(s).`,
+      );
       await load();
     } else {
       const j = await r.json().catch(() => ({}));
@@ -90,33 +118,24 @@ export default function AdviceSettingsPage() {
     }
   };
 
-  const propagate = async (d: Def) => {
-    const r = await fetch(`/api/advice/defaults/${d.id}/propagate`, { method: 'POST' });
-    if (r.ok) {
-      const j = await r.json();
-      notify('ok', `${j.created} new cron(s) created on existing projects.`);
-    } else {
-      notify('err', 'Propagation error.');
-    }
-  };
-
   const overwrite = async (d: Def) => {
     if (
       !confirm(
         `GLOBAL OVERWRITE for "${d.label}"?\n\n` +
-          `This will rewrite the prompt, schedule and name of ALL tasks ` +
-          `in this category on ALL projects, losing any local ` +
-          `customisations. Missing tasks will also be created.\n\n` +
-          `Useful to standardise or rebuild old prompts.`,
+          `Rewrites prompt + label on ALL existing project tasks in this ` +
+          `category (losing local customisations) and creates the task ` +
+          `on projects that don't have it yet.`,
       )
     )
       return;
-    const r = await fetch(`/api/advice/defaults/${d.id}/overwrite`, { method: 'POST' });
+    const r = await fetch(`/api/advice/defaults/${d.id}/overwrite`, {
+      method: 'POST',
+    });
     if (r.ok) {
       const j = await r.json();
       notify(
         'ok',
-        `${j.updated} cron(s) overwritten, ${j.created} cron(s) created.`,
+        `${j.updated} task(s) overwritten, ${j.created} task(s) created.`,
       );
     } else {
       notify('err', 'Overwrite error.');
@@ -125,6 +144,19 @@ export default function AdviceSettingsPage() {
 
   const setField = (id: string, patch: Partial<Def>) =>
     setDefs((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+
+  // Split active vs legacy demoted rows — legacy goes into a collapsed
+  // "Archive" section so the settings page isn't cluttered by deprecated
+  // per-area templates.
+  const { active, legacy } = useMemo(() => {
+    const active: Def[] = [];
+    const legacy: Def[] = [];
+    for (const d of defs) {
+      if (LEGACY_KEYS.has(d.key) && !d.builtIn) legacy.push(d);
+      else active.push(d);
+    }
+    return { active, legacy };
+  }, [defs]);
 
   return (
     <div className="space-y-6">
@@ -139,10 +171,30 @@ export default function AdviceSettingsPage() {
           <Lightbulb size={22} className="text-amber-500" /> Advice categories
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Templates for the weekly analysis tasks. Changes only affect{' '}
-          <b>new</b> projects. Use <b>Propagate</b> to deploy a template to
-          existing projects that don&apos;t have it yet.
+          Templates used to generate the per-project advice task. The
+          default config ships a single <b>Priority advice</b> category
+          that covers security, performance, code quality, improvement,
+          documentation and test coverage in one pass and returns a
+          TOP-15 ranked action list.
         </p>
+      </div>
+
+      {/* v3 info banner */}
+      <div className="flex gap-2 items-start text-xs border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200 rounded-md p-3">
+        <Info size={14} className="shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p>
+            <b>Edits apply to FUTURE projects only.</b> To push a prompt
+            change to projects that already have the task, use{' '}
+            <b>Overwrite everywhere</b> (destructive — wipes local
+            customisations).
+          </p>
+          <p>
+            Advice tasks are <b>manual-trigger</b> (no scheduler in v2+). Run
+            them from the project dashboard or via{' '}
+            <code className="text-[11px]">POST /api/tasks/:id/run</code>.
+          </p>
+        </div>
       </div>
 
       {msg && (
@@ -163,19 +215,30 @@ export default function AdviceSettingsPage() {
       {loading ? (
         <p>Loading…</p>
       ) : (
-        <div className="space-y-4">
-          {defs.map((d) => (
-            <DefCard
-              key={d.id}
-              d={d}
+        <>
+          <div className="space-y-4">
+            {active.map((d) => (
+              <DefCard
+                key={d.id}
+                d={d}
+                setField={setField}
+                save={save}
+                remove={remove}
+                overwrite={overwrite}
+              />
+            ))}
+          </div>
+
+          {legacy.length > 0 && (
+            <LegacySection
+              items={legacy}
+              remove={remove}
               setField={setField}
               save={save}
-              remove={remove}
-              propagate={propagate}
               overwrite={overwrite}
             />
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -189,26 +252,28 @@ function DefCard({
   setField,
   save,
   remove,
-  propagate,
   overwrite,
+  compact = false,
 }: {
   d: Def;
   setField: (id: string, patch: Partial<Def>) => void;
   save: (d: Def) => void;
   remove: (d: Def) => void;
-  propagate: (d: Def) => void;
   overwrite: (d: Def) => void;
+  compact?: boolean;
 }) {
   return (
     <div className="border border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-white dark:bg-slate-900">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold flex items-center gap-2">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <h3 className="font-semibold flex items-center gap-2 flex-wrap">
           <span className="text-lg">{d.emoji}</span>
           {d.label}
-          <span className="text-[10px] font-mono text-slate-400">({d.key})</span>
+          <span className="text-[10px] font-mono text-slate-400">
+            ({d.key})
+          </span>
           {d.builtIn && (
             <span
-              title="Built-in category: cannot be deleted, only disabled"
+              title="Built-in: cannot be deleted, only disabled"
               className="text-[10px] bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 rounded px-1.5 py-0.5 inline-flex items-center gap-1"
             >
               <Lock size={9} /> built-in
@@ -226,11 +291,11 @@ function DefCard({
             checked={d.enabled}
             onChange={(e) => setField(d.id, { enabled: e.target.checked })}
           />
-          Enabled (provisioned for new projects)
+          Enabled (auto-provisioned for new projects)
         </label>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_80px_180px_80px] gap-2 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_80px_80px] gap-2 mb-3">
         <label className="block">
           <span className="text-[10px] text-slate-500">Label</span>
           <input
@@ -248,14 +313,6 @@ function DefCard({
           />
         </label>
         <label className="block">
-          <span className="text-[10px] text-slate-500">Schedule (cron)</span>
-          <input
-            className={field + ' font-mono'}
-            value={d.schedule}
-            onChange={(e) => setField(d.id, { schedule: e.target.value })}
-          />
-        </label>
-        <label className="block">
           <span className="text-[10px] text-slate-500">Order</span>
           <input
             type="number"
@@ -268,32 +325,27 @@ function DefCard({
         </label>
       </div>
 
-      <label className="block mb-3">
-        <span className="text-[10px] text-slate-500">
-          Prompt (body) — the JSON contract is appended automatically
-        </span>
-        <textarea
-          className={field + ' font-mono min-h-[140px]'}
-          value={d.prompt}
-          onChange={(e) => setField(d.id, { prompt: e.target.value })}
-        />
-      </label>
+      {!compact && (
+        <label className="block mb-3">
+          <span className="text-[10px] text-slate-500">
+            Prompt (body) — the JSON contract is appended automatically
+          </span>
+          <textarea
+            className={field + ' font-mono min-h-[160px]'}
+            value={d.prompt}
+            onChange={(e) => setField(d.id, { prompt: e.target.value })}
+          />
+        </label>
+      )}
 
       <div className="flex gap-2 flex-wrap">
         <Button onClick={() => save(d)}>
           <Save size={14} /> Save
         </Button>
         <button
-          onClick={() => propagate(d)}
-          className="px-3 py-2 rounded border border-slate-300 dark:border-slate-700 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1"
-          title="Provisions this template onto existing projects that don't have it yet (non-destructive)"
-        >
-          <Share2 size={14} /> Propagate
-        </button>
-        <button
           onClick={() => overwrite(d)}
           className="px-3 py-2 rounded border border-amber-400 dark:border-amber-700 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 inline-flex items-center gap-1"
-          title="Overwrites the prompt/schedule of ALL project tasks in this category (destructive)"
+          title="Rewrite this prompt on every existing project task (destructive, creates missing tasks too)"
         >
           <AlertTriangle size={14} /> Overwrite everywhere
         </button>
@@ -310,6 +362,95 @@ function DefCard({
   );
 }
 
+/**
+ * Legacy v1 builtins (security, performance, …) demoted to
+ * non-builtin by the v3 migration. Collapsed by default. User can
+ * delete them individually, or bulk-delete with a single click.
+ */
+function LegacySection({
+  items,
+  remove,
+  setField,
+  save,
+  overwrite,
+}: {
+  items: Def[];
+  remove: (d: Def) => void;
+  setField: (id: string, patch: Partial<Def>) => void;
+  save: (d: Def) => void;
+  overwrite: (d: Def) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const bulkDelete = async () => {
+    if (
+      !confirm(
+        `Delete ALL ${items.length} legacy v1 categor${items.length === 1 ? 'y' : 'ies'}?\n\n` +
+          `This will also remove any leftover tasks and advice rows. Irreversible.`,
+      )
+    )
+      return;
+    for (const d of items) {
+      await fetch(`/api/advice/defaults/${d.id}`, { method: 'DELETE' });
+    }
+    location.reload();
+  };
+
+  return (
+    <section className="border border-slate-200 dark:border-slate-800 rounded-lg">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between p-3 text-sm hover:bg-slate-50 dark:hover:bg-slate-900"
+      >
+        <span className="inline-flex items-center gap-2 font-semibold text-slate-600 dark:text-slate-400">
+          <Archive size={14} />
+          Legacy v1 categories
+          <span className="text-[10px] font-mono bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">
+            {items.length}
+          </span>
+        </span>
+        <span className="text-xs text-slate-400">
+          {open ? 'collapse' : 'expand'}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-slate-200 dark:border-slate-800 p-3 space-y-3">
+          <div className="flex items-start gap-2 text-xs text-slate-500">
+            <Info size={12} className="shrink-0 mt-0.5" />
+            <p>
+              These per-area categories (security, performance, code
+              quality, improvement, documentation, code coverage) were
+              replaced by the single <b>Priority advice</b> task in v3.
+              Their tasks and past results have been cleaned up; only
+              the template stubs remain so you can review the old
+              prompts. Safe to delete.
+            </p>
+          </div>
+          <div className="flex">
+            <button
+              onClick={bulkDelete}
+              className="ml-auto px-3 py-1.5 rounded border border-red-300 dark:border-red-700 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 inline-flex items-center gap-1"
+            >
+              <Trash2 size={12} /> Delete all {items.length} legacy stub(s)
+            </button>
+          </div>
+          {items.map((d) => (
+            <DefCard
+              key={d.id}
+              d={d}
+              setField={setField}
+              save={save}
+              remove={remove}
+              overwrite={overwrite}
+              compact
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CreateForm({
   onCreated,
   notify,
@@ -322,9 +463,8 @@ function CreateForm({
     key: '',
     label: '',
     emoji: '📋',
-    schedule: '0 4 * * 1',
     prompt:
-      'You are a senior reviewer. Inspect the project via fs_cli MCP tools. Focus on the TOP-3 most impactful ...',
+      'You are a senior reviewer. Inspect the project via fs_cli MCP tools. Focus on …',
   });
   const [busy, setBusy] = useState(false);
 
@@ -334,20 +474,18 @@ function CreateForm({
     const r = await fetch('/api/advice/defaults', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // schedule defaults to 'manual' server-side (see route validator).
       body: JSON.stringify(form),
     });
     setBusy(false);
     if (r.ok) {
       const j = await r.json();
-      notify('ok', `Created. ${j.provisioned} cron(s) provisioned on existing projects.`);
+      notify(
+        'ok',
+        `Created. ${j.provisioned} task(s) provisioned on existing projects.`,
+      );
       setOpen(false);
-      setForm({
-        key: '',
-        label: '',
-        emoji: '📋',
-        schedule: '0 4 * * 1',
-        prompt: '',
-      });
+      setForm({ key: '', label: '', emoji: '📋', prompt: '' });
       onCreated();
     } else {
       const j = await r.json().catch(() => ({}));
@@ -371,10 +509,13 @@ function CreateForm({
       className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg p-4 space-y-3"
     >
       <div className="flex items-center gap-2">
-        <Radio size={16} className="text-amber-500" />
+        <Plus size={16} className="text-amber-500" />
         <h3 className="font-semibold">New advice category</h3>
+        <span className="text-[10px] text-slate-500">
+          Creates a second advice task per project, run manually on demand.
+        </span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-[120px_1fr_80px_160px] gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-[160px_1fr_80px] gap-2">
         <label>
           <span className="text-[10px] text-slate-500">Slug (key)</span>
           <input
@@ -403,19 +544,11 @@ function CreateForm({
             onChange={(e) => setForm({ ...form, emoji: e.target.value })}
           />
         </label>
-        <label>
-          <span className="text-[10px] text-slate-500">Schedule (cron)</span>
-          <input
-            className={field + ' font-mono'}
-            value={form.schedule}
-            onChange={(e) => setForm({ ...form, schedule: e.target.value })}
-            required
-          />
-        </label>
       </div>
       <label className="block">
         <span className="text-[10px] text-slate-500">
-          Prompt (body) — min 20 characters
+          Prompt (body) — min 20 characters. The JSON contract is
+          appended automatically at run time.
         </span>
         <textarea
           className={field + ' font-mono min-h-[120px]'}
@@ -426,7 +559,7 @@ function CreateForm({
       </label>
       <div className="flex gap-2">
         <Button type="submit" disabled={busy}>
-          {busy ? 'Creating…' : 'Create + propagate'}
+          {busy ? 'Creating…' : 'Create + provision'}
         </Button>
         <button
           type="button"

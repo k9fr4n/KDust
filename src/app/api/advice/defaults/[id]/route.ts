@@ -10,7 +10,7 @@ const PatchInput = z.object({
   label: z.string().min(1).max(60).optional(),
   emoji: z.string().min(1).max(8).optional(),
   prompt: z.string().min(20).optional(),
-  schedule: z.string().min(5).optional(),
+  schedule: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
 });

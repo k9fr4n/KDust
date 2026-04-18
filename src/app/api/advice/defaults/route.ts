@@ -16,7 +16,10 @@ const CreateInput = z.object({
   label: z.string().min(1).max(60),
   emoji: z.string().min(1).max(8).default('📋'),
   prompt: z.string().min(20),
-  schedule: z.string().min(5),
+  // 'manual' accepted as a sentinel: KDust v2 removed the scheduler,
+  // advice tasks are manual-trigger only. Kept in schema for legacy
+  // rows still carrying a cron expression.
+  schedule: z.string().min(1).default('manual'),
   enabled: z.boolean().default(true),
   sortOrder: z.number().int().optional(),
 });
@@ -39,7 +42,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
   }
   const d = parsed.data;
-  if (!isValidCronExpression(d.schedule)) {
+  // 'manual' short-circuits the cron validator (no scheduler anyway).
+  if (d.schedule !== 'manual' && !isValidCronExpression(d.schedule)) {
     return NextResponse.json({ error: 'schedule: invalid cron expression' }, { status: 400 });
   }
   try {

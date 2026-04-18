@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { Clock, MessageCircle, ChevronUp, ChevronDown } from 'lucide-react';
+import { OpenConversationLink } from '@/components/OpenConversationLink';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -326,15 +327,23 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       // Visual upgrade 2026-04-18: the previous tiny
                       // "open" text was easy to miss. We now render a
                       // full button-like chip with clear affordance.
+                      // <OpenConversationLink> POSTs to
+                      // /api/conversations/:id/open first \u2014 that
+                      // route sets CURRENT_PROJECT_COOKIE to the
+                      // run's project BEFORE the navigation. Without
+                      // this step, opening a run from the "All
+                      // Projects" selector hits the /chat guard:
+                      // "Chat is project-scoped. Pick a project from
+                      // the top selector..." (Franck 2026-04-19 00:23).
                       if (localId) {
                         return (
-                          <Link
-                            href={`/chat?id=${localId}`}
-                            title="Open this run's conversation in /chat"
+                          <OpenConversationLink
+                            conversationId={localId}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-xs font-medium"
                           >
-                            <MessageCircle size={12} /> Open chat
-                          </Link>
+                            <MessageCircle size={12} />
+                            Open chat
+                          </OpenConversationLink>
                         );
                       }
                       if (r.dustConversationSId) {
@@ -409,6 +418,12 @@ function SortableTh({
           )
         ) : (
           <span className="inline-block w-3" />
+        )}
+      </Link>
+    </th>
+  );
+}
+   <span className="inline-block w-3" />
         )}
       </Link>
     </th>

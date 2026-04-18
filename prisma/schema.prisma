@@ -115,6 +115,12 @@ model Task {
   runs           TaskRun[]
 
   // --- automation push settings ---
+  // Master switch for the whole post-agent git pipeline. When false,
+  // the runner executes the prompt only: no branch, no commit, no
+  // push, and the prompt is sent as-is (no KDust automation context
+  // footer appended). Useful for chat-style recurring tasks that the
+  // user just wants to fire on a cron without mutating the repo.
+  pushEnabled        Boolean  @default(true)
   baseBranch         String   @default("main")            // sync & base new branches on this
   branchMode         String   @default("timestamped")     // 'timestamped' | 'stable'
   branchPrefix       String   @default("kdust")           // prefix in generated branch names

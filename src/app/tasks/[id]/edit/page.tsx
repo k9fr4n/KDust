@@ -21,6 +21,7 @@ export default async function EditCronPage({ params }: { params: Promise<{ id: s
         projectPath: cron.projectPath ?? '',
         teamsWebhook: cron.teamsWebhook ?? '',
         enabled: cron.enabled,
+        pushEnabled: cron.pushEnabled,
         baseBranch: cron.baseBranch,
         branchMode: (cron.branchMode === 'stable' ? 'stable' : 'timestamped'),
         branchPrefix: cron.branchPrefix,

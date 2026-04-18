@@ -13,6 +13,14 @@ export type CronFormValues = {
   teamsWebhook: string;
   enabled: boolean;
   // automation-push
+  /**
+   * Master switch for the git pipeline + prompt enrichment. See
+   * src/lib/cron/runner.ts buildAutomationPrompt() for semantics.
+   * When false, the "Automation push" fieldset is visually greyed
+   * out (fields still editable so the user can re-enable later
+   * without losing the branch settings).
+   */
+  pushEnabled: boolean;
   baseBranch: string;
   branchMode: 'timestamped' | 'stable';
   branchPrefix: string;
@@ -48,6 +56,7 @@ export function TaskForm({
     projectPath: initial?.projectPath ?? '',
     teamsWebhook: initial?.teamsWebhook ?? '',
     enabled: initial?.enabled ?? true,
+    pushEnabled: initial?.pushEnabled ?? true,
     baseBranch: initial?.baseBranch ?? 'main',
     branchMode: initial?.branchMode ?? 'timestamped',
     branchPrefix: initial?.branchPrefix ?? 'kdust',
@@ -112,14 +121,40 @@ export function TaskForm({
     <form onSubmit={submit} className="max-w-2xl space-y-4">
       <h1 className="text-2xl font-bold">{isEdit ? 'Edit task' : 'New task'}</h1>
 
-      {/* v2: tasks are manual-trigger only. schedule/timezone are
-          stored in DB with default values ('manual' / 'Europe/Paris')
-          purely for schema back-compat and are never shown or edited
-          in the UI. */}
-      <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-700 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
-        ℹ️ Tasks are manual-trigger only. Launch them from the task
-        page with <em>Run now</em>.
-      </div>
+      {/* Scheduler section \u2014 reinstated 2026-04-19 (Franck).
+          `manual` is a pseudo-schedule meaning "never auto-fire";
+          any other value must be a valid 5-field cron expression
+          (validated server-side). The helper text lists a few
+          ready-to-paste recipes. */}
+      <fieldset className="border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3">
+        <legend className="px-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Schedule</legend>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-sm">Cron expression</span>
+            <input
+              className={`${field} font-mono`}
+              value={form.schedule}
+              onChange={(e) => setForm({ ...form, schedule: e.target.value })}
+              placeholder="manual | 0 3 * * 1 | */15 * * * *"
+              required
+            />
+            <span className="text-xs text-slate-500">
+              <code>manual</code> = trigger only via Run now. Otherwise 5-field cron
+              (e.g. <code>0 3 * * 1</code> Mondays 3am, <code>*/15 * * * *</code> every 15 min).
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm">Timezone (IANA)</span>
+            <input
+              className={`${field} font-mono`}
+              value={form.timezone}
+              onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+              placeholder="Europe/Paris"
+              required
+            />
+          </label>
+        </div>
+      </fieldset>
 
       <label className="block">
         <span className="text-sm">Name</span>
@@ -167,8 +202,38 @@ export function TaskForm({
       </label>
 
       {/* ----- Automation push settings ----- */}
-      <fieldset className="border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3">
-        <legend className="px-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Automation push</legend>
+      {/* The whole section is gated by pushEnabled. When off, the
+          inputs are visually dimmed and semantically ignored by the
+          runner (no branch/commit/push, prompt sent as-is). Fields
+          remain editable so users can tweak settings they'll re-
+          enable later without losing anything. */}
+      <fieldset
+        className={
+          'border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3 ' +
+          (form.pushEnabled ? '' : 'opacity-60')
+        }
+      >
+        <legend className="px-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+          Automation push
+        </legend>
+
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={form.pushEnabled}
+            onChange={(e) => setForm({ ...form, pushEnabled: e.target.checked })}
+          />
+          <span className="text-sm">
+            <span className="font-medium">Enable automation push</span>
+            <span className="block text-xs text-slate-500">
+              When enabled, KDust appends a commit-context footer to the prompt and
+              auto-commits/pushes the agent&apos;s file changes on a dedicated branch.
+              When disabled, the task behaves like a recurring chat prompt: no branch,
+              no commit, no push \u2014 the prompt is sent as-is and the reply captured.
+            </span>
+          </span>
+        </label>
 
         <p className="text-xs text-slate-500">
           The runner syncs the base branch, creates a dedicated work branch, lets the agent modify files,

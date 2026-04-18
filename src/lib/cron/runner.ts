@@ -25,6 +25,15 @@ import {
  */
 const activeRuns = new Map<string, AbortController>();
 
+/**
+ * Separate tracker indexed by **Task id** (not TaskRun id). Updated
+ * on the hot paths where we also touch `activeRuns`. Lets the
+ * scheduler cheaply short-circuit a fire when a previous run of the
+ * same task is still in flight, without hitting the DB.
+ * Reinstated 2026-04-19 alongside the scheduler.
+ */
+const activeTaskIds = new Set<string>();
+
 /** Abort an in-flight run. Returns true if the runId was active. */
 export function cancelTaskRun(runId: string): boolean {
   const ac = activeRuns.get(runId);
@@ -35,6 +44,51 @@ export function cancelTaskRun(runId: string): boolean {
 
 export function isRunActive(runId: string): boolean {
   return activeRuns.has(runId);
+}
+
+/** True if ANY run of the given task is currently in flight in this process. */
+export function isTaskRunActive(taskId: string): boolean {
+  return activeTaskIds.has(taskId);
+}
+
+/**
+ * Build the final prompt sent to the Dust agent. When the task has
+ * `pushEnabled=true`, KDust appends an automation-context footer so
+ * the agent knows its edits will be auto-committed & pushed by the
+ * runner (and therefore should NOT run git commands itself). When
+ * `pushEnabled=false`, the prompt is passed through verbatim \u2014
+ * the task behaves like a recurring chat prompt: the agent reply is
+ * captured, files it may write stay uncommitted in the working tree.
+ *
+ * Kept near runTask so the coupling between `pushEnabled`, the
+ * footer, and the subsequent git pipeline is visible in one place.
+ */
+function buildAutomationPrompt(job: {
+  prompt: string;
+  pushEnabled: boolean;
+  baseBranch: string;
+  branchMode: string;
+  branchPrefix: string;
+  dryRun: boolean;
+  maxDiffLines: number;
+}): string {
+  if (!job.pushEnabled) return job.prompt;
+  const lines = [
+    job.prompt,
+    '',
+    '---',
+    '[KDust automation context]',
+    'This run will be auto-committed (and pushed unless dry-run) by KDust after your reply.',
+    `- Base branch: ${job.baseBranch}`,
+    `- Branch mode: ${job.branchMode}`,
+    `- Branch prefix: ${job.branchPrefix}`,
+    `- Dry-run: ${job.dryRun ? 'yes (local commit only, no push)' : 'no (commit + push)'}`,
+    `- Max diff lines: ${job.maxDiffLines} (KDust aborts the push if exceeded)`,
+    'Do NOT run `git add` / `git commit` / `git push` yourself \u2014 KDust handles',
+    'all git writes from the working-tree diff after your reply. Just edit files',
+    'via the fs-cli MCP server as needed and explain your changes in your reply.',
+  ];
+  return lines.join('\n');
 }
 
 /**
@@ -129,6 +183,10 @@ export async function runTask(taskId: string): Promise<void> {
   let linesRemoved = 0;
   let agentText = '';
 
+  // Register this task as in-flight so the scheduler's isTaskRunActive()
+  // guard short-circuits any overlapping fire. Cleaned up in the outer
+  // `finally` regardless of success/failure/abort.
+  activeTaskIds.add(taskId);
   try {
     if (!project) {
       throw new Error(`project "${job.projectPath}" not found in DB; add it in Projects first`);
@@ -361,22 +419,32 @@ export async function runTask(taskId: string): Promise<void> {
     }
 
     // [3] Branch setup --------------------------------------------------------
-    branch = composeBranchName(
-      (job.branchMode === 'stable' ? 'stable' : 'timestamped') as 'stable' | 'timestamped',
-      job.branchPrefix,
-      job.name,
-    );
+    // Skipped when pushEnabled=false: no commit/push \u2192 no need for a
+    // dedicated work branch. Agent runs on the freshly-reset base
+    // branch. Any files it writes stay uncommitted in the working
+    // tree (next task run will reset them on [2]).
+    // Note: protectedList is declared at function scope because step
+    // [8] (push) also consults it regardless of this branch creation.
     const protectedList = job.protectedBranches
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    if (protectedList.includes(branch) || protectedList.includes(job.baseBranch) && branch === job.baseBranch) {
-      throw new Error(`refusing to work on protected branch "${branch}"`);
+    if (job.pushEnabled) {
+      branch = composeBranchName(
+        (job.branchMode === 'stable' ? 'stable' : 'timestamped') as 'stable' | 'timestamped',
+        job.branchPrefix,
+        job.name,
+      );
+      if (protectedList.includes(branch) || protectedList.includes(job.baseBranch) && branch === job.baseBranch) {
+        throw new Error(`refusing to work on protected branch "${branch}"`);
+      }
+      await setPhase('branching', `Creating work branch ${branch}`);
+      const co = await checkoutWorkingBranch(project.name, branch);
+      if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
+      console.log(`[cron] branch=${branch}`);
+    } else {
+      console.log(`[cron] pushEnabled=false \u2192 skipping branch setup, running on ${job.baseBranch}`);
     }
-    await setPhase('branching', `Creating work branch ${branch}`);
-    const co = await checkoutWorkingBranch(project.name, branch);
-    if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
-    console.log(`[cron] branch=${branch}`);
 
     // [4] MCP fs -------------------------------------------------------------
     await setPhase('mcp', 'Registering fs-cli MCP server');
@@ -392,7 +460,11 @@ export async function runTask(taskId: string): Promise<void> {
     // [5] Dust agent ---------------------------------------------------------
     await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
     const convTitle = `[cron] ${job.name} @ ${new Date().toISOString()}`;
-    const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'cli');
+    // Enrich the prompt with the KDust automation-context footer when
+    // pushEnabled is true. When false, send the prompt as-is (see
+    // buildAutomationPrompt above). Per Franck 2026-04-19 00:36.
+    const agentPrompt = buildAutomationPrompt(job);
+    const conv = await createDustConversation(job.agentSId, agentPrompt, convTitle, mcpServerIds, 'cli');
     // Stamp the TaskRun with the Dust conversation sId ASAP so the
     // /runs page can show a "Chat" link even if the run later fails
     // mid-stream. Fire-and-forget — not worth aborting for.
@@ -462,7 +534,12 @@ export async function runTask(taskId: string): Promise<void> {
           projectName: project.name,
           messages: {
             create: [
-              { role: 'user', content: job.prompt },
+              // Persist the FULL prompt we actually sent to the
+              // agent (user prompt + automation-context footer when
+              // pushEnabled). Keeps the audit trail faithful to what
+              // the agent saw, and makes re-opening the conv in
+              // /chat show the context the agent had.
+              { role: 'user', content: agentPrompt },
               {
                 role: 'agent',
                 content: agentText,
@@ -479,6 +556,47 @@ export async function runTask(taskId: string): Promise<void> {
       });
     } catch (e) {
       console.warn(`[cron] could not persist conv: ${(e as Error).message}`);
+    }
+
+    // [5b] Prompt-only short-circuit -----------------------------------------
+    // When pushEnabled=false, the task is a recurring prompt: we
+    // captured the agent reply and persisted the conversation; we
+    // must NOT touch git. Any files the agent happened to write via
+    // fs-cli remain in the working tree (next sync on a different
+    // task run will reset them \u2014 that is the expected behavior).
+    // Mark the TaskRun as success and exit before the diff/commit/
+    // push pipeline. Introduced 2026-04-19 with the pushEnabled flag.
+    if (!job.pushEnabled) {
+      const durationMs = Date.now() - startedAt;
+      await db.taskRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'success',
+          phase: 'done',
+          phaseMessage: 'Prompt-only (push disabled)',
+          output: agentText,
+          finishedAt: new Date(),
+        },
+      });
+      await db.task.update({
+        where: { id: job.id },
+        data: { lastRunAt: new Date(), lastStatus: 'success' },
+      });
+      if (webhook) {
+        await postToTeams(webhook, {
+          title: `\uD83D\uDCAC KDust task : ${job.name}`,
+          summary: `Prompt-only run on ${project.name} (push disabled)`,
+          status: 'success',
+          details: agentText.slice(0, 4000),
+          facts: [
+            { name: 'Project', value: project.name },
+            { name: 'Mode', value: 'prompt-only' },
+            { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
+          ],
+        });
+      }
+      console.log(`[cron] success (prompt-only) job="${job.name}" duration=${durationMs}ms`);
+      return;
     }
 
     // [6] Diff measurement ---------------------------------------------------
@@ -550,6 +668,10 @@ export async function runTask(taskId: string): Promise<void> {
     console.log(`[cron] commit ${commitSha.slice(0, 8)}`);
 
     if (!job.dryRun) {
+      // Non-null assertion: we only reach this block via the
+      // pushEnabled=true path (prompt-only short-circuit at [5b]
+      // returns early), so `branch` was assigned at step [3].
+      if (!branch) throw new Error('internal: branch is null at push step');
       if (protectedList.includes(branch)) {
         throw new Error(`aborting push: target branch "${branch}" is protected`);
       }
@@ -584,7 +706,9 @@ export async function runTask(taskId: string): Promise<void> {
 
     // [10] Teams report -----------------------------------------------------
     if (webhook) {
-      const links = buildGitLinks(repo, branch, job.baseBranch, commitSha);
+      // Same non-null reasoning as step [8]: step [10] is only
+      // reached via the pushEnabled=true path.
+      const links = buildGitLinks(repo, branch ?? job.baseBranch, job.baseBranch, commitSha);
       const fileList =
         diff.files.slice(0, 15).map((f) => `• ${f}`).join('\n') +
         (diff.files.length > 15 ? `\n(… +${diff.files.length - 15} more)` : '');
@@ -598,7 +722,7 @@ export async function runTask(taskId: string): Promise<void> {
         `Files changed:\n${fileList}`;
       const facts: TeamsCardFact[] = [
         { name: 'Project', value: project.name },
-        { name: 'Branch', value: branch },
+        { name: 'Branch', value: branch ?? '-' },
         { name: 'Base', value: job.baseBranch },
         { name: 'Commit', value: commitSha ? commitSha.slice(0, 10) : '-' },
         { name: 'Diff', value: `${filesChanged} file(s), +${linesAdded}/-${linesRemoved}` },
@@ -651,5 +775,10 @@ export async function runTask(taskId: string): Promise<void> {
       });
     }
     console.error(`[cron] ${wasAborted ? 'ABORTED' : 'FAILED'} job="${job.name}": ${msg}`);
+  } finally {
+    // Always release the per-task lock so the next scheduler fire (or
+    // a manual /runs trigger) can proceed. Safe even if the try-block
+    // returned early before adding to the set.
+    activeTaskIds.delete(taskId);
   }
 }

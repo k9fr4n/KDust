@@ -1,8 +1,18 @@
 'use client';
-import { Fragment, Suspense, useEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { MessageSquare, Plus, Send, Square, Trash2, Wrench, Clock } from 'lucide-react';
+import {
+  MessageSquare,
+  Plus,
+  Send,
+  Square,
+  Trash2,
+  Wrench,
+  Clock,
+  Pin,
+  PinOff,
+} from 'lucide-react';
 
 type Agent = { sId: string; name: string };
 type ConvSummary = {
@@ -12,9 +22,11 @@ type ConvSummary = {
   agentSId: string;
   updatedAt: string;
   projectName: string | null;
-  /** Optional \u2014 only present if the API returns it; used for tooltips. */
+  /** Dashboard and /chat share the same pin state via /api/conversations/:id/pin. */
+  pinned?: boolean;
+  /** Optional — only present if the API returns it; used for tooltips. */
   createdAt?: string;
-  /** Optional \u2014 count of messages for the sidebar badge. */
+  /** Optional — count of messages for the sidebar badge. */
   messageCount?: number;
 };
 type Msg = { id: string; role: 'user' | 'agent' | 'system'; content: string; createdAt?: string };
@@ -62,7 +74,7 @@ function fullTime(iso?: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
-/** Elapsed seconds \u2192 "1m 23s" / "45s" / "2h 03m". */
+/** Elapsed seconds → "1m 23s" / "45s" / "2h 03m". */
 function elapsed(sinceIso?: string | null, nowMs?: number): string {
   if (!sinceIso) return '';
   const from = new Date(sinceIso).getTime();
@@ -442,6 +454,103 @@ function ChatPageInner() {
     await refreshConvs();
   };
 
+  /**
+   * Toggle pin status on a conversation. Uses the same endpoint as the
+   * dashboard's <ConversationCard> so the two views stay in sync —
+   * pin here, refresh the dashboard, the same Pin icon appears, and
+   * vice-versa. Optimistic update for snappy feedback; falls back to
+   * a full refresh on error to avoid drifting from server truth.
+   */
+  const togglePin = async (id: string, next: boolean) => {
+    setConvs((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, pinned: next } : c)),
+    );
+    try {
+      const r = await fetch(`/api/conversations/${id}/pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: next }),
+      });
+      if (!r.ok) throw new Error('pin failed');
+      // Re-sort pinned-first without a full network refresh.
+      await refreshConvs();
+    } catch {
+      await refreshConvs();
+    }
+  };
+
+  // ---- Resizable sidebar ---------------------------------------------------
+  // Persist user-chosen width in localStorage so the layout feels stable
+  // across reloads. Bounded to [180, 480]px to avoid unusable extremes
+  // (titles get truncated aggressively below ~180px; above ~480px the
+  // chat pane becomes cramped on a 1280 screen).
+  const SIDEBAR_MIN = 180;
+  const SIDEBAR_MAX = 480;
+  const SIDEBAR_DEFAULT = 260;
+  const [sidebarW, setSidebarW] = useState<number>(SIDEBAR_DEFAULT);
+  useEffect(() => {
+    const saved = Number(
+      typeof window !== 'undefined'
+        ? window.localStorage.getItem('kdust:chat:sidebarW')
+        : '',
+    );
+    if (Number.isFinite(saved) && saved >= SIDEBAR_MIN && saved <= SIDEBAR_MAX) {
+      setSidebarW(saved);
+    }
+  }, []);
+  const draggingRef = useRef(false);
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+  const onResizeMove = (e: React.PointerEvent) => {
+    if (!draggingRef.current) return;
+    // We need the container's left edge to compute the desired width.
+    // The handle lives inside the grid wrapper, so we walk up to the
+    // element tagged with data-chat-root.
+    const root = (e.currentTarget as HTMLElement).closest<HTMLElement>(
+      '[data-chat-root]',
+    );
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const w = Math.min(
+      SIDEBAR_MAX,
+      Math.max(SIDEBAR_MIN, e.clientX - rect.left),
+    );
+    setSidebarW(w);
+  };
+  const onResizeEnd = (e: React.PointerEvent) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    try {
+      window.localStorage.setItem('kdust:chat:sidebarW', String(Math.round(sidebarW)));
+    } catch {}
+  };
+
+  // ---- Auto-growing textarea ----------------------------------------------
+  // Grows from ~2 lines to ~12 lines as the user types; capped by CSS
+  // max-height so the input never eats the messages pane. Using a
+  // manual JS resize (vs CSS field-sizing) keeps Safari/Firefox happy.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const TEXTAREA_MAX_PX = 280; // ~12 lines at default font size
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const next = Math.min(TEXTAREA_MAX_PX, el.scrollHeight);
+    el.style.height = next + 'px';
+    el.style.overflowY = el.scrollHeight > TEXTAREA_MAX_PX ? 'auto' : 'hidden';
+  }, []);
+  useLayoutEffect(() => {
+    autoResize();
+  }, [draft, autoResize]);
+
   const field =
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
 
@@ -454,9 +563,18 @@ function ChatPageInner() {
     // stable on mobile browsers that resize the viewport with their
     // address bar. min-h-0 lets flex children shrink so only the inner
     // messages pane scrolls, never the page.
-    <div className="grid grid-cols-[260px_minmax(0,1fr)] gap-4 h-[calc(100dvh-6.5rem)] min-h-0 max-w-full">
-      {/* Sidebar conversations */}
-      <aside className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg">
+    <div
+      data-chat-root
+      className="flex gap-0 h-[calc(100dvh-6.5rem)] min-h-0 max-w-full"
+      onPointerMove={onResizeMove}
+      onPointerUp={onResizeEnd}
+      onPointerCancel={onResizeEnd}
+    >
+      {/* Sidebar conversations (resizable) */}
+      <aside
+        className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg shrink-0"
+        style={{ width: sidebarW }}
+      >
         <div className="p-3 border-b border-slate-200 dark:border-slate-800">
           <Button onClick={newChat} className="w-full justify-center">
             <Plus size={14} /> New chat
@@ -478,12 +596,16 @@ function ChatPageInner() {
                 className="flex-1 text-left px-2 py-2 min-w-0"
                 title={`Last updated ${fullTime(c.updatedAt)}`}
               >
-                <div className="flex items-baseline gap-2">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  {c.pinned && (
+                    <Pin
+                      size={11}
+                      className="text-amber-500 shrink-0"
+                      aria-label="Pinned"
+                    />
+                  )}
                   <div className="text-sm font-medium truncate flex-1">{c.title}</div>
                   <span
-                    // `nowTick` is read so the relative label stays
-                    // fresh. Kept on the same line as the title for
-                    // density; switches to "just now", "5m", "2h"\u2026
                     className="text-[10px] text-slate-400 shrink-0"
                     data-tick={nowTick}
                   >
@@ -492,8 +614,28 @@ function ChatPageInner() {
                 </div>
                 <div className="text-xs text-slate-500 truncate">
                   {c.agentName ?? c.agentSId}
-                  {c.projectName && <span className="ml-1">\u00b7 {c.projectName}</span>}
+                  {c.projectName && <span className="ml-1">· {c.projectName}</span>}
                 </div>
+              </button>
+              {/*
+                Pin toggle. Same endpoint as the dashboard's
+                ConversationCard → pinning here shows up there
+                after refresh, and vice-versa.
+              */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void togglePin(c.id, !c.pinned);
+                }}
+                className={`p-1 ${
+                  c.pinned
+                    ? 'text-amber-500 hover:text-amber-600'
+                    : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:text-amber-500'
+                }`}
+                title={c.pinned ? 'Unpin' : 'Pin'}
+                aria-label={c.pinned ? 'Unpin conversation' : 'Pin conversation'}
+              >
+                {c.pinned ? <PinOff size={14} /> : <Pin size={14} />}
               </button>
               <button
                 onClick={() => removeConv(c.id)}
@@ -507,13 +649,31 @@ function ChatPageInner() {
         </ul>
       </aside>
 
-      {/* Main chat pane. min-w-0 lets this grid track actually shrink
+      {/*
+        Drag handle to resize the sidebar. 4px visual, 12px hit area
+        (via padding) for a forgiving grab target. PointerEvents on
+        the surrounding <div data-chat-root> track the drag so we
+        don't lose it when the cursor leaves the handle.
+      */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        onPointerDown={onResizeStart}
+        className="relative mx-1 w-1 cursor-col-resize shrink-0 group"
+        title="Drag to resize"
+      >
+        <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
+        <div className="h-full w-full rounded-full bg-slate-200 dark:bg-slate-800 group-hover:bg-brand-400 transition-colors" />
+      </div>
+
+      {/* Main chat pane. min-w-0 lets this flex track actually shrink
           when a message bubble contains unwrappable content (long URL,
           code line with no spaces). Without it, the track grows to fit
-          the content and the whole grid overflows horizontally, which
+          the content and the whole layout overflows horizontally, which
           in turn pushes the body past 100dvh and creates a page-level
           scrollbar on the right. */}
-      <section className="flex flex-col min-h-0 min-w-0 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
+      <section className="flex-1 flex flex-col min-h-0 min-w-0 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
         <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
           <MessageSquare size={18} className="text-slate-400" />
           <select
@@ -567,42 +727,13 @@ function ChatPageInner() {
           )}
         </div>
 
-        {/* Conversation info strip \u2014 visible only when a conversation is
-            loaded. Surfaces timestamps and counts that users repeatedly
-            asked for (no horodatage at all before). */}
-        {currentId && messages.length > 0 && (() => {
-          const first = messages[0]?.createdAt;
-          const last = messages[messages.length - 1]?.createdAt;
-          const currentAgent = agents.find((a) => a.sId === agentSId);
-          return (
-            <div className="px-3 py-1.5 text-[11px] border-b border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="inline-flex items-center gap-1">
-                <MessageSquare size={11} />
-                {messages.length} message{messages.length > 1 ? 's' : ''}
-              </span>
-              {currentAgent && (
-                <span>\u00b7 agent <b className="text-slate-700 dark:text-slate-300">{currentAgent.name}</b></span>
-              )}
-              {first && (
-                <span title={fullTime(first)}>
-                  \u00b7 started {relTime(first)}
-                </span>
-              )}
-              {last && last !== first && (
-                <span title={fullTime(last)}>
-                  \u00b7 last message {relTime(last)}
-                </span>
-              )}
-              <span
-                // Invisible span keeping the reactive dep on nowTick
-                // so the relative labels refresh without a manual
-                // state read.
-                className="hidden"
-                data-tick={nowTick}
-              />
-            </div>
-          );
-        })()}
+        {/*
+          Conversation info was previously duplicated here at the top of
+          the pane. Removed 2026-04-18 — the persistent status strip
+          just above the composer now carries the same info (message
+          count, agent, timestamps) and is always in the user's
+          immediate visual field regardless of scroll position.
+        */}
 
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {messages.map((m, i) => {
@@ -655,7 +786,7 @@ function ChatPageInner() {
                       <span className="font-medium">{roleLabel}</span>
                       {m.createdAt && (
                         <span title={fullTime(m.createdAt)}>
-                          {' \u00b7 '}
+                          {' · '}
                           {clockTime(m.createdAt)}
                           <span className="ml-1 text-slate-300 dark:text-slate-600">
                             ({relTime(m.createdAt)})
@@ -712,84 +843,152 @@ function ChatPageInner() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Status strip — sits directly above the Reply textarea so users
-            immediately see why the form is disabled and can hit Stop
-            without hunting for context. Two mutually exclusive states:
-              - `streaming`       : this tab is actively consuming the SSE
-              - `serverStreaming` : another tab/no tab owns the stream
-            Both show a Stop button; the handler is idempotent. */}
-        {(streaming || serverStreaming) && (
-          <div
-            className={`flex items-center gap-2 px-3 py-2 text-xs border-t ${
-              streaming
-                ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300'
-                : 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300'
-            }`}
-            role="status"
-            aria-live="polite"
-          >
-            <span className="relative flex h-2 w-2 shrink-0">
+        {/*
+          Persistent status strip — ALWAYS visible directly above the
+          composer so the user never loses sight of what's happening
+          (idle / streaming here / streaming on server). Three states:
+            - streaming       : this tab is consuming the SSE → blue
+            - serverStreaming : another tab/no tab owns the stream → amber
+            - idle            : nothing in flight → neutral (shows
+                                message count + agent + last activity)
+          Per Franck 2026-04-18: "toujours laisser visible l'état
+          au-dessus de la fenêtre de saisie".
+        */}
+        {(() => {
+          const active = streaming || serverStreaming;
+          const firstAt = messages[0]?.createdAt;
+          const lastAt = messages[messages.length - 1]?.createdAt;
+          const currentAgent = agents.find((a) => a.sId === agentSId);
+          const tone = streaming
+            ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300'
+            : serverStreaming
+              ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300'
+              : 'border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/40 text-slate-500';
+          const dotOuter = streaming
+            ? 'bg-blue-400'
+            : serverStreaming
+              ? 'bg-amber-400'
+              : 'bg-slate-300 dark:bg-slate-700';
+          const dotInner = streaming
+            ? 'bg-blue-500'
+            : serverStreaming
+              ? 'bg-amber-500'
+              : 'bg-slate-400 dark:bg-slate-600';
+          return (
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 text-[11px] border-t ${tone}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="relative flex h-2 w-2 shrink-0">
+                {active && (
+                  <span
+                    className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${dotOuter}`}
+                  />
+                )}
+                <span
+                  className={`relative inline-flex rounded-full h-2 w-2 ${dotInner}`}
+                />
+              </span>
               <span
-                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                  streaming ? 'bg-blue-400' : 'bg-amber-400'
-                }`}
-              />
-              <span
-                className={`relative inline-flex rounded-full h-2 w-2 ${
-                  streaming ? 'bg-blue-500' : 'bg-amber-500'
-                }`}
-              />
-            </span>
-            <span className="flex-1" data-tick={nowTick}>
-              {streaming ? (
-                <>
-                  <Clock size={11} className="inline-block mb-0.5 mr-1" />
-                  Streaming live
-                  {localStreamStartedAt && (
-                    <>
-                      {' '}· elapsed{' '}
-                      <b>{elapsed(localStreamStartedAt, nowTick)}</b>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Clock size={11} className="inline-block mb-0.5 mr-1" />
-                  Agent is still replying in the background
-                  {serverStreamingSince && (
-                    <>
-                      {' '}· started{' '}
-                      <span title={fullTime(serverStreamingSince)}>
-                        {new Date(serverStreamingSince).toLocaleTimeString()}
-                      </span>
-                      {' '}({elapsed(serverStreamingSince, nowTick)})
-                    </>
-                  )}
-                  . The reply will appear automatically when it\u2019s ready.
-                </>
-              )}
-            </span>
-            {currentId && (
-              <button
-                type="button"
-                onClick={stopStream}
-                disabled={stopping}
-                title="Stop the agent's reply"
-                className="inline-flex items-center gap-1 rounded border border-red-400 px-2 py-0.5 text-red-700 hover:bg-red-100 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-900/40 disabled:opacity-50"
+                className="flex-1 truncate flex flex-wrap items-center gap-x-2"
+                data-tick={nowTick}
               >
-                <Square size={12} />
-                {stopping ? 'Stopping…' : 'Stop'}
-              </button>
-            )}
-          </div>
-        )}
+                {streaming ? (
+                  <>
+                    <Clock size={11} className="shrink-0" />
+                    <span>Streaming live</span>
+                    {localStreamStartedAt && (
+                      <span>
+                        · elapsed <b>{elapsed(localStreamStartedAt, nowTick)}</b>
+                      </span>
+                    )}
+                  </>
+                ) : serverStreaming ? (
+                  <>
+                    <Clock size={11} className="shrink-0" />
+                    <span>Agent is still replying in the background</span>
+                    {serverStreamingSince && (
+                      <span title={fullTime(serverStreamingSince)}>
+                        · started{' '}
+                        {new Date(serverStreamingSince).toLocaleTimeString()}{' '}
+                        ({elapsed(serverStreamingSince, nowTick)})
+                      </span>
+                    )}
+                  </>
+                ) : !currentId ? (
+                  <>
+                    <MessageSquare size={11} className="shrink-0" />
+                    <span>Ready — type a message to start a new conversation</span>
+                    {currentAgent && (
+                      <span>
+                        · agent{' '}
+                        <b className="text-slate-700 dark:text-slate-300">
+                          {currentAgent.name}
+                        </b>
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <MessageSquare size={11} className="shrink-0" />
+                    <span>
+                      Idle · {messages.length} message
+                      {messages.length > 1 ? 's' : ''}
+                    </span>
+                    {currentAgent && (
+                      <span>
+                        · agent{' '}
+                        <b className="text-slate-700 dark:text-slate-300">
+                          {currentAgent.name}
+                        </b>
+                      </span>
+                    )}
+                    {lastAt && (
+                      <span title={fullTime(lastAt)}>
+                        · last message {relTime(lastAt)}
+                      </span>
+                    )}
+                    {firstAt && firstAt !== lastAt && (
+                      <span title={fullTime(firstAt)}>
+                        · started {relTime(firstAt)}
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+              {active && currentId && (
+                <button
+                  type="button"
+                  onClick={stopStream}
+                  disabled={stopping}
+                  title="Stop the agent's reply"
+                  className="inline-flex items-center gap-1 rounded border border-red-400 px-2 py-0.5 text-red-700 hover:bg-red-100 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-900/40 disabled:opacity-50"
+                >
+                  <Square size={12} />
+                  {stopping ? 'Stopping…' : 'Stop'}
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
-        <form onSubmit={send} className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2">
+        <form
+          onSubmit={send}
+          className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2 items-end"
+        >
           <textarea
-            className={field + ' resize-none'}
+            ref={textareaRef}
+            className={field + ' resize-none leading-relaxed'}
             rows={2}
+            // The height is driven by `autoResize` (see useLayoutEffect
+            // on `draft`). max-height is set inline because tailwind's
+            // max-h-[Xpx] works but duplicating the constant here
+            // keeps the JS ceiling and the CSS ceiling in sync.
+            style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '2.75rem' }}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onInput={autoResize}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -807,3 +1006,4 @@ function ChatPageInner() {
     </div>
   );
 }
+

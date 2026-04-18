@@ -9,7 +9,6 @@ import {
   LogOut,
   Link2,
   Link2Off,
-  FolderGit2,
   ScrollText,
 } from 'lucide-react';
 
@@ -113,9 +112,6 @@ export function UserMenu() {
             )}
           </div>
 
-          <Link href="/settings/projects" onClick={() => setOpen(false)} className={item} role="menuitem">
-            <FolderGit2 size={16} /> Projects
-          </Link>
           <Link href="/settings" onClick={() => setOpen(false)} className={item} role="menuitem">
             <SettingsIcon size={16} /> Settings
           </Link>

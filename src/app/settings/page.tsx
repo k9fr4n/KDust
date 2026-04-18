@@ -4,6 +4,7 @@ import {
   Lightbulb,
   BarChart3,
   ChevronRight,
+  FolderGit2,
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,14 @@ export default function SettingsIndex() {
     icon: React.ReactNode;
     accent: string;
   }[] = [
+    {
+      href: '/settings/projects',
+      title: 'Projects',
+      description:
+        'Register / unregister projects tracked by KDust: git URL, default branch, manual sync trigger.',
+      icon: <FolderGit2 size={18} />,
+      accent: 'text-teal-600 dark:text-teal-400',
+    },
     {
       href: '/settings/global',
       title: 'Global settings',

@@ -1,94 +1,87 @@
-'use client';
-import { useEffect, useState } from 'react';
-import { Button } from '@/components/Button';
+import Link from 'next/link';
+import {
+  Settings as SettingsIcon,
+  Lightbulb,
+  BarChart3,
+  ChevronRight,
+} from 'lucide-react';
 
-export default function SettingsPage() {
-  const [cfg, setCfg] = useState<any>(null);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+export const dynamic = 'force-dynamic';
 
-  useEffect(() => {
-    void fetch('/api/settings')
-      .then((r) => r.json())
-      .then((j) => setCfg(j.config));
-  }, []);
-
-  if (!cfg) return <p>Loading…</p>;
-
-  const save = async () => {
-    setSaving(true);
-    setMsg(null);
-    const res = await fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cfg),
-    });
-    setSaving(false);
-    setMsg(res.ok ? 'Saved.' : 'Save error.');
-  };
-
-  const field =
-    'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
-  const bind = (k: string) => ({
-    value: cfg[k] ?? '',
-    onChange: (e: any) => setCfg({ ...cfg, [k]: e.target.value }),
-  });
+/**
+ * Back-office hub. Each concern has its own dedicated route; this
+ * page is just a navigation index. Previously the global app
+ * settings form lived inline here — moved to /settings/global so
+ * each tile has a symmetric UX and this page stays scannable.
+ */
+export default function SettingsIndex() {
+  const tiles: {
+    href: string;
+    title: string;
+    description: string;
+    icon: React.ReactNode;
+    accent: string;
+  }[] = [
+    {
+      href: '/settings/global',
+      title: 'Global settings',
+      description:
+        'Application-wide configuration: Dust endpoint, WorkOS OAuth, default notifications.',
+      icon: <SettingsIcon size={18} />,
+      accent: 'text-slate-600 dark:text-slate-300',
+    },
+    {
+      href: '/settings/advice',
+      title: 'Advice categories',
+      description:
+        'Weekly analysis cron templates: prompts, schedules, add/remove categories.',
+      icon: <Lightbulb size={18} />,
+      accent: 'text-amber-600 dark:text-amber-400',
+    },
+    {
+      href: '/settings/usage',
+      title: 'Usage dashboard',
+      description:
+        'Full stats on your Dust activity through KDust: tokens, messages, conversations, runs, top agents / projects, 30-day timelines.',
+      icon: <BarChart3 size={18} />,
+      accent: 'text-brand-600 dark:text-brand-400',
+    },
+  ];
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="max-w-3xl space-y-4">
       <h1 className="text-2xl font-bold">Back-office</h1>
+      <p className="text-sm text-slate-500">
+        Administrative sections. Pick a category to configure or
+        inspect KDust.
+      </p>
 
-      <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-amber-50/40 dark:bg-amber-950/10">
-        <a
-          href="/settings/advice"
-          className="text-sm font-semibold text-amber-700 dark:text-amber-300 hover:underline"
-        >
-          💡 Advice categories →
-        </a>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Weekly analysis cron templates (prompts, schedules,
-          add/remove categories).
-        </p>
-      </div>
-
-      <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-brand-50/40 dark:bg-brand-950/10">
-        <a
-          href="/settings/usage"
-          className="text-sm font-semibold text-brand-700 dark:text-brand-300 hover:underline"
-        >
-          📊 Usage dashboard →
-        </a>
-        <p className="text-xs text-slate-500 mt-0.5">
-          Full stats on your Dust activity through KDust: messages,
-          conversations, task runs, top agents / projects / tasks, 30-day
-          activity timelines.
-        </p>
-      </div>
-
-      <label className="block">
-        <span className="text-sm">Dust base URL</span>
-        <input className={field} {...bind('dustBaseUrl')} />
-      </label>
-      <label className="block">
-        <span className="text-sm">WorkOS Client ID</span>
-        <input className={field} {...bind('workosClientId')} />
-      </label>
-      <label className="block">
-        <span className="text-sm">WorkOS Domain</span>
-        <input className={field} {...bind('workosDomain')} />
-      </label>
-      <label className="block">
-        <span className="text-sm">Claim namespace</span>
-        <input className={field} {...bind('claimNamespace')} />
-      </label>
-      <label className="block">
-        <span className="text-sm">Default Teams webhook</span>
-        <input className={field} type="url" {...bind('defaultTeamsWebhook')} />
-      </label>
-
-      <div className="flex items-center gap-4">
-        <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
-        {msg && <span className="text-sm text-slate-500">{msg}</span>}
+      <div className="grid grid-cols-1 gap-2">
+        {tiles.map((t) => (
+          <Link
+            key={t.href}
+            href={t.href}
+            className="group flex items-start gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 hover:border-brand-400 hover:shadow-sm transition"
+          >
+            <span
+              className={`shrink-0 mt-0.5 inline-flex items-center justify-center w-9 h-9 rounded-md bg-slate-50 dark:bg-slate-800 ${t.accent}`}
+            >
+              {t.icon}
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-base font-semibold text-slate-900 dark:text-slate-100 group-hover:text-brand-600 dark:group-hover:text-brand-400">
+                {t.title}
+              </span>
+              <span className="block text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                {t.description}
+              </span>
+            </span>
+            <ChevronRight
+              size={18}
+              className="shrink-0 mt-2 text-slate-300 dark:text-slate-600 group-hover:text-brand-500 transition"
+            />
+          </Link>
+        ))}
       </div>
     </div>
   );

@@ -13,7 +13,22 @@ import {
   Play,
   Clock,
   Minus,
+  Hash,
 } from 'lucide-react';
+
+/**
+ * Approximate character-to-token ratio used across OpenAI / Anthropic
+ * tokenizers for mixed English/French prose. 4 chars ~ 1 token is the
+ * canonical rule of thumb. We use it here to derive a *rough* token
+ * estimate from Message.content length, since KDust doesn't store the
+ * exact LLM token count today (Dust's streaming API surfaces the raw
+ * text deltas, not per-message usage stats). Label as "est." in UI.
+ *
+ * If we later instrument the stream loop in src/lib/dust/chat.ts to
+ * count `generation_tokens` events and persist the true count on
+ * Message, this constant becomes a fallback for legacy rows only.
+ */
+const CHARS_PER_TOKEN = 4;
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -66,6 +81,8 @@ export default async function UsagePage() {
     msgDailyRaw,
     runDailyRaw,
     convDailyRaw,
+    tokenByRoleRaw,
+    tokenDailyRaw,
   ] = await Promise.all([
     db.conversation.count(),
     db.message.count(),
@@ -154,6 +171,30 @@ export default async function UsagePage() {
          GROUP BY day ORDER BY day ASC`,
       thirtyDaysAgo.toISOString(),
     ),
+    // Token-proxy aggregates (total chars by role; we divide by
+    // CHARS_PER_TOKEN client-side). Single query returns user/agent
+    // totals + 30d totals in one round-trip to keep the dashboard
+    // load time flat regardless of message volume.
+    db.$queryRawUnsafe<
+      { role: string; totalChars: bigint | number; recentChars: bigint | number }[]
+    >(
+      `SELECT role,
+              COALESCE(SUM(length(content)), 0) AS totalChars,
+              COALESCE(SUM(CASE WHEN createdAt >= ? THEN length(content) ELSE 0 END), 0) AS recentChars
+         FROM Message
+         GROUP BY role`,
+      thirtyDaysAgo.toISOString(),
+    ),
+    // Daily token-proxy series (chars/day, all roles mixed) for the
+    // sparkline. Cheap: Message.createdAt is indexed via FK.
+    db.$queryRawUnsafe<{ day: string; n: bigint | number }[]>(
+      `SELECT strftime('%Y-%m-%d', createdAt) AS day,
+              COALESCE(SUM(length(content)), 0) AS n
+         FROM Message
+         WHERE createdAt >= ?
+         GROUP BY day ORDER BY day ASC`,
+      thirtyDaysAgo.toISOString(),
+    ),
   ]);
 
   // Resolve run-by-task groupBy → task metadata in a separate findMany.
@@ -198,6 +239,48 @@ export default async function UsagePage() {
   const msgDaily = denseSeries(msgDailyRaw);
   const runDaily = denseSeries(runDailyRaw);
   const convDaily = denseSeries(convDailyRaw);
+
+  /**
+   * Roll up per-role char totals into est-token figures.
+   * Semantics of roles: 'user' = prompts sent to Dust (proxy for input
+   * tokens), 'agent' = streamed model output (proxy for output tokens),
+   * 'system' = tool/debug messages (usually negligible).
+   */
+  const tokensByRole: Record<'user' | 'agent' | 'system', { total: number; recent: number }> = {
+    user: { total: 0, recent: 0 },
+    agent: { total: 0, recent: 0 },
+    system: { total: 0, recent: 0 },
+  };
+  for (const row of tokenByRoleRaw) {
+    const bucket =
+      row.role === 'user' || row.role === 'agent' || row.role === 'system'
+        ? (row.role as 'user' | 'agent' | 'system')
+        : null;
+    if (!bucket) continue;
+    tokensByRole[bucket].total = Math.round(
+      Number(row.totalChars) / CHARS_PER_TOKEN,
+    );
+    tokensByRole[bucket].recent = Math.round(
+      Number(row.recentChars) / CHARS_PER_TOKEN,
+    );
+  }
+  const tokensTotalAll =
+    tokensByRole.user.total +
+    tokensByRole.agent.total +
+    tokensByRole.system.total;
+  const tokensRecentAll =
+    tokensByRole.user.recent +
+    tokensByRole.agent.recent +
+    tokensByRole.system.recent;
+
+  // Dense 30d token series: densify on chars, then convert to tokens.
+  const tokenDailyChars = denseSeries(
+    tokenDailyRaw.map((r) => ({ day: r.day, n: BigInt(Number(r.n)) })),
+  );
+  const tokenDaily = tokenDailyChars.map((r) => ({
+    day: r.day,
+    n: Math.round(r.n / CHARS_PER_TOKEN),
+  }));
 
   const sum = (s: { n: number }[]) => s.reduce((a, b) => a + b.n, 0);
   const runStatus = Object.fromEntries(
@@ -276,7 +359,7 @@ export default async function UsagePage() {
       </div>
 
       {/* KPI cards — total and 30d */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KPI
           icon={<MessageSquare size={14} />}
           label="Conversations"
@@ -288,6 +371,13 @@ export default async function UsagePage() {
           label="Messages"
           value={totalMsgs}
           sub={`${recentMsgs} in last 30d`}
+        />
+        <KPI
+          icon={<Hash size={14} />}
+          label="Est. tokens"
+          value={tokensTotalAll}
+          sub={`~${tokensRecentAll.toLocaleString()} in last 30d`}
+          title={`Rough estimate from message content length (${CHARS_PER_TOKEN} chars ≈ 1 token). Not a billed figure.`}
         />
         <KPI
           icon={<Play size={14} />}
@@ -302,6 +392,84 @@ export default async function UsagePage() {
           sub={`${enabledTasks} enabled`}
         />
       </div>
+
+      {/* Token breakdown by role + daily sparkline */}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Card title="Est. tokens by role" icon={<Hash size={14} />}>
+          <ul className="text-sm space-y-2">
+            {(['user', 'agent', 'system'] as const).map((role) => {
+              const t = tokensByRole[role].total;
+              const pct =
+                tokensTotalAll > 0
+                  ? Math.round((t / tokensTotalAll) * 100)
+                  : 0;
+              const label =
+                role === 'user'
+                  ? 'user (input)'
+                  : role === 'agent'
+                  ? 'agent (output)'
+                  : 'system';
+              return (
+                <li key={role} className="flex items-center gap-2">
+                  <span className="w-28 text-xs font-mono text-slate-500">
+                    {label}
+                  </span>
+                  <span className="flex-1 h-2 bg-slate-100 dark:bg-slate-800 rounded overflow-hidden">
+                    <span
+                      className={
+                        'block h-full ' +
+                        (role === 'user'
+                          ? 'bg-sky-400'
+                          : role === 'agent'
+                          ? 'bg-brand-400'
+                          : 'bg-slate-400')
+                      }
+                      style={{ width: `${pct}%` }}
+                    />
+                  </span>
+                  <span className="w-28 text-right text-xs font-mono">
+                    {t.toLocaleString()} ({pct}%)
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-[10px] text-slate-400 mt-3">
+            Estimate from <code>length(content)</code> /{' '}
+            {CHARS_PER_TOKEN}. Does not include tool-call inputs or
+            system prompts sent by Dust to the model — the true token
+            usage is higher. Not billed.
+          </p>
+        </Card>
+        <TimelineCard
+          title="Est. tokens / day (30d)"
+          total={sum(tokenDaily)}
+          last7={sum(tokenDaily.slice(-7))}
+        >
+          <Sparkline series={tokenDaily} color="bg-sky-400" />
+        </TimelineCard>
+        <Card title="Token estimate context" icon={<AlertTriangle size={14} />}>
+          <ul className="text-xs space-y-1.5 text-slate-600 dark:text-slate-400">
+            <li>
+              • KDust does <b>not</b> persist the real LLM token count
+              today; Dust's streaming API surfaces text deltas, not
+              usage metadata.
+            </li>
+            <li>
+              • The &quot;Est. tokens&quot; value is a char/token
+              heuristic on <code>Message.content</code>.
+            </li>
+            <li>
+              • Hidden costs (tool descriptions, system prompt,
+              retrieved documents) are <b>not</b> counted here.
+            </li>
+            <li>
+              • These are <b>not</b> billed tokens — KDust messages are
+              in Dust&apos;s human-usage bucket.
+            </li>
+          </ul>
+        </Card>
+      </section>
 
       {/* 30-day timelines */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -641,14 +809,19 @@ function KPI({
   label,
   value,
   sub,
+  title,
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   sub?: string;
+  title?: string;
 }) {
   return (
-    <div className="border border-slate-200 dark:border-slate-800 rounded-lg p-3 bg-white dark:bg-slate-900">
+    <div
+      className="border border-slate-200 dark:border-slate-800 rounded-lg p-3 bg-white dark:bg-slate-900"
+      title={title}
+    >
       <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-500">
         {icon} {label}
       </div>

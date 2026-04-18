@@ -32,7 +32,7 @@ export async function Nav() {
     { href: '/chat', label: 'Chat', iconName: 'MessageSquare', requiresProject: true },
     { href: '/runs', label: 'Runs', iconName: 'Activity' },
     { href: '/tasks', label: 'Tasks', iconName: 'Clock' },
-    { href: adviceHref, label: 'Advice', iconName: 'Lightbulb' },
+    { href: adviceHref, label: 'Advices', iconName: 'Lightbulb' },
   ];
 
   return (

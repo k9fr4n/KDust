@@ -168,11 +168,11 @@ export default function ProjectDashboardPage({
         </p>
       </div>
 
-      {/* ====== Advice ====== */}
+      {/* ====== Advices ====== */}
       <section id="advice" className="scroll-mt-20">
         <h2 className="text-lg font-semibold flex items-center gap-2 mb-3">
           <Lightbulb size={18} className="text-amber-500" />
-          Advice
+          Advices
           <span className="text-xs font-normal text-slate-500">
             — weekly automated analyses
           </span>

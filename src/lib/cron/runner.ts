@@ -164,7 +164,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
 
       await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
       const convTitle = `[advice:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
-      const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds);
+      const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'triggered');
       const ac = new AbortController();
       activeRuns.set(run.id, ac);
       const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
@@ -327,7 +327,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     // [5] Dust agent ---------------------------------------------------------
     await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
     const convTitle = `[cron] ${job.name} @ ${new Date().toISOString()}`;
-    const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds);
+    const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'triggered');
     const ac = new AbortController();
     // Register so the HTTP cancel endpoint can abort from outside this scope.
     activeRuns.set(run.id, ac);

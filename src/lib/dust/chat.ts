@@ -6,15 +6,82 @@ export interface StartMessageResult {
   conversation: any; // ConversationPublicType (pour streamAgentAnswerEvents)
 }
 
-function userContext(mcpServerIds?: string[] | null) {
+/**
+ * Non-programmatic message origins only. Dust's billing policy splits
+ * message origins in two buckets:
+ *
+ *   PROGRAMMATIC (billed as API / `-m` equivalent, consumes credits):
+ *     - 'api'
+ *     - 'cli_programmatic'       (dust-cli `--message` / `-m`)
+ *     - 'triggered_programmatic'
+ *
+ *   HUMAN USAGE (counted against the user's seat, NOT billed as API):
+ *     - 'web'        \u2190 web UI chat
+ *     - 'cli'        \u2190 dust-cli interactive TUI
+ *     - 'triggered'  \u2190 a schedule / workflow fired (human-like usage)
+ *     - 'extension', 'slack', 'teams', \u2026
+ *
+ * We **blacklist** the programmatic variants at the type level so no
+ * future refactor can re-introduce the `-m` billing equivalent by
+ * accident. Callers must pick a value from `NonBilledOrigin`.
+ */
+export type NonBilledOrigin =
+  | 'web'
+  | 'cli'
+  | 'triggered'
+  | 'extension'
+  | 'slack'
+  | 'teams'
+  | 'gsheet'
+  | 'email'
+  | 'zendesk'
+  | 'raycast'
+  | 'zapier'
+  | 'n8n'
+  | 'make'
+  | 'excel'
+  | 'powerpoint'
+  | 'onboarding_conversation';
+
+/**
+ * At runtime, defense-in-depth: if somebody bypasses the type system
+ * (e.g. an `as any` cast or a string coming from the wire), we refuse
+ * to forward programmatic origins to Dust and fall back to 'web'.
+ */
+const BILLED_ORIGINS = new Set([
+  'api',
+  'cli_programmatic',
+  'triggered_programmatic',
+]);
+
+function safeOrigin(o: string | undefined | null): NonBilledOrigin {
+  if (!o || BILLED_ORIGINS.has(o)) {
+    if (o) {
+      console.warn(
+        `[chat] BLOCKED programmatic origin="${o}" \u2014 forcing 'web' to avoid API billing`,
+      );
+    }
+    return 'web';
+  }
+  return o as NonBilledOrigin;
+}
+
+function userContext(
+  mcpServerIds?: string[] | null,
+  origin: NonBilledOrigin = 'web',
+) {
   return {
     username: 'kdust',
     timezone: 'Europe/Paris',
     email: null,
     fullName: 'KDust',
     profilePictureUrl: null,
-    origin: 'api' as const,
-    clientSideMCPServerIds: mcpServerIds && mcpServerIds.length > 0 ? mcpServerIds : null,
+    // NEVER set this to 'api' / 'cli_programmatic' / 'triggered_programmatic'
+    // \u2014 those flip the conversation into programmatic billing on Dust's
+    // side (same bucket as the CLI's `-m` flag). See NonBilledOrigin.
+    origin: safeOrigin(origin),
+    clientSideMCPServerIds:
+      mcpServerIds && mcpServerIds.length > 0 ? mcpServerIds : null,
     selectedMCPServerViewIds: null,
     lastTriggerRunAt: null,
   };
@@ -26,12 +93,19 @@ export async function createDustConversation(
   content: string,
   title?: string | null,
   mcpServerIds?: string[] | null,
+  /**
+   * Message origin. Restricted to NON-programmatic values so KDust is
+   * never billed like the CLI's `-m` flag. Defaults to 'web' (matches
+   * the /chat UI); the cron runner overrides with 'triggered' to
+   * signal schedule-driven but still human-billed usage.
+   */
+  origin: NonBilledOrigin = 'web',
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
 
   console.log(
-    `[chat] createConversation agentSId=${agentSId} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
+    `[chat] createConversation agentSId=${agentSId} origin=${origin} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
   );
 
   const res = await ctx.client.createConversation({
@@ -40,7 +114,7 @@ export async function createDustConversation(
     message: {
       content,
       mentions: [{ configurationId: agentSId }],
-      context: userContext(mcpServerIds),
+      context: userContext(mcpServerIds, origin),
     },
     blocking: false,
   });
@@ -59,12 +133,14 @@ export async function postUserMessage(
   agentSId: string,
   content: string,
   mcpServerIds?: string[] | null,
+  /** See createDustConversation for origin billing policy. */
+  origin: NonBilledOrigin = 'web',
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
 
   console.log(
-    `[chat] postUserMessage conv=${dustConversationSId} agentSId=${agentSId} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
+    `[chat] postUserMessage conv=${dustConversationSId} agentSId=${agentSId} origin=${origin} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
   );
 
   const res = await ctx.client.postUserMessage({
@@ -72,7 +148,7 @@ export async function postUserMessage(
     message: {
       content,
       mentions: [{ configurationId: agentSId }],
-      context: userContext(mcpServerIds),
+      context: userContext(mcpServerIds, origin),
     },
   });
   if (res.isErr()) throw new Error(`Dust postUserMessage: ${res.error.message}`);

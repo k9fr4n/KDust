@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
+import { resolveRange, type RangeKey } from '@/lib/usage/range';
+import { TimeRangeSelector } from '@/components/TimeRangeSelector';
 import {
   ArrowLeft,
   BarChart3,
@@ -55,9 +57,22 @@ export const runtime = 'nodejs';
  *   5. Advice health (scores per project)
  *   6. Recent activity
  */
-export default async function UsagePage() {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+export default async function UsagePage({
+  searchParams,
+}: {
+  // Next.js 15: searchParams is always a Promise in server components.
+  searchParams: Promise<{ range?: string }>;
+}) {
+  // Grafana-style window: default 30d, URL-driven via ?range=.
+  // thirtyDaysAgo / "30d" are retained as legacy variable names below
+  // for minimal-diff reasons but now resolve to the user's selection.
+  const sp = await searchParams;
+  const range = resolveRange(sp?.range);
+  const now = range.end;
+  const thirtyDaysAgo = range.start;
+  const rangeLabel = range.label;
+  const bucketFmt = range.bucketFmt;
+  const isAllTime = range.key === 'all';
 
   // Parallelise every aggregate query. Prisma doesn't have COUNT DISTINCT
   // so we fall back to findMany({distinct}) or raw groupBy where needed.
@@ -159,21 +174,21 @@ export default async function UsagePage() {
     }),
     // Use raw SQL for date bucketing — SQLite strftime. Safe: no user input.
     db.$queryRawUnsafe<{ day: string; n: bigint }[]>(
-      `SELECT strftime('%Y-%m-%d', createdAt) AS day, COUNT(*) AS n
+      `SELECT strftime('${bucketFmt}', createdAt, 'localtime') AS day, COUNT(*) AS n
          FROM Message
          WHERE createdAt >= ?
          GROUP BY day ORDER BY day ASC`,
       thirtyDaysAgo.toISOString(),
     ),
     db.$queryRawUnsafe<{ day: string; n: bigint }[]>(
-      `SELECT strftime('%Y-%m-%d', startedAt) AS day, COUNT(*) AS n
+      `SELECT strftime('${bucketFmt}', startedAt, 'localtime') AS day, COUNT(*) AS n
          FROM CronRun
          WHERE startedAt >= ?
          GROUP BY day ORDER BY day ASC`,
       thirtyDaysAgo.toISOString(),
     ),
     db.$queryRawUnsafe<{ day: string; n: bigint }[]>(
-      `SELECT strftime('%Y-%m-%d', createdAt) AS day, COUNT(*) AS n
+      `SELECT strftime('${bucketFmt}', createdAt, 'localtime') AS day, COUNT(*) AS n
          FROM Conversation
          WHERE createdAt >= ?
          GROUP BY day ORDER BY day ASC`,
@@ -196,7 +211,7 @@ export default async function UsagePage() {
     // Daily token-proxy series (chars/day, all roles mixed) for the
     // sparkline. Cheap: Message.createdAt is indexed via FK.
     db.$queryRawUnsafe<{ day: string; n: bigint | number }[]>(
-      `SELECT strftime('%Y-%m-%d', createdAt) AS day,
+      `SELECT strftime('${bucketFmt}', createdAt, 'localtime') AS day,
               COALESCE(SUM(length(content)), 0) AS n
          FROM Message
          WHERE createdAt >= ?
@@ -231,7 +246,7 @@ export default async function UsagePage() {
     ),
     // Daily tool-call sum for sparkline (30d).
     db.$queryRawUnsafe<{ day: string; n: bigint | number }[]>(
-      `SELECT strftime('%Y-%m-%d', createdAt) AS day,
+      `SELECT strftime('${bucketFmt}', createdAt, 'localtime') AS day,
               COALESCE(SUM(toolCalls), 0) AS n
          FROM Message
          WHERE role='agent' AND createdAt >= ?
@@ -311,15 +326,23 @@ export default async function UsagePage() {
     : [];
   const bigConvById = new Map(bigConvMeta.map((c) => [c.id, c]));
 
-  // Build a dense 30-day series (fill missing days with 0).
+  /**
+   * Dense time-series over the selected range. Fills missing buckets
+   * with 0 so sparklines keep a stable horizontal scale and visually
+   * convey "nothing happened" rather than compressing the gap.
+   *
+   * The bucket width (hour / day) and label formatter come from the
+   * resolved range, so this helper supports all Grafana-style
+   * windows from "Today" (hourly) to "All time" (365 daily buckets).
+   */
   const denseSeries = (
     rows: { day: string; n: bigint }[],
   ): { day: string; n: number }[] => {
     const map = new Map(rows.map((r) => [r.day, Number(r.n)]));
     const out: { day: string; n: number }[] = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 24 * 3600 * 1000);
-      const k = d.toISOString().slice(0, 10);
+    for (let i = range.bucketCount - 1; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * range.bucketMs);
+      const k = range.bucketKey(d);
       out.push({ day: k, n: map.get(k) ?? 0 });
     }
     return out;
@@ -499,45 +522,52 @@ export default async function UsagePage() {
         >
           <ArrowLeft size={14} /> Back-office
         </Link>
-        <h1 className="text-2xl font-bold mt-2 flex items-center gap-2">
-          <BarChart3 size={22} className="text-brand-500" /> Usage dashboard
-        </h1>
+        <div className="mt-2 flex flex-wrap items-start gap-3">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <BarChart3 size={22} className="text-brand-500" /> Usage dashboard
+          </h1>
+          <div className="ml-auto">
+            <TimeRangeSelector current={range.key as RangeKey} />
+          </div>
+        </div>
         <p className="text-sm text-slate-500 mt-1">
           Complete stats on KDust activity against Dust. All data is
           sourced from the local KDust database — no workspace-admin
-          rights required. For the source-of-truth ground view
-          (including conversations started directly in the Dust web
-          UI), see the official dashboard in your Dust workspace
-          admin.
+          rights required. Time window:{' '}
+          <b className="text-slate-700 dark:text-slate-300">{rangeLabel}</b>
+          {isAllTime ? ' (365 daily buckets rendered).' : '.'} For the
+          source-of-truth ground view (including conversations started
+          directly in the Dust web UI), see the official dashboard in
+          your Dust workspace admin.
         </p>
       </div>
 
-      {/* KPI cards — total and 30d */}
+      {/* KPI cards — totals and windowed counts */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KPI
           icon={<MessageSquare size={14} />}
           label="Conversations"
           value={totalConvs}
-          sub={`${recentConvs} in last 30d`}
+          sub={`${recentConvs} in ${rangeLabel}`}
         />
         <KPI
           icon={<MessageSquare size={14} />}
           label="Messages"
           value={totalMsgs}
-          sub={`${recentMsgs} in last 30d`}
+          sub={`${recentMsgs} in ${rangeLabel}`}
         />
         <KPI
           icon={<Hash size={14} />}
           label="Est. tokens"
           value={tokensTotalAll}
-          sub={`~${tokensRecentAll.toLocaleString()} in last 30d`}
+          sub={`~${tokensRecentAll.toLocaleString()} in ${rangeLabel}`}
           title={`Rough estimate from message content length (${CHARS_PER_TOKEN} chars ≈ 1 token). Not a billed figure.`}
         />
         <KPI
           icon={<Play size={14} />}
           label="Task runs"
           value={totalRuns}
-          sub={`${recentRuns} in last 30d`}
+          sub={`${recentRuns} in ${rangeLabel}`}
         />
         <KPI
           icon={<Activity size={14} />}
@@ -596,7 +626,7 @@ export default async function UsagePage() {
           </p>
         </Card>
         <TimelineCard
-          title="Est. tokens / day (30d)"
+          title={`Est. tokens / bucket (${rangeLabel})`}
           total={sum(tokenDaily)}
           last7={sum(tokenDaily.slice(-7))}
         >
@@ -628,21 +658,21 @@ export default async function UsagePage() {
       {/* 30-day timelines */}
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <TimelineCard
-          title="Messages / day (30d)"
+          title={`Messages / bucket (${rangeLabel})`}
           total={sum(msgDaily)}
           last7={sum(msgDaily.slice(-7))}
         >
           <Sparkline series={msgDaily} color="bg-brand-400" />
         </TimelineCard>
         <TimelineCard
-          title="Runs / day (30d)"
+          title={`Runs / bucket (${rangeLabel})`}
           total={sum(runDaily)}
           last7={sum(runDaily.slice(-7))}
         >
           <Sparkline series={runDaily} color="bg-amber-400" />
         </TimelineCard>
         <TimelineCard
-          title="Conversations / day (30d)"
+          title={`Conversations / bucket (${rangeLabel})`}
           total={sum(convDaily)}
           last7={sum(convDaily.slice(-7))}
         >
@@ -671,7 +701,7 @@ export default async function UsagePage() {
                 icon={<Wrench size={14} />}
                 label="Total tool calls"
                 value={totalToolCalls}
-                sub={`${recentToolCalls.toLocaleString()} in last 30d`}
+                sub={`${recentToolCalls.toLocaleString()} in ${rangeLabel}`}
               />
               <KPI
                 icon={<Wrench size={14} />}
@@ -684,7 +714,7 @@ export default async function UsagePage() {
                 icon={<Clock size={14} />}
                 label="Avg stream time"
                 value={Math.round(avgDurationMs / 100) / 10}
-                sub={`seconds; 30d sum: ${(recentDurationMs / 1000 / 60).toFixed(1)} min`}
+                sub={`seconds; sum: ${(recentDurationMs / 1000 / 60).toFixed(1)} min`}
                 title="Wall-clock duration of the Dust SSE stream per agent turn (sec)."
               />
               <KPI
@@ -711,7 +741,7 @@ export default async function UsagePage() {
                 </p>
               </Card>
 
-              <Card title="Stream event types (30d)" icon={<Activity size={14} />}>
+              <Card title={`Stream event types (${rangeLabel})`} icon={<Activity size={14} />}>
                 <ul className="text-xs space-y-1 font-mono">
                   {topEventTypes.map(([name, count]) => {
                     const max = topEventTypes[0]?.[1] ?? 1;
@@ -747,7 +777,7 @@ export default async function UsagePage() {
               </Card>
 
               <TimelineCard
-                title="Tool calls / day (30d)"
+                title={`Tool calls / bucket (${rangeLabel})`}
                 total={toolCallsDaily.reduce((a, b) => a + b.n, 0)}
                 last7={toolCallsDaily.slice(-7).reduce((a, b) => a + b.n, 0)}
               >
@@ -922,13 +952,11 @@ export default async function UsagePage() {
               <b className="text-slate-500">{totalTasks - enabledTasks}</b>
             </p>
             <p className="text-xs text-slate-500">
-              Runs over last 7d:{' '}
-              <b>{sum(runDaily.slice(-7))}</b> · over 30d:{' '}
-              <b>{sum(runDaily)}</b>
+              Runs in {rangeLabel}: <b>{sum(runDaily)}</b>
             </p>
             <p className="text-xs text-slate-500">
-              Avg runs/day (30d):{' '}
-              <b>{(sum(runDaily) / 30).toFixed(1)}</b>
+              Avg runs / bucket ({rangeLabel}):{' '}
+              <b>{(sum(runDaily) / Math.max(1, range.bucketCount)).toFixed(1)}</b>
             </p>
           </div>
         </Card>

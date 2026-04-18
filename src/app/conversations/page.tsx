@@ -102,35 +102,41 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         )}
       </form>
 
-      {/* Filter pills */}
-      <div className="flex flex-wrap gap-2 mb-4 text-xs">
-        <FilterPill label="Project:" value={projectFilter ?? (cookieProject ? `${cookieProject}+global` : 'all')} />
-        {allProjects.length > 1 && (
-          <>
-            <Link
-              href={buildHref({ project: undefined, agent: agentFilter, q })}
-              className={pillCls(!projectFilter)}
-            >
-              {cookieProject ? `${cookieProject} + global` : 'all projects'}
-            </Link>
-            <Link
-              href={buildHref({ project: '_global', agent: agentFilter, q })}
-              className={pillCls(projectFilter === '_global')}
-            >
-              global only
-            </Link>
-            {allProjects
-              .map((p) => p.projectName)
-              .filter((p): p is string => !!p)
-              .sort()
-              .map((p) => (
-                <Link key={p} href={buildHref({ project: p, agent: agentFilter, q })} className={pillCls(projectFilter === p)}>
-                  {p}
-                </Link>
-              ))}
-          </>
-        )}
-      </div>
+      {/* Project filter pills — hidden when a project is already
+          scoped via the top switcher (cookieProject). In that case
+          the scope is conveyed by the page subtitle "· {project} +
+          global" and changing project is done via the top switcher,
+          so this row would be redundant noise. */}
+      {!cookieProject && allProjects.length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-4 text-xs">
+          <FilterPill label="Project:" value={projectFilter ?? 'all'} />
+          <Link
+            href={buildHref({ project: undefined, agent: agentFilter, q })}
+            className={pillCls(!projectFilter)}
+          >
+            all projects
+          </Link>
+          <Link
+            href={buildHref({ project: '_global', agent: agentFilter, q })}
+            className={pillCls(projectFilter === '_global')}
+          >
+            global only
+          </Link>
+          {allProjects
+            .map((p) => p.projectName)
+            .filter((p): p is string => !!p)
+            .sort()
+            .map((p) => (
+              <Link
+                key={p}
+                href={buildHref({ project: p, agent: agentFilter, q })}
+                className={pillCls(projectFilter === p)}
+              >
+                {p}
+              </Link>
+            ))}
+        </div>
+      )}
 
       {allAgents.length > 1 && (
         <div className="flex flex-wrap gap-2 mb-4 text-xs">

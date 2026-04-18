@@ -771,11 +771,17 @@ function ChatPageInner() {
                   <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
                     <div
                       className={
-                        isUser
+                        // `break-words` + `min-w-0` on the inner bubble
+                        // prevent a long unbroken token (URL, hash,
+                        // long file path) from widening the flex
+                        // column and forcing a horizontal scrollbar
+                        // in the messages pane.
+                        (isUser
                           ? 'px-3 py-2 rounded-2xl rounded-br-sm text-sm bg-blue-600 text-white shadow-sm'
                           : m.role === 'system'
                             ? 'px-3 py-2 rounded-2xl text-sm bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
-                            : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700'
+                            : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
+                        ' break-words min-w-0 overflow-hidden'
                       }
                     >
                       {m.role === 'system' ? (
@@ -837,7 +843,7 @@ function ChatPageInner() {
 
           {streamedText && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
+              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 break-words min-w-0 overflow-hidden">
                 <MessageMarkdown tone="agent">{streamedText}</MessageMarkdown>
                 <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
               </div>

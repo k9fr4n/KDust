@@ -46,11 +46,16 @@ export function MessageMarkdown({ children, tone = 'agent' }: MessageMarkdownPro
     tone === 'user'
       ? 'bg-white/15 rounded px-1 py-0.5 font-mono text-[0.85em]'
       : 'bg-slate-200 dark:bg-slate-900 rounded px-1 py-0.5 font-mono text-[0.85em]';
+  // Code blocks: wrap long lines instead of showing a horizontal
+  // scrollbar (per Franck 2026-04-19 00:17 "je ne veux pas de
+  // scrollbar horizontal, je veux que le texte aille a la ligne").
+  // whitespace-pre-wrap preserves indentation and line breaks while
+  // wrapping at whitespace; break-words handles unbroken tokens
+  // (long URLs, hashes) without overflowing the bubble.
   const preCls =
     tone === 'user'
-      // Keep the code block readable inside a colored bubble.
-      ? 'bg-slate-900 text-slate-100 rounded-md p-3 my-2 overflow-x-auto text-[0.85em]'
-      : 'bg-slate-900 text-slate-100 dark:bg-black rounded-md p-3 my-2 overflow-x-auto text-[0.85em]';
+      ? 'bg-slate-900 text-slate-100 rounded-md p-3 my-2 whitespace-pre-wrap break-words text-[0.85em]'
+      : 'bg-slate-900 text-slate-100 dark:bg-black rounded-md p-3 my-2 whitespace-pre-wrap break-words text-[0.85em]';
 
   return (
     <div className="kdust-md leading-relaxed">

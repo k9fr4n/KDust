@@ -106,7 +106,6 @@ export function AdviceBrowser(props: {
   const [minSeverity, setMinSeverity] = useState<
     'critical' | 'high' | 'medium' | 'low'
   >('low');
-  const [projectFilter, setProjectFilter] = useState<string>('__all__');
   const [categoryFilter, setCategoryFilter] = useState<string>('__all__');
   const [sortKey, setSortKey] = useState<SortKey>('severity');
   const [q, setQ] = useState('');
@@ -146,13 +145,11 @@ export function AdviceBrowser(props: {
   const hasActiveFilter =
     qLower.length > 0 ||
     minSeverity !== 'low' ||
-    projectFilter !== '__all__' ||
     categoryFilter !== '__all__' ||
     sortKey !== 'severity';
   const clearFilters = () => {
     setQ('');
     setMinSeverity('low');
-    setProjectFilter('__all__');
     setCategoryFilter('__all__');
     setSortKey('severity');
   };
@@ -162,12 +159,6 @@ export function AdviceBrowser(props: {
     const out: FlatPoint[] = [];
     for (const it of items) {
       if (!it.points) continue;
-      if (
-        projectFilter !== '__all__' &&
-        it.projectId !== projectFilter &&
-        !scopedProjectId
-      )
-        continue;
       if (scopedProjectId && it.projectId !== scopedProjectId) continue;
       it.points.forEach((p, idx) => {
         if (SEVERITY_WEIGHT[p.severity] < minWeight) return;
@@ -221,7 +212,6 @@ export function AdviceBrowser(props: {
   }, [
     items,
     minSeverity,
-    projectFilter,
     categoryFilter,
     qLower,
     sortKey,
@@ -239,9 +229,7 @@ export function AdviceBrowser(props: {
   const tileScores = useMemo(() => {
     const sourceItems = scopedProjectId
       ? items.filter((it) => it.projectId === scopedProjectId)
-      : projectFilter === '__all__'
-        ? items
-        : items.filter((it) => it.projectId === projectFilter);
+      : items;
     const globalVals = sourceItems
       .map((it) => it.score)
       .filter((s): s is number => typeof s === 'number');
@@ -262,7 +250,7 @@ export function AdviceBrowser(props: {
           : null;
     }
     return { global, perCat };
-  }, [items, projectFilter, scopedProjectId]);
+  }, [items, scopedProjectId]);
 
   const selectedCount = selected.size;
   const onOpenChat = () => {
@@ -328,22 +316,6 @@ export function AdviceBrowser(props: {
             className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-8 pr-3 py-1.5 text-sm"
           />
         </div>
-
-        {!scopedProjectId && (
-          <select
-            value={projectFilter}
-            onChange={(e) => setProjectFilter(e.target.value)}
-            className="border border-slate-200 dark:border-slate-800 rounded-md px-2 py-1 bg-white dark:bg-slate-900"
-            title="Filter by project"
-          >
-            <option value="__all__">All projects</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        )}
 
         <div className="inline-flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded-md p-0.5">
           <Filter size={11} className="text-slate-400 mx-1" />

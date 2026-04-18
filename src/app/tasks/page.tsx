@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { Clock } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import type { Prisma } from '@prisma/client';
 
@@ -17,7 +16,6 @@ type SearchProps = {
     kind?: Kind;
     enabled?: EnabledFlag;
     status?: Status;
-    project?: string; // specific project name or "_all" to bypass cookie
     limit?: string;
   }>;
 };
@@ -30,32 +28,21 @@ type SearchProps = {
  *   ?kind=automation|advice
  *   ?enabled=on|off
  *   ?status=success|failed|aborted|running|never  (last run)
- *   ?project=<name>      override the current project cookie
- *   ?project=_all        force "all projects" even if a project is scoped
  *   ?limit=<n>           default 200, max 500
  *
- * Default scope: current project (cookie) if set, else all projects.
+ * Scope: NO project filter. Every task across every project is shown
+ * in a single unified list — per-project views remain available on
+ * /projects/:id.
  */
 export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
-  const cookieProject = await getCurrentProjectName();
   const q = (sp.q ?? '').trim();
   const kind: Kind = sp.kind ?? 'all';
   const enabled: EnabledFlag = sp.enabled ?? 'all';
   const status: Status = sp.status ?? 'all';
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '200', 10) || 200));
 
-  // Project scope resolution.
-  // sp.project='_all' → ignore cookie
-  // sp.project='xxx' → force that project
-  // (nothing)         → use cookie if any
-  let projectFilter: string | null = null;
-  if (sp.project === '_all') projectFilter = null;
-  else if (sp.project) projectFilter = sp.project;
-  else if (cookieProject) projectFilter = cookieProject;
-
   const where: Prisma.TaskWhereInput = {};
-  if (projectFilter) where.projectPath = projectFilter;
   if (q) where.name = { contains: q };
   if (kind !== 'all') where.kind = kind;
   if (enabled === 'on') where.enabled = true;
@@ -81,54 +68,28 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     filtered.filter((c) => c.runs[0]?.status === 'running').map((c) => c.id),
   );
 
-  // Distinct project names across Tasks for the Project filter pills.
-  // Cheap because SQLite distinct is indexed and the set size is small.
-  const allProjectRows = await db.task.findMany({
-    select: { projectPath: true },
-    distinct: ['projectPath'],
-    take: 100,
-  });
-  const allProjects = allProjectRows
-    .map((r) => r.projectPath)
-    .filter((p): p is string => !!p)
-    .sort();
-
-  const buildHref = (patch: Partial<{ q: string; kind: Kind; enabled: EnabledFlag; status: Status; project: string }>) => {
+  const buildHref = (patch: Partial<{ q: string; kind: Kind; enabled: EnabledFlag; status: Status }>) => {
     const qs = new URLSearchParams();
     const merged = {
       q: patch.q ?? q,
       kind: patch.kind ?? kind,
       enabled: patch.enabled ?? enabled,
       status: patch.status ?? status,
-      project: patch.project ?? sp.project ?? '',
     };
     if (merged.q) qs.set('q', merged.q);
     if (merged.kind && merged.kind !== 'all') qs.set('kind', merged.kind);
     if (merged.enabled && merged.enabled !== 'all') qs.set('enabled', merged.enabled);
     if (merged.status && merged.status !== 'all') qs.set('status', merged.status);
-    if (merged.project) qs.set('project', merged.project);
     return `/tasks${qs.toString() ? `?${qs}` : ''}`;
   };
   const hasActiveFilter =
-    !!q || kind !== 'all' || enabled !== 'all' || status !== 'all' || !!sp.project;
+    !!q || kind !== 'all' || enabled !== 'all' || status !== 'all';
 
   return (
     <div className="w-full">
       <div className="flex items-center gap-3 mb-4">
         <Clock className="text-slate-400" />
-        <h1 className="text-2xl font-bold">
-          Tasks
-          {projectFilter && (
-            <span className="ml-2 text-base font-normal text-slate-500">
-              · {projectFilter}
-            </span>
-          )}
-          {!projectFilter && cookieProject && sp.project === '_all' && (
-            <span className="ml-2 text-base font-normal text-slate-500">
-              · all projects
-            </span>
-          )}
-        </h1>
+        <h1 className="text-2xl font-bold">Tasks</h1>
         <span className="text-sm text-slate-500 ml-auto">{filtered.length} shown</span>
         <Link
           href="/tasks/new"
@@ -150,7 +111,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         {kind !== 'all' && <input type="hidden" name="kind" value={kind} />}
         {enabled !== 'all' && <input type="hidden" name="enabled" value={enabled} />}
         {status !== 'all' && <input type="hidden" name="status" value={status} />}
-        {sp.project && <input type="hidden" name="project" value={sp.project} />}
         <button
           type="submit"
           className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
@@ -193,37 +153,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <Link href={buildHref({ status: 'running' })} className={pillCls(status === 'running')}>running</Link>
         <Link href={buildHref({ status: 'never' })} className={pillCls(status === 'never')}>never ran</Link>
       </div>
-
-      {/* Project scope (only relevant when >1 project exists) */}
-      {allProjects.length > 1 && (
-        <div className="flex flex-wrap gap-2 mb-4 text-xs">
-          <FilterLabel>Project:</FilterLabel>
-          {cookieProject && (
-            <Link
-              href={buildHref({ project: '' })}
-              className={pillCls(!sp.project)}
-              title="Use current project (from cookie)"
-            >
-              {cookieProject} (current)
-            </Link>
-          )}
-          <Link
-            href={buildHref({ project: '_all' })}
-            className={pillCls(sp.project === '_all')}
-          >
-            all projects
-          </Link>
-          {allProjects.map((p) => (
-            <Link
-              key={p}
-              href={buildHref({ project: p })}
-              className={pillCls(sp.project === p)}
-            >
-              {p}
-            </Link>
-          ))}
-        </div>
-      )}
 
       {filtered.length === 0 ? (
         <p className="text-slate-500 text-sm">No cron matches the filters.</p>

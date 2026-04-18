@@ -15,7 +15,7 @@ export async function Nav() {
   //     digest (/advice) which ranks the most critical advice from
   //     every tracked project.
   // Either way the link is enabled (advice is no longer project-gated).
-  const adviceHref = current ? `/projects/${current.id}#advice` : '/advice';
+  const adviceHref = current ? `/projects/${current.id}#advice` : '/advices';
 
   // Order (per product ask): Dashboard, Conversations, Chat, Runs,
   // Crons, Advice. Project-scoped routes are locked when no project

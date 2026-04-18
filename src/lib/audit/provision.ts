@@ -49,6 +49,12 @@ async function createCronFromDefault(
       // otherwise fail with "origin/main not found after fetch".
       baseBranch,
       enabled: true,
+      // Audit tasks are analysis-only: the runner short-circuits at
+      // step [2b] before the branch/commit/push pipeline. We also
+      // set pushEnabled=false here so the UI reflects reality and
+      // the automation-context footer is NOT appended to the audit
+      // prompt (the audit JSON contract would get confused by it).
+      pushEnabled: false,
     },
   });
 }
@@ -104,6 +110,17 @@ export async function provisionAuditCrons(projectName: string): Promise<number> 
   // Retro-fix any already-existing audit cron still pointing at the
   // wrong branch. Cheap UPDATE, idempotent when already aligned.
   const realigned = await syncAuditBaseBranch(projectName, projectBranch);
+
+  // Retro-fix: force pushEnabled=false on existing audit tasks.
+  // Audit is analysis-only; the runner short-circuits at step [2b]
+  // so pushEnabled would be ignored anyway, but aligning the column
+  // matters for the UI (the Automation push fieldset is hidden when
+  // kind='audit' AND pushEnabled=false) and keeps the prompt footer
+  // off the audit JSON contract. Idempotent.
+  await db.task.updateMany({
+    where: { projectPath: projectName, kind: 'audit', pushEnabled: true },
+    data: { pushEnabled: false },
+  });
 
   const defaults = await listEnabledAuditDefaults();
   const existing = await db.task.findMany({

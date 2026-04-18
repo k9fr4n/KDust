@@ -2,6 +2,7 @@ import { UserMenu } from './UserMenu';
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { HomeLogo } from './HomeLogo';
 import { NavItem } from './NavItem';
+import { HeaderIcons } from './HeaderIcons';
 import { getCurrentProject } from '@/lib/current-project';
 
 export async function Nav() {
@@ -50,6 +51,7 @@ export async function Nav() {
             />
           ))}
         </nav>
+        <HeaderIcons />
         <UserMenu />
       </div>
     </header>

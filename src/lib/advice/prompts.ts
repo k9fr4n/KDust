@@ -17,8 +17,8 @@ Return EXACTLY one fenced JSON block and nothing else after it, using this schem
 \`\`\`
 
 Rules:
-- "score" is an integer in [0..100] grading the OVERALL health of this
-  specific category for the project:
+- "score" is an integer in [0..100] grading the OVERALL health of the
+  project across ALL areas covered by this analysis:
     * 90-100 : excellent, no action needed
     * 70-89  : good, minor improvements
     * 50-69  : fair, several issues to address
@@ -27,7 +27,9 @@ Rules:
   Base the score on what you ACTUALLY observed via the fs tools.
   Do not be artificially harsh or lenient — if the project is clean,
   give a high score; if it is a mess, give a low one.
-- Exactly 3 "points", ordered by importance (most critical first).
+- EXACTLY 15 "points", ordered by priority (most critical first).
+  Priority = business impact × severity, across ALL the areas the
+  prompt asks you to cover. Do not balance across areas artificially.
 - "severity" uses the literal strings above.
 - "refs" is optional but strongly preferred; list concrete file paths
   (+ line numbers when relevant) you observed via the fs tools.

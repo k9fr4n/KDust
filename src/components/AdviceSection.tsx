@@ -95,8 +95,18 @@ export function AdviceSection({
     );
   }
 
+  // v3: the default config collapses all advice into a single
+  // "priority" slot carrying up to 15 points. In that case, give the
+  // card the full width so the ranked list stays readable. If the user
+  // re-enabled / added custom categories (slots > 1), keep the old
+  // responsive 3-column grid for the per-category cards.
+  const gridCls =
+    slots.length === 1
+      ? 'grid grid-cols-1 gap-3'
+      : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3';
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+    <div className={gridCls}>
       {slots.map((slot) => {
         const hasPoints = slot.points && slot.points.length > 0;
         // "pending in batch" = batch is running AND this slot's cron
@@ -202,7 +212,7 @@ export function AdviceSection({
               </ol>
             ) : (
               <p className="text-xs italic text-slate-400">
-                No advice available. Run the cron to generate the first analysis.
+                No advice available. Run the task to generate the first analysis.
               </p>
             )}
           </div>

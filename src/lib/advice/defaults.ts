@@ -1,5 +1,9 @@
 import { db } from '@/lib/db';
-import { BUILTIN_ADVICE_CATEGORIES } from './categories';
+import {
+  BUILTIN_ADVICE_CATEGORIES,
+  LEGACY_BUILTIN_KEYS,
+  PRIORITY_CATEGORY_KEY,
+} from './categories';
 
 /**
  * One-shot translations for labels that shipped in French in earlier
@@ -43,6 +47,44 @@ export async function ensureBuiltinsSeeded(): Promise<void> {
       // user-edited fields (label/emoji/prompt/schedule/enabled) on seed.
       update: { builtIn: true },
     });
+  }
+
+  // --- v3 migration: collapse the 6 old per-area builtins into the single
+  // "priority" builtin above. Idempotent; only acts on rows that still
+  // look like the legacy default (builtIn=true on one of the legacy keys).
+  // We:
+  //   (a) force-disable the legacy default rows + demote builtIn=false
+  //       so /settings/advice shows them greyed out and the user can
+  //       delete them manually if they want;
+  //   (b) delete every materialised advice Task for those legacy keys
+  //       (they are all mandatory → regular DELETE would refuse, so we
+  //       bypass via prisma deleteMany on the FK set);
+  //   (c) delete every ProjectAdvice row for those legacy keys so the
+  //       dashboard doesn't keep rendering stale per-area cards.
+  const legacyKeys = [...LEGACY_BUILTIN_KEYS];
+  const stillBuiltIn = await db.adviceCategoryDefault.findMany({
+    where: { key: { in: legacyKeys }, builtIn: true },
+    select: { key: true },
+  });
+  if (stillBuiltIn.length > 0) {
+    const keysToMigrate = stillBuiltIn.map((r) => r.key);
+    const [updatedDefaults, deletedTasks, deletedAdvices] = await db.$transaction([
+      db.adviceCategoryDefault.updateMany({
+        where: { key: { in: keysToMigrate } },
+        data: { enabled: false, builtIn: false },
+      }),
+      db.task.deleteMany({
+        where: { kind: 'advice', category: { in: keysToMigrate } },
+      }),
+      db.projectAdvice.deleteMany({
+        where: { category: { in: keysToMigrate } },
+      }),
+    ]);
+    console.log(
+      `[advice/defaults] v3 migration: demoted ${updatedDefaults.count} legacy default(s), ` +
+        `deleted ${deletedTasks.count} legacy advice task(s) and ${deletedAdvices.count} stale advice row(s). ` +
+        `Run "Provision advice" (or let it auto-provision) to create the new "${PRIORITY_CATEGORY_KEY}" task per project.`,
+    );
   }
 
   // --- one-shot FR → EN relabelling for legacy installs -----------------

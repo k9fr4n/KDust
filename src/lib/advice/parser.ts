@@ -88,8 +88,11 @@ export function parseAdviceOutput(raw: string): AdvicePayload | null {
         normalised.push({ title, description, severity, refs });
       }
       if (normalised.length > 0) {
+        // v3: single "priority" category returns TOP-15. The old
+        // per-category prompts returned TOP-3; we accept both and cap
+        // at 15 to bound the payload regardless of agent verbosity.
         return {
-          points: normalised.slice(0, 3),
+          points: normalised.slice(0, 15),
           score: coerceScore(obj.score),
         };
       }

@@ -51,6 +51,19 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-green-50/40 dark:bg-green-950/10">
+        <a
+          href="/settings/billing"
+          className="text-sm font-semibold text-green-700 dark:text-green-300 hover:underline"
+        >
+          💳 Billing sanity check →
+        </a>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Verify that KDust messages stay in the non-programmatic
+          (human usage) bucket and are not billed as API credits.
+        </p>
+      </div>
+
       <label className="block">
         <span className="text-sm">Dust base URL</span>
         <input className={field} {...bind('dustBaseUrl')} />

@@ -35,11 +35,25 @@ export async function GET() {
       const proj = projByName.get(a.projectName);
       if (!proj) return null; // orphan row (project deleted): skip
       const tpl = tplByKey.get(a.category);
-      let points: unknown = null;
+
+      // Decode the stored `points` column. v4 wraps the payload in
+      // `{version:4, points:[...], categoryScores:{...}}`. v3 (legacy)
+      // stores the bare points array. Tolerate both shapes.
+      let points: unknown[] = [];
+      let categoryScores: Record<string, { score: number | null; notes: string }> = {};
       try {
-        points = JSON.parse(a.points);
+        const raw = JSON.parse(a.points);
+        if (Array.isArray(raw)) {
+          points = raw;
+        } else if (raw && typeof raw === 'object') {
+          points = Array.isArray(raw.points) ? raw.points : [];
+          categoryScores =
+            raw.categoryScores && typeof raw.categoryScores === 'object'
+              ? raw.categoryScores
+              : {};
+        }
       } catch {
-        points = null;
+        /* malformed stored payload: surface an empty row rather than 500 */
       }
       return {
         projectId: proj.id,
@@ -50,6 +64,7 @@ export async function GET() {
         score: a.score ?? null,
         generatedAt: a.generatedAt,
         points,
+        categoryScores,
       };
     })
     .filter(Boolean);

@@ -6,20 +6,48 @@
  */
 
 export type AdvicePoint = {
+  /** 1-based rank inferred from array order (or explicit `rank` field). */
+  rank: number;
+  /**
+   * Category tag on the point itself. Starting with the v4 contract
+   * every point carries its category (security, performance, …) so
+   * the UI can group / filter without the parent row's category.
+   * null for legacy payloads parsed from v3 rows.
+   */
+  category: string | null;
   title: string;
   description: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   refs?: string[];
 };
 
+export type CategoryScore = {
+  score: number | null;
+  notes: string;
+};
+
 /**
- * Parsed advice payload. `score` is in [0..100], or null if the agent
- * omitted it / the value was out of range. Legacy agent output that
- * predates the score contract still parses successfully with score=null.
+ * Parsed advice payload — v4 contract (2026-04-18).
+ *
+ * Shape:
+ *   - `score`          : overall project health [0..100] (was v3 `score`,
+ *                        v4 `global_score`; unified here).
+ *   - `categoryScores` : per-category `{score, notes}`, keyed by the
+ *                        canonical slugs in POINT_CATEGORIES. Empty
+ *                        object for legacy v3 rows that didn't emit it.
+ *   - `points`         : ordered list of advice points, each with its
+ *                        own category tag (v4) or null (v3).
+ *
+ * Backwards compat:
+ *   - v3 agent output (`{score, points:[{title, description, severity, refs}]}`)
+ *     parses successfully with categoryScores={} and point.category=null.
+ *   - Legacy rows already stored in DB (same v3 shape) are re-read
+ *     with the same helper and get the same default fields.
  */
 export type AdvicePayload = {
   points: AdvicePoint[];
   score: number | null;
+  categoryScores: Record<string, CategoryScore>;
 };
 
 const VALID_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
@@ -71,31 +99,66 @@ export function parseAdviceOutput(raw: string): AdvicePayload | null {
       const arr = Array.isArray(obj?.points) ? obj.points : null;
       if (!arr) continue;
       const normalised: AdvicePoint[] = [];
-      for (const p of arr) {
-        if (!p || typeof p !== 'object') continue;
-        const title = typeof p.title === 'string' ? p.title.trim() : '';
+      arr.forEach((p: unknown, idx: number) => {
+        if (!p || typeof p !== 'object') return;
+        const pp = p as Record<string, unknown>;
+        const title = typeof pp.title === 'string' ? pp.title.trim() : '';
         const description =
-          typeof p.description === 'string' ? p.description.trim() : '';
+          typeof pp.description === 'string' ? pp.description.trim() : '';
         const severity =
-          typeof p.severity === 'string' && VALID_SEVERITIES.has(p.severity)
-            ? (p.severity as AdvicePoint['severity'])
+          typeof pp.severity === 'string' && VALID_SEVERITIES.has(pp.severity)
+            ? (pp.severity as AdvicePoint['severity'])
             : 'medium';
-        const refs =
-          Array.isArray(p.refs)
-            ? p.refs.filter((r: unknown) => typeof r === 'string')
-            : undefined;
-        if (!title || !description) continue;
-        normalised.push({ title, description, severity, refs });
+        const refs = Array.isArray(pp.refs)
+          ? (pp.refs as unknown[]).filter(
+              (r: unknown): r is string => typeof r === 'string',
+            )
+          : undefined;
+        // v4: each point carries its own category tag. v3 points have
+        // none — we keep null and let the UI fall back to the parent
+        // row's category.
+        const category =
+          typeof pp.category === 'string' && pp.category.trim()
+            ? pp.category.trim()
+            : null;
+        // Prefer the explicit rank if the agent respected the contract;
+        // otherwise infer from array position (idx+1). Clamp to [1..].
+        const rawRank = typeof pp.rank === 'number' ? pp.rank : Number(pp.rank);
+        const rank =
+          Number.isFinite(rawRank) && rawRank >= 1
+            ? Math.round(rawRank)
+            : idx + 1;
+        if (!title || !description) return;
+        normalised.push({ rank, category, title, description, severity, refs });
+      });
+      if (normalised.length === 0) continue;
+
+      // v4 category_scores block — {key: {score, notes}}. Tolerate a
+      // missing block (v3 rows) and malformed sub-entries (skip them).
+      const categoryScores: Record<string, CategoryScore> = {};
+      const csRaw = obj.category_scores;
+      if (csRaw && typeof csRaw === 'object') {
+        for (const [k, v] of Object.entries(csRaw)) {
+          if (!v || typeof v !== 'object') continue;
+          const vv = v as Record<string, unknown>;
+          categoryScores[k] = {
+            score: coerceScore(vv.score),
+            notes: typeof vv.notes === 'string' ? vv.notes.trim() : '',
+          };
+        }
       }
-      if (normalised.length > 0) {
-        // v3: single "priority" category returns TOP-15. The old
-        // per-category prompts returned TOP-3; we accept both and cap
-        // at 15 to bound the payload regardless of agent verbosity.
-        return {
-          points: normalised.slice(0, 15),
-          score: coerceScore(obj.score),
-        };
-      }
+
+      // Global score — v4 `global_score` supersedes v3 `score`. Prefer
+      // the new field, fall back to the old one for legacy compat.
+      const globalScore =
+        coerceScore(obj.global_score) ?? coerceScore(obj.score);
+
+      return {
+        // Cap at 15 to bound the payload regardless of agent verbosity.
+        points: normalised.slice(0, 15),
+        score: globalScore,
+        categoryScores,
+      };
     } catch {
       /* try next candidate */
     }

@@ -9,27 +9,48 @@ Return EXACTLY one fenced JSON block and nothing else after it, using this schem
 
 \`\`\`json
 {
-  "score": 0,
+  "category_scores": {
+    "security":      { "score": 0, "notes": "<≤400 chars>" },
+    "performance":   { "score": 0, "notes": "<≤400 chars>" },
+    "code_quality":  { "score": 0, "notes": "<≤400 chars>" },
+    "improvement":   { "score": 0, "notes": "<≤400 chars>" },
+    "documentation": { "score": 0, "notes": "<≤400 chars>" },
+    "test_coverage": { "score": 0, "notes": "<≤400 chars>" }
+  },
+  "global_score": 0,
   "points": [
-    { "title": "<≤80 chars>", "description": "<≤400 chars, actionable>", "severity": "low|medium|high|critical", "refs": ["path/file.ext:lineno"] }
+    {
+      "rank": 1,
+      "category": "security|performance|code_quality|improvement|documentation|test_coverage",
+      "title": "<≤80 chars>",
+      "description": "<≤400 chars, actionable>",
+      "severity": "low|medium|high|critical",
+      "refs": ["path/file.ext:lineno"]
+    }
   ]
 }
 \`\`\`
 
 Rules:
-- "score" is an integer in [0..100] grading the OVERALL health of the
-  project across ALL areas covered by this analysis:
+- Scores are integers in [0..100] using this grid:
     * 90-100 : excellent, no action needed
     * 70-89  : good, minor improvements
     * 50-69  : fair, several issues to address
     * 30-49  : poor, significant concerns
     * 0-29   : critical, urgent action required
-  Base the score on what you ACTUALLY observed via the fs tools.
-  Do not be artificially harsh or lenient — if the project is clean,
-  give a high score; if it is a mess, give a low one.
-- EXACTLY 15 "points", ordered by priority (most critical first).
-  Priority = business impact × severity, across ALL the areas the
-  prompt asks you to cover. Do not balance across areas artificially.
+  Base them on what you ACTUALLY observed via the fs tools. Do not be
+  artificially harsh or lenient — if the project is clean, give a
+  high score; if it is a mess, give a low one.
+- "category_scores" MUST include all 6 categories above. "notes" is
+  a short rationale (bullet-like, comma-separated) supporting the
+  score. No prose inside notes, just the concrete signals.
+- "global_score" is the overall project health (weighted average of
+  the category scores is a good default; you may deviate if one area
+  dominates the risk).
+- EXACTLY 15 "points", sorted by ascending "rank" (1 = most critical).
+  Each point MUST carry its "category" tag so the UI can group /
+  filter them. Priority = business impact × severity, across ALL
+  areas; do not balance artificially.
 - "severity" uses the literal strings above.
 - "refs" is optional but strongly preferred; list concrete file paths
   (+ line numbers when relevant) you observed via the fs tools.

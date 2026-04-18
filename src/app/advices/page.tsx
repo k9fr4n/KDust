@@ -18,10 +18,47 @@ import {
   ScoreBadge,
   buildChatHrefFromAdvice,
 } from '@/components/advice/shared';
+import {
+  POINT_CATEGORIES,
+  pointCategoryMeta,
+} from '@/lib/advice/categories';
 
 /**
- * Shape returned by /api/advice/aggregate. One row per
- * (project, category) pair carrying the latest stored advice.
+ * Static Tailwind class map per color bucket. Built statically (no
+ * string interpolation) so Tailwind's JIT picks them up — dynamic
+ * `bg-${color}-50` classes would be stripped by purgeCSS at build.
+ */
+const CATEGORY_CHIP_CLS: Record<string, string> = {
+  red: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900',
+  amber:
+    'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900',
+  purple:
+    'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-900',
+  blue: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-900',
+  emerald:
+    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900',
+  cyan: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/30 dark:text-cyan-300 dark:border-cyan-900',
+  slate:
+    'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/30 dark:text-slate-300 dark:border-slate-800',
+};
+
+function chipCls(color: string): string {
+  return CATEGORY_CHIP_CLS[color] ?? CATEGORY_CHIP_CLS.slate;
+}
+
+/**
+ * v4 contract (2026-04-18): the agent returns one JSON payload per
+ * project with:
+ *   - category_scores  : 6 axes (security / performance / …) each
+ *                        with `{score, notes}`
+ *   - global_score     : overall project health
+ *   - points           : up to 15 ranked items, each carrying its own
+ *                        `category` + `rank`
+ *
+ * /api/advice/aggregate exposes this through the `categoryScores`
+ * and per-point fields. We keep the DB `category` column around (it
+ * still holds "priority" for v4 / old axis keys for legacy rows)
+ * mainly for join purposes; the UI groups / filters on point.category.
  */
 type Item = {
   projectId: string;
@@ -32,12 +69,18 @@ type Item = {
   score: number | null;
   generatedAt: string;
   points: AdvicePoint[] | null;
+  categoryScores?: Record<string, { score: number | null; notes: string }>;
 };
 
 type FlatPoint = {
   point: AdvicePoint;
-  /** 1-based position of this point in the source project's ranked list. */
+  /**
+   * 1-based position of this point in the source project's ranked
+   * list. Derived from `point.rank` (v4) or from array index (v3).
+   */
   rankInProject: number;
+  /** Resolved category slug (falls back to the row's category). */
+  pointCategory: string;
   item: Item;
 };
 
@@ -80,7 +123,8 @@ export default function AdvicePage() {
     if (!qLower) return true;
     const { point, item } = fp;
     const refs = point.refs?.join(' ') ?? '';
-    const haystack = `${point.title} ${point.description} ${refs} ${item.projectName} ${item.label} ${item.category}`.toLowerCase();
+    const cat = pointCategoryMeta(fp.pointCategory).label;
+    const haystack = `${point.title} ${point.description} ${refs} ${item.projectName} ${cat} ${fp.pointCategory}`.toLowerCase();
     return haystack.includes(qLower);
   };
 
@@ -110,7 +154,9 @@ export default function AdvicePage() {
     })();
   }, []);
 
-  // Flatten (project, category) → list of points, then sort + filter.
+  // Flatten items -> individual points, with resolved category and
+  // rank. Filtering by point-level category (v4) rather than by the
+  // row's category (always "priority" for v4 / legacy axis for v3).
   const flat: FlatPoint[] = useMemo(() => {
     if (!items) return [];
     const minWeight = SEVERITY_WEIGHT[minSeverity];
@@ -120,10 +166,30 @@ export default function AdvicePage() {
       if (projectFilter !== '__all__' && it.projectId !== projectFilter) continue;
       it.points.forEach((p, idx) => {
         if (SEVERITY_WEIGHT[p.severity] < minWeight) return;
-        out.push({ point: p, rankInProject: idx + 1, item: it });
+        // v4 points carry their own category; fall back to the row's
+        // category (works for legacy v3 rows where the row category
+        // WAS the axis).
+        const pointCategory = p.category ?? it.category;
+        if (categoryFilter !== '__all__' && pointCategory !== categoryFilter)
+          return;
+        const rankInProject =
+          typeof p.rank === 'number' && p.rank >= 1 ? p.rank : idx + 1;
+        out.push({ point: p, rankInProject, pointCategory, item: it });
       });
     }
-    out.sort((a, b) => {
+    // Apply search AFTER the structural filters so the free-text
+    // search always matches what the user can actually see.
+    const searched = qLower
+      ? out.filter((fp) => {
+          const refs = fp.point.refs?.join(' ') ?? '';
+          const cat = pointCategoryMeta(fp.pointCategory).label;
+          const hay =
+            `${fp.point.title} ${fp.point.description} ${refs} ${fp.item.projectName} ${cat} ${fp.pointCategory}`.toLowerCase();
+          return hay.includes(qLower);
+        })
+      : out;
+
+    searched.sort((a, b) => {
       const sev =
         SEVERITY_WEIGHT[b.point.severity] - SEVERITY_WEIGHT[a.point.severity];
       if (sev !== 0) return sev;
@@ -137,24 +203,25 @@ export default function AdvicePage() {
         new Date(a.item.generatedAt).getTime()
       );
     });
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return searched;
   }, [items, minSeverity, projectFilter, categoryFilter, qLower]);
 
-  // Distinct categories for the filter dropdown, preserving order of
-  // first occurrence (keeps emoji+label consistent across renders).
+  // Categories shown in the filter dropdown: the 6 canonical axes
+  // (POINT_CATEGORIES) intersected with what actually appears in the
+  // data. Avoids showing "Security" when no security point exists in
+  // the current aggregate, while keeping a stable order.
   const categories = useMemo(() => {
     if (!items) return [];
-    const seen = new Map<string, { label: string; emoji: string }>();
+    const seen = new Set<string>();
     for (const it of items) {
-      if (!seen.has(it.category)) {
-        seen.set(it.category, { label: it.label, emoji: it.emoji });
+      if (!it.points) continue;
+      for (const p of it.points) {
+        seen.add(p.category ?? it.category);
       }
     }
-    return Array.from(seen.entries()).map(([category, meta]) => ({
-      category,
-      ...meta,
-    }));
+    return Array.from(seen)
+      .map((key) => ({ category: key, ...pointCategoryMeta(key) }))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [items]);
 
   // Per-project score summary (avg of non-null category scores). In v3
@@ -335,21 +402,76 @@ export default function AdvicePage() {
               </span>
             </button>
             {showScores && (
-              <div className="border-t border-slate-200 dark:border-slate-800 p-2 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-1.5">
-                {projectSummaries.map((p) => (
-                  <Link
-                    key={p.projectId}
-                    href={`/projects/${p.projectId}#advice`}
-                    className="flex items-center justify-between gap-2 border border-slate-200 dark:border-slate-800 rounded-md p-1.5 hover:bg-slate-50 dark:hover:bg-slate-900 min-w-0 text-xs"
-                    title={`${p.points} point(s) for ${p.projectName}`}
-                  >
-                    <span className="inline-flex items-center gap-1.5 min-w-0">
-                      <Folder size={11} className="shrink-0 text-slate-400" />
-                      <span className="truncate">{p.projectName}</span>
-                    </span>
-                    <ScoreBadge score={p.avgScore} />
-                  </Link>
-                ))}
+              <div className="border-t border-slate-200 dark:border-slate-800 p-2 space-y-1.5">
+                {projectSummaries.map((p) => {
+                  // Merge category_scores from all rows of the project.
+                  // For v4 there is usually one row per project, but
+                  // we keep the merge logic so mixed v3/v4 data still
+                  // displays without blowing up.
+                  const merged: Record<
+                    string,
+                    { score: number | null; notes: string }
+                  > = {};
+                  for (const it of items ?? []) {
+                    if (it.projectId !== p.projectId) continue;
+                    if (!it.categoryScores) continue;
+                    for (const [k, v] of Object.entries(it.categoryScores)) {
+                      if (!merged[k] || merged[k].score === null) merged[k] = v;
+                    }
+                  }
+                  const hasBreakdown = Object.keys(merged).length > 0;
+                  return (
+                    <div
+                      key={p.projectId}
+                      className="border border-slate-200 dark:border-slate-800 rounded-md text-xs"
+                    >
+                      <Link
+                        href={`/projects/${p.projectId}#advice`}
+                        className="flex items-center justify-between gap-2 p-1.5 hover:bg-slate-50 dark:hover:bg-slate-900 min-w-0"
+                        title={`${p.points} point(s) for ${p.projectName}`}
+                      >
+                        <span className="inline-flex items-center gap-1.5 min-w-0">
+                          <Folder
+                            size={11}
+                            className="shrink-0 text-slate-400"
+                          />
+                          <span className="truncate font-medium">
+                            {p.projectName}
+                          </span>
+                          <span className="text-slate-400">
+                            {p.points} pt(s)
+                          </span>
+                        </span>
+                        <ScoreBadge score={p.avgScore} />
+                      </Link>
+                      {hasBreakdown && (
+                        <div className="border-t border-slate-200 dark:border-slate-800 px-1.5 py-1 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-1">
+                          {Object.keys(POINT_CATEGORIES).map((key) => {
+                            const cs = merged[key];
+                            const cm = POINT_CATEGORIES[key];
+                            return (
+                              <div
+                                key={key}
+                                className={
+                                  'rounded px-1.5 py-0.5 border flex items-center justify-between gap-1 ' +
+                                  chipCls(cm.color)
+                                }
+                                title={cs?.notes || cm.label}
+                              >
+                                <span className="truncate">
+                                  {cm.emoji} {cm.label}
+                                </span>
+                                <span className="font-mono font-semibold shrink-0">
+                                  {cs?.score ?? '—'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -380,7 +502,8 @@ export default function AdvicePage() {
  */
 function AdviceListRow({ row }: { row: FlatPoint }) {
   const [expanded, setExpanded] = useState(false);
-  const { point, item, rankInProject } = row;
+  const { point, item, rankInProject, pointCategory } = row;
+  const catMeta = pointCategoryMeta(pointCategory);
 
   return (
     <li className="px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900/50">
@@ -409,6 +532,19 @@ function AdviceListRow({ row }: { row: FlatPoint }) {
           #{rankInProject}
         </span>
 
+        {/* Point-level category chip (v4). Uses the shared palette from
+            POINT_CATEGORIES so /advices and the per-project pages stay
+            visually consistent. */}
+        <span
+          className={
+            'shrink-0 text-[10px] font-medium rounded px-1.5 py-0.5 mt-0.5 border ' +
+            chipCls(catMeta.color)
+          }
+          title={`Category: ${catMeta.label}`}
+        >
+          {catMeta.emoji} {catMeta.label}
+        </span>
+
         <div className="flex-1 min-w-0">
           <button
             onClick={() => setExpanded((v) => !v)}
@@ -424,10 +560,6 @@ function AdviceListRow({ row }: { row: FlatPoint }) {
               <Folder size={10} /> {item.projectName}
             </Link>
             <span>•</span>
-            <span className="inline-flex items-center gap-1">
-              {item.emoji} {item.label}
-            </span>
-            <span>•</span>
             <span>{new Date(item.generatedAt).toLocaleDateString()}</span>
           </div>
         </div>
@@ -436,8 +568,8 @@ function AdviceListRow({ row }: { row: FlatPoint }) {
           <ScoreBadge score={item.score} />
           <a
             href={buildChatHrefFromAdvice({
-              label: item.label,
-              emoji: item.emoji,
+              label: catMeta.label,
+              emoji: catMeta.emoji,
               point,
               projectName: item.projectName,
             })}

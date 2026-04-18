@@ -247,6 +247,18 @@ export async function runTask(taskId: string): Promise<void> {
       const parsed = parseAdviceOutput(agentText);
       const points = parsed?.points ?? null;
       const score = parsed?.score ?? null;
+      // v4: persist category_scores alongside points. Shoehorned into
+      // the existing TEXT column via a wrapper `{version:4, points,
+      // categoryScores}` so no DB migration is needed. Legacy (v3)
+      // rows keep a raw array in `points` and the read path in
+      // advice/aggregate understands both shapes.
+      const storedPoints = parsed
+        ? JSON.stringify({
+            version: 4,
+            points: parsed.points,
+            categoryScores: parsed.categoryScores,
+          })
+        : null;
       const durationMs = Date.now() - startedAt;
 
       if (!points) {
@@ -276,14 +288,14 @@ export async function runTask(taskId: string): Promise<void> {
         create: {
           projectName: project.name,
           category: job.category,
-          points: JSON.stringify(points),
+          points: storedPoints ?? JSON.stringify(points),
           score,
           rawOutput: agentText,
           taskId: job.id,
           taskRunId: run.id,
         },
         update: {
-          points: JSON.stringify(points),
+          points: storedPoints ?? JSON.stringify(points),
           score,
           rawOutput: agentText,
           taskId: job.id,

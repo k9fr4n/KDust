@@ -7,6 +7,18 @@
  */
 
 export type AdvicePoint = {
+  /**
+   * 1-based rank in the project's priority list (v4). Optional for
+   * legacy v3 payloads where position in the array was the de-facto
+   * rank; the UI should fall back to (index+1) when absent.
+   */
+  rank?: number;
+  /**
+   * Axis the point belongs to (security, performance, code_quality,
+   * improvement, documentation, test_coverage). null on legacy v3
+   * payloads that predated per-point categorisation.
+   */
+  category?: string | null;
   title: string;
   description: string;
   severity: 'low' | 'medium' | 'high' | 'critical';

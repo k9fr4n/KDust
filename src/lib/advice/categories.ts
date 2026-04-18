@@ -90,3 +90,71 @@ Prefer concrete, actionable items tied to specific files/lines over
 generic advice.`,
   },
 ];
+
+/**
+ * Display metadata for the POINT-level category tags (v4 contract).
+ *
+ * These are the canonical axes the agent grades in `category_scores`
+ * and tags each point with. Kept separate from
+ * `BUILTIN_ADVICE_CATEGORIES` (which is about the v3 cron-level
+ * "priority" category): these values are NEVER stored in DB, they
+ * only drive UI chips / grouping / filtering.
+ *
+ * Keys MUST match the JSON contract in `prompts.ts` exactly.
+ */
+export const POINT_CATEGORIES: Record<
+  string,
+  { label: string; emoji: string; sortOrder: number; color: string }
+> = {
+  security: {
+    label: 'Security',
+    emoji: '\u{1F6E1}\u{FE0F}',
+    sortOrder: 10,
+    color: 'red',
+  },
+  performance: {
+    label: 'Performance',
+    emoji: '\u26A1',
+    sortOrder: 20,
+    color: 'amber',
+  },
+  code_quality: {
+    label: 'Code quality',
+    emoji: '\u2728',
+    sortOrder: 30,
+    color: 'purple',
+  },
+  improvement: {
+    label: 'Improvement',
+    emoji: '\u{1F680}',
+    sortOrder: 40,
+    color: 'blue',
+  },
+  documentation: {
+    label: 'Documentation',
+    emoji: '\u{1F4DA}',
+    sortOrder: 50,
+    color: 'emerald',
+  },
+  test_coverage: {
+    label: 'Test coverage',
+    emoji: '\u{1F9EA}',
+    sortOrder: 60,
+    color: 'cyan',
+  },
+};
+
+export const POINT_CATEGORY_KEYS = Object.keys(POINT_CATEGORIES);
+
+/** Safe fallback for unknown / v3-era point category values. */
+export function pointCategoryMeta(key: string | null | undefined) {
+  if (!key) return { label: 'Other', emoji: '\u{1F4CB}', sortOrder: 99, color: 'slate' };
+  return (
+    POINT_CATEGORIES[key] ?? {
+      label: key,
+      emoji: '\u{1F4CB}',
+      sortOrder: 99,
+      color: 'slate',
+    }
+  );
+}

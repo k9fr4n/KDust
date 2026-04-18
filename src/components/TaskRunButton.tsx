@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import { Play } from 'lucide-react';
 import { useState } from 'react';
 
-export function CronRunButton({ id, name }: { id: string; name: string }) {
+export function TaskRunButton({ id, name }: { id: string; name: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -11,12 +11,12 @@ export function CronRunButton({ id, name }: { id: string; name: string }) {
   const onClick = async () => {
     setBusy(true);
     setMsg(null);
-    const r = await fetch(`/api/crons/${id}/run`, { method: 'POST' });
+    const r = await fetch(`/api/tasks/${id}/run`, { method: 'POST' });
     setBusy(false);
     if (r.ok) {
       setMsg(`Triggered "${name}". Live status will appear below.`);
-      // Refresh immediately so the CronLiveStatus component picks up the new
-      // running CronRun row and begins polling.
+      // Refresh immediately so the TaskLiveStatus component picks up the new
+      // running TaskRun row and begins polling.
       setTimeout(() => {
         router.refresh();
         setMsg(null);

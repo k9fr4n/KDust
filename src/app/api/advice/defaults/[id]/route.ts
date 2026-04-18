@@ -22,7 +22,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (parsed.data.schedule && !isValidCronExpression(parsed.data.schedule)) {
     return NextResponse.json({ error: 'schedule: invalid cron expression' }, { status: 400 });
   }
-  // Note: we DO NOT overwrite existing per-project CronJob rows here.
+  // Note: we DO NOT overwrite existing per-project Task rows here.
   // Template edits only affect future provisioning. The user can click
   // "Propager" explicitly if they want to push a new prompt/schedule
   // to every project (see POST /propagate).
@@ -37,7 +37,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
  * DELETE /api/advice/defaults/:id
  *
  * Forbidden on built-in templates (user should disable instead). For
- * custom templates, cascades: all CronJob+ProjectAdvice rows with the
+ * custom templates, cascades: all Task+ProjectAdvice rows with the
  * matching category slug are deleted too. Set ?cascade=0 to keep them.
  */
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -52,7 +52,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
       { status: 403 },
     );
   }
-  let cascadeStats = { crons: 0, advices: 0 };
+  let cascadeStats = { tasks: 0, advices: 0 };
   if (cascade) {
     cascadeStats = await deleteCategoryEverywhere(def.key);
   }

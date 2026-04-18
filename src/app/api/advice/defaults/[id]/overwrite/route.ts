@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
  * customisation of those fields. Also (re-)creates the cron on any
  * project that didn't have it yet.
  *
- * Also useful to rebuild the prompt of legacy advice crons that were
+ * Also useful to rebuild the prompt of legacy advice tasks that were
  * created under the old prompt format, so they pick up the current
  * JSON contract.
  *

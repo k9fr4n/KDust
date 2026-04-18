@@ -20,7 +20,7 @@ export type AdviceSlot = {
   points: AdvicePoint[] | null;
   score: number | null;
   generatedAt: string | null;
-  cron: {
+  task: {
     id: string;
     schedule: string;
     enabled: boolean;

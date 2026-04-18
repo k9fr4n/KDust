@@ -2,9 +2,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Pencil } from 'lucide-react';
 import { db } from '@/lib/db';
-import { CronDeleteButton } from '@/components/CronDeleteButton';
-import { CronRunButton } from '@/components/CronRunButton';
-import { CronLiveStatus } from '@/components/CronLiveStatus';
+import { TaskDeleteButton } from '@/components/TaskDeleteButton';
+import { TaskRunButton } from '@/components/TaskRunButton';
+import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +22,7 @@ function badgeClass(status: string) {
 
 export default async function CronDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const cron = await db.cronJob.findUnique({
+  const cron = await db.task.findUnique({
     where: { id },
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 20 } },
   });
@@ -38,18 +38,18 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       <div className="flex items-start justify-between gap-4 mb-2">
         <h1 className="text-2xl font-bold">{cron.name}</h1>
         <div className="flex items-center gap-2 shrink-0">
-          <CronRunButton id={cron.id} name={cron.name} />
+          <TaskRunButton id={cron.id} name={cron.name} />
           <Link
-            href={`/crons/${cron.id}/edit`}
+            href={`/tasks/${cron.id}/edit`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <Pencil size={14} /> Edit
           </Link>
-          <CronDeleteButton id={cron.id} name={cron.name} />
+          <TaskDeleteButton id={cron.id} name={cron.name} />
         </div>
       </div>
       <p className="text-sm text-slate-500 mb-4">
-        <span className="font-mono">{cron.schedule}</span> &middot; {cron.timezone} &middot; agent{' '}
+        Manual-trigger task &middot; agent{' '}
         {cron.agentName ?? cron.agentSId}
       </p>
 
@@ -75,12 +75,12 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         ) : (
           <ul className="space-y-2">
             {cron.runs.map((r) => {
-              // Running rows get the live-polling CronLiveStatus component instead
+              // Running rows get the live-polling TaskLiveStatus component instead
               // of the static list item; it renders the same <li> framing but with
               // phase stepper, live output and a Cancel button.
               if (r.status === 'running') {
                 return (
-                  <CronLiveStatus
+                  <TaskLiveStatus
                     key={r.id}
                     cronId={cron.id}
                     initialRun={{

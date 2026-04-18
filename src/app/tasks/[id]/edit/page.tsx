@@ -1,16 +1,16 @@
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
-import { CronForm } from '@/components/CronForm';
+import { TaskForm } from '@/components/TaskForm';
 
 export const dynamic = 'force-dynamic';
 
 export default async function EditCronPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const cron = await db.cronJob.findUnique({ where: { id } });
+  const cron = await db.task.findUnique({ where: { id } });
   if (!cron) return notFound();
 
   return (
-    <CronForm
+    <TaskForm
       cronId={cron.id}
       initial={{
         name: cron.name,

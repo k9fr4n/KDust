@@ -73,7 +73,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // Provision the 5 mandatory weekly advisory crons (security, performance,
+  // Provision the 5 mandatory weekly advisory tasks (security, performance,
   // code_quality, improvement, documentation). Idempotent and non-blocking
   // from the user's POV — a provisioning failure (eg. Dust disconnected)
   // logs a warning but doesn't void the clone.

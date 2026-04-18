@@ -38,7 +38,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
   if (current) {
     // --- Project-scoped dashboard ---
-    const projectRunsFilter = { cronJob: { is: { projectPath: current.name } } };
+    const projectRunsFilter = { task: { is: { projectPath: current.name } } };
     const [
       nbCrons,
       nbConvs,
@@ -50,18 +50,18 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       recentRuns,
       recentConvs,
     ] = await Promise.all([
-      db.cronJob.count({ where: { projectPath: current.name } }),
+      db.task.count({ where: { projectPath: current.name } }),
       db.conversation.count({ where: { projectName: current.name } }),
-      db.cronRun.count({ where: projectRunsFilter }),
-      db.cronRun.count({ where: { ...projectRunsFilter, status: 'success' } }),
-      db.cronRun.count({ where: { ...projectRunsFilter, status: 'failed' } }),
-      db.cronRun.count({ where: { ...projectRunsFilter, status: 'running' } }),
+      db.taskRun.count({ where: projectRunsFilter }),
+      db.taskRun.count({ where: { ...projectRunsFilter, status: 'success' } }),
+      db.taskRun.count({ where: { ...projectRunsFilter, status: 'failed' } }),
+      db.taskRun.count({ where: { ...projectRunsFilter, status: 'running' } }),
       db.conversation.count({ where: { projectName: current.name, pinned: true } }),
-      db.cronRun.findMany({
+      db.taskRun.findMany({
         where: projectRunsFilter,
         orderBy: { startedAt: 'desc' },
         take: 8,
-        include: { cronJob: { select: { name: true } } },
+        include: { task: { select: { name: true } } },
       }),
       db.conversation.findMany({
         where: { projectName: current.name },
@@ -118,9 +118,9 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             subtle={nbPinned > 0 ? `${nbPinned} pinned` : undefined}
           />
           <StatTile
-            href="/crons"
+            href="/tasks"
             value={nbCrons}
-            label="crons"
+            label="tasks"
             color="purple"
             icon={<Clock size={18} />}
           />
@@ -199,20 +199,20 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     recentConvs,
     recentRuns,
   ] = await Promise.all([
-    db.cronJob.count(),
+    db.task.count(),
     db.conversation.count(),
-    db.cronRun.count(),
-    db.cronRun.count({ where: { status: 'success' } }),
-    db.cronRun.count({ where: { status: 'failed' } }),
-    db.cronRun.count({ where: { status: 'running' } }),
-    db.cronRun.count({ where: { status: 'aborted' } }),
+    db.taskRun.count(),
+    db.taskRun.count({ where: { status: 'success' } }),
+    db.taskRun.count({ where: { status: 'failed' } }),
+    db.taskRun.count({ where: { status: 'running' } }),
+    db.taskRun.count({ where: { status: 'aborted' } }),
     db.project.count(),
     listProjects(),
     db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 8 }),
-    db.cronRun.findMany({
+    db.taskRun.findMany({
       orderBy: { startedAt: 'desc' },
       take: 8,
-      include: { cronJob: { select: { name: true, projectPath: true } } },
+      include: { task: { select: { name: true, projectPath: true } } },
     }),
   ]);
 
@@ -235,9 +235,9 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           icon={<MessageSquare size={18} />}
         />
         <StatTile
-          href="/crons"
+          href="/tasks"
           value={nbCrons}
-          label="crons"
+          label="tasks"
           color="purple"
           icon={<Clock size={18} />}
         />
@@ -486,7 +486,7 @@ function RecentRuns({ items }: { items: Array<any> }) {
         return (
           <li key={r.id}>
             <Link
-              href={`/crons/${r.cronJobId}`}
+              href={`/tasks/${r.taskId}`}
               className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
             >
               <div className="flex items-center gap-2">
@@ -500,13 +500,13 @@ function RecentRuns({ items }: { items: Array<any> }) {
                   {r.status}
                 </span>
                 <span className="text-sm font-medium truncate flex-1">
-                  {r.cronJob?.name ?? '(deleted cron)'}
+                  {r.task?.name ?? '(deleted cron)'}
                 </span>
                 <span className="text-xs text-slate-400 shrink-0">{fmtRel(r.startedAt)}</span>
               </div>
-              {(r.filesChanged !== null && r.filesChanged !== undefined) || r.cronJob?.projectPath ? (
+              {(r.filesChanged !== null && r.filesChanged !== undefined) || r.task?.projectPath ? (
                 <div className="text-xs text-slate-500 truncate">
-                  {r.cronJob?.projectPath && <span className="font-mono">{r.cronJob.projectPath}</span>}
+                  {r.task?.projectPath && <span className="font-mono">{r.task.projectPath}</span>}
                   {r.filesChanged !== null && r.filesChanged !== undefined && (
                     <span className="ml-2 font-mono">
                       {r.filesChanged} file(s), +{r.linesAdded ?? 0}/-{r.linesRemoved ?? 0}

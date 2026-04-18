@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { Clock } from 'lucide-react';
 import { db } from '@/lib/db';
-import { nextRunAt } from '@/lib/cron/validator';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import type { Prisma } from '@prisma/client';
@@ -24,7 +23,7 @@ type SearchProps = {
 };
 
 /**
- * /crons — list of every cron with search + filter pills.
+ * /tasks — list of every cron with search + filter pills.
  *
  * Query string (all optional):
  *   ?q=<text>            substring match on name (case-insensitive)
@@ -55,14 +54,14 @@ export default async function CronsPage({ searchParams }: SearchProps) {
   else if (sp.project) projectFilter = sp.project;
   else if (cookieProject) projectFilter = cookieProject;
 
-  const where: Prisma.CronJobWhereInput = {};
+  const where: Prisma.TaskWhereInput = {};
   if (projectFilter) where.projectPath = projectFilter;
   if (q) where.name = { contains: q };
   if (kind !== 'all') where.kind = kind;
   if (enabled === 'on') where.enabled = true;
   else if (enabled === 'off') where.enabled = false;
 
-  const crons = await db.cronJob.findMany({
+  const tasks = await db.task.findMany({
     where,
     orderBy: [{ kind: 'asc' }, { createdAt: 'desc' }],
     take: limit,
@@ -70,7 +69,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
   });
 
   // Last-status filter applied in-memory (requires joining on runs).
-  const filtered = crons.filter((c) => {
+  const filtered = tasks.filter((c) => {
     if (status === 'all') return true;
     const last = c.runs[0];
     if (status === 'never') return !last;
@@ -82,9 +81,9 @@ export default async function CronsPage({ searchParams }: SearchProps) {
     filtered.filter((c) => c.runs[0]?.status === 'running').map((c) => c.id),
   );
 
-  // Distinct project names across CronJobs for the Project filter pills.
+  // Distinct project names across Tasks for the Project filter pills.
   // Cheap because SQLite distinct is indexed and the set size is small.
-  const allProjectRows = await db.cronJob.findMany({
+  const allProjectRows = await db.task.findMany({
     select: { projectPath: true },
     distinct: ['projectPath'],
     take: 100,
@@ -108,7 +107,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
     if (merged.enabled && merged.enabled !== 'all') qs.set('enabled', merged.enabled);
     if (merged.status && merged.status !== 'all') qs.set('status', merged.status);
     if (merged.project) qs.set('project', merged.project);
-    return `/crons${qs.toString() ? `?${qs}` : ''}`;
+    return `/tasks${qs.toString() ? `?${qs}` : ''}`;
   };
   const hasActiveFilter =
     !!q || kind !== 'all' || enabled !== 'all' || status !== 'all' || !!sp.project;
@@ -132,7 +131,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
         </h1>
         <span className="text-sm text-slate-500 ml-auto">{filtered.length} shown</span>
         <Link
-          href="/crons/new"
+          href="/tasks/new"
           className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"
         >
           + New task
@@ -140,7 +139,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
       </div>
 
       {/* Search */}
-      <form method="get" action="/crons" className="mb-4 flex gap-2">
+      <form method="get" action="/tasks" className="mb-4 flex gap-2">
         <input
           type="search"
           name="q"
@@ -160,7 +159,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
         </button>
         {hasActiveFilter && (
           <Link
-            href="/crons"
+            href="/tasks"
             className="px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
           >
             Clear filters
@@ -251,7 +250,7 @@ export default async function CronsPage({ searchParams }: SearchProps) {
               return (
                 <tr key={c.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="py-2 font-medium">
-                    <Link href={`/crons/${c.id}`} className="underline">
+                    <Link href={`/tasks/${c.id}`} className="underline">
                       {c.name}
                     </Link>
                     {c.mandatory && (
@@ -276,12 +275,8 @@ export default async function CronsPage({ searchParams }: SearchProps) {
                       {c.kind === 'advice' && c.category ? ` · ${c.category}` : ''}
                     </span>
                   </td>
-                  <td className="font-mono text-xs">{c.schedule}</td>
                   <td className="text-xs">{c.agentName ?? c.agentSId}</td>
                   <td className="text-xs">/projects/{c.projectPath}</td>
-                  <td className="text-xs">
-                    {nextRunAt(c.schedule, c.timezone)?.toLocaleString() ?? '-'}
-                  </td>
                   <td>
                     {c.enabled ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">

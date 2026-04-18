@@ -30,7 +30,7 @@ const PHASES: { key: string; label: string }[] = [
   { key: 'done',       label: 'Done' },
 ];
 
-export function CronLiveStatus({ cronId, initialRun }: { cronId: string; initialRun: Run }) {
+export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initialRun: Run }) {
   const router = useRouter();
   const [run, setRun] = useState<Run>(initialRun);
   const [cancelling, setCancelling] = useState(false);
@@ -45,10 +45,10 @@ export function CronLiveStatus({ cronId, initialRun }: { cronId: string; initial
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`/api/crons/${cronId}`, { cache: 'no-store' });
+        const r = await fetch(`/api/tasks/${cronId}`, { cache: 'no-store' });
         if (!r.ok) return;
         const data = await r.json();
-        const latest: Run | undefined = data?.cron?.runs?.find((x: Run) => x.id === run.id) ?? data?.cron?.runs?.[0];
+        const latest: Run | undefined = data?.task?.runs?.find((x: Run) => x.id === run.id) ?? data?.task?.runs?.[0];
         if (latest && !cancelled) {
           setRun(latest);
           if (latest.status !== 'running') router.refresh();
@@ -79,7 +79,7 @@ export function CronLiveStatus({ cronId, initialRun }: { cronId: string; initial
     setCancelling(true);
     setCancelMsg(null);
     try {
-      const r = await fetch(`/api/cronruns/${run.id}/cancel`, { method: 'POST' });
+      const r = await fetch(`/api/taskruns/${run.id}/cancel`, { method: 'POST' });
       if (r.ok) setCancelMsg('Abort signal sent. The run will stop within a few seconds.');
       else {
         const body = await r.json().catch(() => ({}));

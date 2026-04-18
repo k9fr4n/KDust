@@ -15,13 +15,13 @@ const STATUS_CLASS: Record<string, string> = {
 };
 
 type SearchProps = {
-  searchParams?: Promise<{ status?: string; cron?: string; q?: string; limit?: string }>;
+  searchParams?: Promise<{ status?: string; task?: string; q?: string; limit?: string }>;
 };
 
 export default async function RunsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const statusFilter = sp.status && sp.status !== 'all' ? sp.status : undefined;
-  const cronFilter = sp.cron || undefined;
+  const taskFilter = sp.task || undefined;
   const q = (sp.q ?? '').trim();
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
   const currentProject = await getCurrentProjectName();
@@ -32,7 +32,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const qClause = q
     ? {
         OR: [
-          { cronJob: { is: { name: { contains: q } } } },
+          { task: { is: { name: { contains: q } } } },
           { branch: { contains: q } },
           { phaseMessage: { contains: q } },
           { commitSha: { contains: q } },
@@ -40,16 +40,16 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       }
     : {};
 
-  const runs = await db.cronRun.findMany({
+  const runs = await db.taskRun.findMany({
     where: {
       ...(statusFilter ? { status: statusFilter } : {}),
-      ...(cronFilter ? { cronJobId: cronFilter } : {}),
-      ...(currentProject ? { cronJob: { is: { projectPath: currentProject } } } : {}),
+      ...(taskFilter ? { taskId: taskFilter } : {}),
+      ...(currentProject ? { task: { is: { projectPath: currentProject } } } : {}),
       ...qClause,
     },
     orderBy: { startedAt: 'desc' },
     take: limit,
-    include: { cronJob: { select: { id: true, name: true, projectPath: true } } },
+    include: { task: { select: { id: true, name: true, projectPath: true } } },
   });
 
   const statuses = ['all', 'running', 'success', 'failed', 'aborted', 'no-op', 'skipped'];
@@ -71,18 +71,18 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           type="search"
           name="q"
           defaultValue={q}
-          placeholder="Search cron name, branch, commit, status message…"
+          placeholder="Search task name, branch, commit, status message…"
           className="flex-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm"
         />
         {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
-        {cronFilter && <input type="hidden" name="cron" value={cronFilter} />}
+        {taskFilter && <input type="hidden" name="task" value={taskFilter} />}
         <button
           type="submit"
           className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
         >
           Search
         </button>
-        {(q || statusFilter || cronFilter) && (
+        {(q || statusFilter || taskFilter) && (
           <Link
             href="/runs"
             className="px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
@@ -97,7 +97,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           const active = (sp.status ?? 'all') === s;
           const qs = new URLSearchParams();
           if (s !== 'all') qs.set('status', s);
-          if (cronFilter) qs.set('cron', cronFilter);
+          if (taskFilter) qs.set('task', taskFilter);
           if (q) qs.set('q', q);
           return (
             <Link
@@ -114,7 +114,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             </Link>
           );
         })}
-        {cronFilter && (
+        {taskFilter && (
           <Link
             href={`/runs${
               new URLSearchParams({
@@ -129,7 +129,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             }`}
             className="px-2 py-1 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
           >
-            × clear cron filter
+            × clear task filter
           </Link>
         )}
       </div>
@@ -141,7 +141,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           <thead className="text-left text-slate-500">
             <tr>
               <th className="py-2">Status</th>
-              <th>Cron</th>
+              <th>Task</th>
               <th>Project</th>
               <th>Started</th>
               <th>Duration</th>
@@ -173,15 +173,15 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                     )}
                   </td>
                   <td>
-                    {r.cronJob ? (
-                      <Link href={`/crons/${r.cronJob.id}`} className="underline">
-                        {r.cronJob.name}
+                    {r.task ? (
+                      <Link href={`/tasks/${r.task.id}`} className="underline">
+                        {r.task.name}
                       </Link>
                     ) : (
                       <span className="text-slate-400">(deleted)</span>
                     )}
                   </td>
-                  <td className="text-xs font-mono text-slate-500">{r.cronJob?.projectPath ?? '-'}</td>
+                  <td className="text-xs font-mono text-slate-500">{r.task?.projectPath ?? '-'}</td>
                   <td className="text-xs">{new Date(r.startedAt).toLocaleString()}</td>
                   <td className="text-xs font-mono">{dur !== null ? `${dur}s` : '-'}</td>
                   <td className="text-xs font-mono">
@@ -191,9 +191,9 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                   </td>
                   <td className="text-xs font-mono truncate max-w-[240px]">{r.branch ?? '-'}</td>
                   <td className="text-right">
-                    {r.cronJob && (
+                    {r.task && (
                       <Link
-                        href={`/crons/${r.cronJob.id}`}
+                        href={`/tasks/${r.task.id}`}
                         className="text-xs text-brand-600 hover:underline"
                       >
                         details →

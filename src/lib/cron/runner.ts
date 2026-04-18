@@ -18,15 +18,15 @@ import {
 
 /**
  * Registry of in-flight runs so the HTTP API can abort them on demand.
- * Key: CronRun.id. Value: AbortController that aborts the agent stream.
- * Entries are added at the start of runCronJob and always cleaned up in a
+ * Key: TaskRun.id. Value: AbortController that aborts the agent stream.
+ * Entries are added at the start of runTask and always cleaned up in a
  * finally block. Because Node.js modules are singletons within a process,
  * this survives across requests but is of course NOT cross-process.
  */
 const activeRuns = new Map<string, AbortController>();
 
 /** Abort an in-flight run. Returns true if the runId was active. */
-export function cancelCronRun(runId: string): boolean {
+export function cancelTaskRun(runId: string): boolean {
   const ac = activeRuns.get(runId);
   if (!ac) return false;
   ac.abort();
@@ -50,11 +50,11 @@ export function isRunActive(runId: string): boolean {
  *   [7]  guard-rails          : abort if diff exceeds maxDiffLines (hallucination safety)
  *   [8]  auto-commit + push   : conventional message; force-with-lease in stable mode;
  *                               dryRun => no push
- *   [9]  persist CronRun + local Conversation for audit trail
+ *   [9]  persist TaskRun + local Conversation for audit trail
  *   [10] Teams report with branch/commit/MR links + diff stats
  */
-export async function runCronJob(cronJobId: string): Promise<void> {
-  const job = await db.cronJob.findUnique({ where: { id: cronJobId } });
+export async function runTask(taskId: string): Promise<void> {
+  const job = await db.task.findUnique({ where: { id: taskId } });
   if (!job) return;
 
   // [1] Concurrency lock ------------------------------------------------------
@@ -68,25 +68,25 @@ export async function runCronJob(cronJobId: string): Promise<void> {
   // Stale detection still applies: a run older than 1h with no completion
   // signal is considered crashed and is auto-marked failed so the next
   // run can proceed.
-  const concurrent = await db.cronRun.findFirst({
+  const concurrent = await db.taskRun.findFirst({
     where: {
       status: 'running',
-      cronJob: { is: { projectPath: job.projectPath } },
+      task: { is: { projectPath: job.projectPath } },
     },
     orderBy: { startedAt: 'desc' },
-    include: { cronJob: { select: { name: true } } },
+    include: { task: { select: { name: true } } },
   });
   if (concurrent) {
     const ageMs = Date.now() - concurrent.startedAt.getTime();
     if (ageMs < 60 * 60 * 1000) {
-      const sameJob = concurrent.cronJobId === cronJobId;
+      const sameJob = concurrent.taskId === taskId;
       const reason = sameJob
         ? `previous run ${concurrent.id} of this job still running`
-        : `run ${concurrent.id} of sibling job "${concurrent.cronJob?.name ?? concurrent.cronJobId}" still running on project "${job.projectPath}"`;
+        : `run ${concurrent.id} of sibling job "${concurrent.task?.name ?? concurrent.taskId}" still running on project "${job.projectPath}"`;
       console.warn(`[cron] skip job="${job.name}": ${reason} (${Math.round(ageMs / 1000)}s)`);
-      await db.cronRun.create({
+      await db.taskRun.create({
         data: {
-          cronJobId,
+          taskId,
           status: 'skipped',
           output: `${reason} since ${concurrent.startedAt.toISOString()}`,
           finishedAt: new Date(),
@@ -95,15 +95,15 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       return;
     }
     // Stale: mark the ghost run as failed and proceed
-    await db.cronRun.update({
+    await db.taskRun.update({
       where: { id: concurrent.id },
       data: { status: 'failed', error: 'stale (no completion signal >1h)', finishedAt: new Date() },
     });
   }
 
-  const run = await db.cronRun.create({
+  const run = await db.taskRun.create({
     data: {
-      cronJobId,
+      taskId,
       status: 'running',
       dryRun: job.dryRun,
       baseBranch: job.baseBranch,
@@ -115,7 +115,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
   console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${job.baseBranch} mode=${job.branchMode}`);
 
   const setPhase = (phase: string, message: string) =>
-    db.cronRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
+    db.taskRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
 
   const project = job.projectPath
     ? await db.project.findFirst({ where: { name: job.projectPath } })
@@ -135,9 +135,9 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     // [2] Pre-run sync --------------------------------------------------------
-    // For advice crons we still want an up-to-date working copy so the
+    // For advice tasks we still want an up-to-date working copy so the
     // agent analyses the latest main, but we go through a lighter path:
-    // resetToBase but no branch/commit/push. For automation crons, same
+    // resetToBase but no branch/commit/push. For automation tasks, same
     // call then a new working branch.
     await setPhase('syncing', `git fetch + reset --hard origin/${job.baseBranch}`);
     console.log(`[cron] git sync base=${job.baseBranch}`);
@@ -183,7 +183,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
               const now = Date.now();
               if (now - lastFlush > 500) {
                 lastFlush = now;
-                db.cronRun
+                db.taskRun
                   .update({ where: { id: run.id }, data: { output: partial } })
                   .catch(() => {});
               }
@@ -228,7 +228,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       }
 
       // Parse the JSON block. If parsing fails we still persist rawOutput
-      // (in CronRun.output) but mark the run 'failed' with a clear reason
+      // (in TaskRun.output) but mark the run 'failed' with a clear reason
       // so the user can see the malformed response and iterate on the
       // prompt. We do NOT overwrite the previous ProjectAdvice row in that
       // case — stale-but-valid is better than empty.
@@ -238,7 +238,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
       const durationMs = Date.now() - startedAt;
 
       if (!points) {
-        await db.cronRun.update({
+        await db.taskRun.update({
           where: { id: run.id },
           data: {
             status: 'failed',
@@ -249,7 +249,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
             finishedAt: new Date(),
           },
         });
-        await db.cronJob.update({
+        await db.task.update({
           where: { id: job.id },
           data: { lastRunAt: new Date(), lastStatus: 'failed' },
         });
@@ -267,19 +267,19 @@ export async function runCronJob(cronJobId: string): Promise<void> {
           points: JSON.stringify(points),
           score,
           rawOutput: agentText,
-          cronJobId: job.id,
-          cronRunId: run.id,
+          taskId: job.id,
+          taskRunId: run.id,
         },
         update: {
           points: JSON.stringify(points),
           score,
           rawOutput: agentText,
-          cronJobId: job.id,
-          cronRunId: run.id,
+          taskId: job.id,
+          taskRunId: run.id,
           generatedAt: new Date(),
         },
       });
-      await db.cronRun.update({
+      await db.taskRun.update({
         where: { id: run.id },
         data: {
           status: 'success',
@@ -289,7 +289,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
           finishedAt: new Date(),
         },
       });
-      await db.cronJob.update({
+      await db.task.update({
         where: { id: job.id },
         data: { lastRunAt: new Date(), lastStatus: 'success' },
       });
@@ -361,13 +361,13 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
     let streamErr: string | null = null;
 
-    // Periodically flush the partial agent output to DB so the /crons/:id
+    // Periodically flush the partial agent output to DB so the /tasks/:id
     // page can show real-time streaming text (without needing an SSE route
     // of its own). Throttled to ~500ms to avoid hammering SQLite.
     let partial = '';
     let lastFlush = Date.now();
     const flushPartial = () => {
-      db.cronRun
+      db.taskRun
         .update({ where: { id: run.id }, data: { output: partial } })
         .catch(() => { /* ignore */ });
     };
@@ -435,7 +435,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     // No-op short-circuit
     if (filesChanged === 0) {
       const durationMs = Date.now() - startedAt;
-      await db.cronRun.update({
+      await db.taskRun.update({
         where: { id: run.id },
         data: {
           status: 'no-op',
@@ -449,7 +449,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
           finishedAt: new Date(),
         },
       });
-      await db.cronJob.update({
+      await db.task.update({
         where: { id: job.id },
         data: { lastRunAt: new Date(), lastStatus: 'no-op' },
       });
@@ -503,7 +503,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     }
 
     const durationMs = Date.now() - startedAt;
-    await db.cronRun.update({
+    await db.taskRun.update({
       where: { id: run.id },
       data: {
         status: 'success',
@@ -518,7 +518,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
         finishedAt: new Date(),
       },
     });
-    await db.cronJob.update({
+    await db.task.update({
       where: { id: job.id },
       data: { lastRunAt: new Date(), lastStatus: job.dryRun ? 'dry-run' : 'success' },
     });
@@ -559,7 +559,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
     const wasAborted = !!(err as { aborted?: boolean })?.aborted;
     const msg = err instanceof Error ? err.message : String(err);
     const terminalStatus = wasAborted ? 'aborted' : 'failed';
-    await db.cronRun.update({
+    await db.taskRun.update({
       where: { id: run.id },
       data: {
         status: terminalStatus,
@@ -575,7 +575,7 @@ export async function runCronJob(cronJobId: string): Promise<void> {
         finishedAt: new Date(),
       },
     });
-    await db.cronJob.update({
+    await db.task.update({
       where: { id: job.id },
       data: { lastRunAt: new Date(), lastStatus: terminalStatus },
     });

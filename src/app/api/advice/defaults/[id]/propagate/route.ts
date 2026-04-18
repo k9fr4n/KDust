@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
  * POST /api/advice/defaults/:id/propagate
  *
  * Force-provision this template on every project that doesn't yet
- * have a cron for this category. Existing per-project crons are NOT
+ * have a cron for this category. Existing per-project tasks are NOT
  * modified (schedules/prompts may have been customised locally).
  *
  * Use case: admin just created / re-enabled a template and wants it

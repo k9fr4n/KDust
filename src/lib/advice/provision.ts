@@ -5,7 +5,7 @@ import { listEnabledAdviceDefaults, type AdviceDefault } from './defaults';
 import { buildAdvicePrompt } from './prompts';
 
 /**
- * Picks the default agent for advisory crons. Strategy:
+ * Picks the default agent for advisory tasks. Strategy:
  *   1. Agent named exactly "OPUS" (case-insensitive)
  *   2. Agent whose name contains "opus"
  *   3. First agent in the workspace
@@ -31,7 +31,7 @@ async function createCronFromDefault(
   agent: { sId: string; name: string },
   baseBranch: string,
 ): Promise<void> {
-  await db.cronJob.create({
+  await db.task.create({
     data: {
       name: `Advice: ${def.label} — ${projectName}`,
       kind: 'advice',
@@ -54,17 +54,17 @@ async function createCronFromDefault(
 }
 
 /**
- * Realign advisory crons whose `baseBranch` doesn't match the owning
+ * Realign advisory tasks whose `baseBranch` doesn't match the owning
  * project's default branch. Happens when:
- *   - the crons were provisioned before this fix (hardcoded 'main')
+ *   - the tasks were provisioned before this fix (hardcoded 'main')
  *   - the project was later renamed/re-pointed to a different branch
- * Returns the number of crons updated. Safe to call repeatedly.
+ * Returns the number of tasks updated. Safe to call repeatedly.
  */
 async function syncAdviceBaseBranch(
   projectName: string,
   projectBranch: string,
 ): Promise<number> {
-  const mismatched = await db.cronJob.updateMany({
+  const mismatched = await db.task.updateMany({
     where: {
       projectPath: projectName,
       kind: 'advice',
@@ -81,7 +81,7 @@ async function syncAdviceBaseBranch(
 }
 
 /**
- * Create the missing advisory crons for a single project. Reads the
+ * Create the missing advisory tasks for a single project. Reads the
  * enabled templates from AdviceCategoryDefault, then creates one cron
  * per (project, category) that isn't already provisioned. Idempotent.
  */
@@ -93,7 +93,7 @@ export async function provisionAdviceCrons(projectName: string): Promise<number>
     );
     return 0;
   }
-  // Need the project's default branch so new advice crons target the
+  // Need the project's default branch so new advice tasks target the
   // right ref (e.g. 'master' on GitLab-originated projects).
   const project = await db.project.findUnique({
     where: { name: projectName },
@@ -106,7 +106,7 @@ export async function provisionAdviceCrons(projectName: string): Promise<number>
   const realigned = await syncAdviceBaseBranch(projectName, projectBranch);
 
   const defaults = await listEnabledAdviceDefaults();
-  const existing = await db.cronJob.findMany({
+  const existing = await db.task.findMany({
     where: { projectPath: projectName, kind: 'advice' },
     select: { category: true },
   });
@@ -140,7 +140,7 @@ export async function propagateCategoryToAllProjects(categoryKey: string): Promi
   const projects = await db.project.findMany({ select: { name: true, branch: true } });
   let created = 0;
   for (const p of projects) {
-    const exists = await db.cronJob.findFirst({
+    const exists = await db.task.findFirst({
       where: { projectPath: p.name, kind: 'advice', category: categoryKey },
       select: { id: true },
     });
@@ -162,7 +162,7 @@ export async function propagateCategoryToAllProjects(categoryKey: string): Promi
  * the prompt and schedule. Kept separate from the template PATCH
  * endpoint so it's an opt-in, confirm-required action in the UI.
  *
- * Also rebuilds prompts of legacy advice crons (created under the
+ * Also rebuilds prompts of legacy advice tasks (created under the
  * previous string-key-based buildAdvicePrompt signature) so they pick
  * up the latest JSON contract wording.
  *
@@ -181,12 +181,12 @@ export async function overwriteCategoryEverywhere(categoryKey: string): Promise<
   let updated = 0;
   let created = 0;
   for (const p of projects) {
-    const existing = await db.cronJob.findFirst({
+    const existing = await db.task.findFirst({
       where: { projectPath: p.name, kind: 'advice', category: categoryKey },
       select: { id: true },
     });
     if (existing) {
-      await db.cronJob.update({
+      await db.task.update({
         where: { id: existing.id },
         data: {
           name: `Advice: ${def.label} — ${p.name}`,
@@ -214,19 +214,19 @@ export async function overwriteCategoryEverywhere(categoryKey: string): Promise<
 }
 
 /**
- * Delete all per-project crons that reference a given category. Used
+ * Delete all per-project tasks that reference a given category. Used
  * when the user deletes a non-builtin template (cascade semantics).
  * Also cleans up ProjectAdvice rows so stale points don't linger on
  * the dashboard.
  */
 export async function deleteCategoryEverywhere(categoryKey: string): Promise<{
-  crons: number;
+  tasks: number;
   advices: number;
 }> {
-  const [crons, advices] = await db.$transaction([
-    db.cronJob.deleteMany({ where: { kind: 'advice', category: categoryKey } }),
+  const [tasks, advices] = await db.$transaction([
+    db.task.deleteMany({ where: { kind: 'advice', category: categoryKey } }),
     db.projectAdvice.deleteMany({ where: { category: categoryKey } }),
   ]);
   await reloadScheduler();
-  return { crons: crons.count, advices: advices.count };
+  return { tasks: tasks.count, advices: advices.count };
 }

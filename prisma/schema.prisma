@@ -69,10 +69,17 @@ model Project {
   updatedAt      DateTime  @updatedAt
 }
 
-model CronJob {
+// "Task" is the v2 name for what used to be CronJob. Tasks are
+// manually triggered from the UI ("Run now") — KDust no longer runs a
+// scheduler. The underlying SQL table is kept as `CronJob` via
+// @@map so no migration / data loss is required when upgrading.
+// `schedule` and `timezone` columns are also kept for backwards
+// compatibility but are NEVER consulted at runtime.
+model Task {
   id             String    @id @default(cuid())
   name           String
-  schedule       String    // cron expression
+  // Legacy columns — kept in DB, ignored by the runner.
+  schedule       String    @default("manual")
   timezone       String    @default("Europe/Paris")
   agentSId       String
   agentName      String?
@@ -84,7 +91,7 @@ model CronJob {
   lastStatus     String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-  runs           CronRun[]
+  runs           TaskRun[]
 
   // --- automation push settings ---
   baseBranch         String   @default("main")            // sync & base new branches on this
@@ -94,7 +101,7 @@ model CronJob {
   maxDiffLines       Int      @default(2000)              // abort push if +/- lines exceed
   protectedBranches  String   @default("main,master,develop,production,prod") // csv, never push to these
 
-  // --- advisory cron settings ---
+  // --- advisory task settings ---
   // kind='automation' (default) = classic git-branch/commit/push pipeline.
   // kind='advice'               = read-only analysis, result parsed as JSON
   //                               and stored in ProjectAdvice; no git writes.
@@ -102,10 +109,11 @@ model CronJob {
   // Only meaningful for kind='advice'. One of:
   //   security | performance | code_quality | improvement | documentation
   category  String?
-  // Mandatory crons are auto-created with the project and cannot be
-  // deleted (the DELETE endpoint returns 403). User can still disable
-  // or tweak their schedule/prompt.
+  // Mandatory tasks are auto-created with the project and cannot be
+  // deleted (the DELETE endpoint returns 403).
   mandatory Boolean  @default(false)
+
+  @@map("CronJob")
 }
 
 // Catalog of advice categories. Each entry is a "template" that gets
@@ -143,23 +151,25 @@ model ProjectAdvice {
   // parser failure on the score field alone).
   score       Int?
   rawOutput   String?  // full agent text, for debugging / copy-paste
-  cronJobId   String?  // link back to the job that produced this
-  cronRunId   String?  // link back to the exact run (nullable: manual re-runs)
+  taskId      String?  @map("cronJobId")  // link back to the task that produced this
+  taskRunId   String?  @map("cronRunId")  // link back to the exact run (nullable: manual re-runs)
   generatedAt DateTime @default(now())
 
   @@unique([projectName, category])
   @@index([projectName])
 }
 
-model CronRun {
+// Renamed CronRun -> TaskRun in v2. Underlying SQL table kept as
+// `CronRun` via @@map; FK column kept as `cronJobId` via @map.
+model TaskRun {
   id         String    @id @default(cuid())
-  cronJobId  String
+  taskId     String    @map("cronJobId")
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
   status     String    // 'running' | 'success' | 'no-op' | 'skipped' | 'aborted' | 'failed'
   output     String?
   error      String?
-  cronJob    CronJob   @relation(fields: [cronJobId], references: [id], onDelete: Cascade)
+  task       Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   // --- push metadata ---
   branch        String?
@@ -174,5 +184,6 @@ model CronRun {
   phase         String?  // 'queued'|'syncing'|'branching'|'mcp'|'agent'|'diff'|'committing'|'pushing'|'done'
   phaseMessage  String?  // short human-readable status line
 
-  @@index([cronJobId])
+  @@index([taskId])
+  @@map("CronRun")
 }

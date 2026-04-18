@@ -24,7 +24,7 @@ export type CronFormValues = {
 type Agent = { sId: string; name: string; description?: string };
 type Project = { id: string; name: string; gitUrl: string; branch: string };
 
-export function CronForm({
+export function TaskForm({
   initial,
   cronId,
 }: {
@@ -38,7 +38,10 @@ export function CronForm({
   const [projects, setProjects] = useState<Project[]>([]);
   const [form, setForm] = useState<CronFormValues>({
     name: initial?.name ?? '',
-    schedule: initial?.schedule ?? '0 9 * * 1-5',
+    // Legacy columns \u2014 defaulted server-side, hidden in UI. Kept on
+    // the client form payload only to satisfy the shared type and the
+    // API's Zod parser (which still accepts them for back-compat).
+    schedule: initial?.schedule ?? 'manual',
     timezone: initial?.timezone ?? 'Europe/Paris',
     agentSId: initial?.agentSId ?? '',
     prompt: initial?.prompt ?? '',
@@ -77,7 +80,7 @@ export function CronForm({
     setErr(null);
     setLoading(true);
     const agentName = agents.find((a) => a.sId === form.agentSId)?.name;
-    const url = isEdit ? `/api/crons/${cronId}` : '/api/crons';
+    const url = isEdit ? `/api/tasks/${cronId}` : '/api/tasks';
     const method = isEdit ? 'PATCH' : 'POST';
     const res = await fetch(url, {
       method,
@@ -97,7 +100,7 @@ export function CronForm({
       }
       return;
     }
-    router.push(isEdit ? `/crons/${cronId}` : '/crons');
+    router.push(isEdit ? `/tasks/${cronId}` : '/tasks');
     router.refresh();
   };
 
@@ -109,31 +112,19 @@ export function CronForm({
     <form onSubmit={submit} className="max-w-2xl space-y-4">
       <h1 className="text-2xl font-bold">{isEdit ? 'Edit task' : 'New task'}</h1>
 
-      {/* Auto-scheduling has been removed from KDust v2. Tasks are
-          manual-trigger only ("Run now" button). The schedule / timezone
-          fields below are kept for backwards compatibility (existing
-          rows still carry a value) but are NEVER consulted at runtime. */}
-      <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-        ℹ️ Tasks no longer run on a schedule \u2014 trigger them manually
-        from the task page (<em>Run now</em>). The cron expression below
-        is informational only and is ignored by the runner.
+      {/* v2: tasks are manual-trigger only. schedule/timezone are
+          stored in DB with default values ('manual' / 'Europe/Paris')
+          purely for schema back-compat and are never shown or edited
+          in the UI. */}
+      <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-700 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
+        ℹ️ Tasks are manual-trigger only. Launch them from the task
+        page with <em>Run now</em>.
       </div>
 
       <label className="block">
         <span className="text-sm">Name</span>
         <input className={field} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
       </label>
-
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block">
-          <span className="text-sm">Cron expression <span className="text-slate-400">(unused)</span></span>
-          <input className={`${field} font-mono opacity-60`} value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value })} required />
-        </label>
-        <label className="block">
-          <span className="text-sm">Timezone <span className="text-slate-400">(unused)</span></span>
-          <input className={`${field} opacity-60`} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} required />
-        </label>
-      </div>
 
       <label className="block">
         <span className="text-sm">Agent</span>
@@ -229,7 +220,7 @@ export function CronForm({
         {isEdit && (
           <button
             type="button"
-            onClick={() => router.push(`/crons/${cronId}`)}
+            onClick={() => router.push(`/tasks/${cronId}`)}
             className="px-4 py-2 rounded border border-slate-300 dark:border-slate-700"
           >
             Cancel

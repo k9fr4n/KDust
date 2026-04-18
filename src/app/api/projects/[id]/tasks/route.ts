@@ -4,17 +4,17 @@ import { db } from '@/lib/db';
 export const runtime = 'nodejs';
 
 /**
- * GET /api/projects/:id/crons
+ * GET /api/projects/:id/tasks
  *
- * List every CronJob attached to a project. Used by the project
- * dashboard (/projects/:id) to let the user jump to /crons/:id for
+ * List every Task attached to a project. Used by the project
+ * dashboard (/projects/:id) to let the user jump to /tasks/:id for
  * schedule/prompt edits.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  const crons = await db.cronJob.findMany({
+  const tasks = await db.task.findMany({
     where: { projectPath: project.name },
     orderBy: [{ kind: 'asc' }, { name: 'asc' }],
     select: {
@@ -30,5 +30,5 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       lastStatus: true,
     },
   });
-  return NextResponse.json({ projectName: project.name, crons });
+  return NextResponse.json({ projectName: project.name, tasks });
 }

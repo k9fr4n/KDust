@@ -19,10 +19,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const [defaults, advices, crons] = await Promise.all([
+  const [defaults, advices, tasks] = await Promise.all([
     listEnabledAdviceDefaults(),
     db.projectAdvice.findMany({ where: { projectName: project.name } }),
-    db.cronJob.findMany({
+    db.task.findMany({
       where: { projectPath: project.name, kind: 'advice' },
       select: {
         id: true,
@@ -41,7 +41,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   // the template's label/emoji so the UI doesn't need to join client-side.
   const slots = defaults.map((def) => {
     const adv = advices.find((a) => a.category === def.key);
-    const cron = crons.find((c) => c.category === def.key);
+    const cron = tasks.find((c) => c.category === def.key);
     let points: unknown = null;
     if (adv) {
       try {
@@ -57,7 +57,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       points,
       score: adv?.score ?? null,
       generatedAt: adv?.generatedAt ?? null,
-      cron: cron
+      task: cron
         ? {
             id: cron.id,
             schedule: cron.schedule,

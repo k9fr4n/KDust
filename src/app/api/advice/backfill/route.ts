@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 /**
  * POST /api/advice/backfill
  *
- * One-shot endpoint to retro-fit the 5 mandatory advisory crons on
+ * One-shot endpoint to retro-fit the 5 mandatory advisory tasks on
  * projects that existed BEFORE this feature shipped. Idempotent: calls
  * provisionAdviceCrons() per project, which only creates the categories
  * still missing.

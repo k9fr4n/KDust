@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { isValidCronExpression } from '@/lib/cron/validator';
-import { reloadScheduler } from '@/lib/cron/scheduler';
 
 export const runtime = 'nodejs';
 
-const CronInput = z.object({
+/**
+ * Zod input for Task create. `schedule` and `timezone` are legacy
+ * columns kept in DB for back-compat but no longer exposed in the UI
+ * (tasks are manual-trigger only since v2). They default here to sane
+ * placeholders so clients that omit them still succeed.
+ */
+const TaskInput = z.object({
   name: z.string().min(1),
-  schedule: z.string().min(1),
+  schedule: z.string().default('manual'),
   timezone: z.string().default('Europe/Paris'),
   agentSId: z.string().min(1),
   agentName: z.string().optional().nullable(),
@@ -26,18 +30,14 @@ const CronInput = z.object({
 });
 
 export async function GET() {
-  const crons = await db.cronJob.findMany({ orderBy: { createdAt: 'desc' } });
-  return NextResponse.json({ crons });
+  const tasks = await db.task.findMany({ orderBy: { createdAt: 'desc' } });
+  return NextResponse.json({ tasks });
 }
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const parsed = CronInput.safeParse(body);
+  const parsed = TaskInput.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
-  if (!isValidCronExpression(parsed.data.schedule)) {
-    return NextResponse.json({ error: 'invalid cron expression' }, { status: 400 });
-  }
-  const cron = await db.cronJob.create({ data: parsed.data });
-  await reloadScheduler();
-  return NextResponse.json({ cron });
+  const task = await db.task.create({ data: parsed.data });
+  return NextResponse.json({ task });
 }

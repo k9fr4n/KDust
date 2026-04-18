@@ -10,7 +10,7 @@ export function RunNowButton({ cronId }: { cronId: string }) {
   const run = async () => {
     setState('running');
     try {
-      const r = await fetch(`/api/crons/${cronId}/run`, { method: 'POST' });
+      const r = await fetch(`/api/tasks/${cronId}/run`, { method: 'POST' });
       if (!r.ok) throw new Error(await r.text());
       setState('ok');
       setTimeout(() => {

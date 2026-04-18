@@ -22,7 +22,7 @@ const LEGACY_FRENCH_LABELS: Record<string, { from: string; to: string }> = {
  *
  * Also relabels the legacy French builtins (Sécurité → Security,
  * Amélioration → Improvement) when we detect the row is still on the
- * old default, and renames any existing CronJob whose display name
+ * old default, and renames any existing Task whose display name
  * still carries the old French "Conseils: …" prefix.
  */
 export async function ensureBuiltinsSeeded(): Promise<void> {
@@ -53,10 +53,10 @@ export async function ensureBuiltinsSeeded(): Promise<void> {
     });
   }
 
-  // --- rename legacy advice crons: "Conseils: X — proj" → "Advice: X — proj"
+  // --- rename legacy advice tasks: "Conseils: X — proj" → "Advice: X — proj"
   // SQLite doesn't expose REPLACE() via Prisma without $queryRaw, so we
   // fetch the affected rows (small set) and rewrite each name.
-  const legacyCrons = await db.cronJob.findMany({
+  const legacyCrons = await db.task.findMany({
     where: { kind: 'advice', name: { startsWith: 'Conseils: ' } },
     select: { id: true, name: true },
   });
@@ -67,7 +67,7 @@ export async function ensureBuiltinsSeeded(): Promise<void> {
     for (const t of Object.values(LEGACY_FRENCH_LABELS)) {
       next = next.replace(`Advice: ${t.from} —`, `Advice: ${t.to} —`);
     }
-    await db.cronJob.update({ where: { id: c.id }, data: { name: next } });
+    await db.task.update({ where: { id: c.id }, data: { name: next } });
   }
   if (legacyCrons.length > 0) {
     console.log(

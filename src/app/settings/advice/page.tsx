@@ -28,7 +28,7 @@ type Def = {
 
 /**
  * Admin page to manage advice category templates. Any edit here only
- * affects FUTURE project provisioning — existing per-project crons
+ * affects FUTURE project provisioning — existing per-project tasks
  * keep their values so user customisations aren't stomped. Use the
  * "Propager" button on a row to force-provision the template onto
  * projects that don't yet have it.
@@ -78,11 +78,11 @@ export default function AdviceSettingsPage() {
 
   const remove = async (d: Def) => {
     if (d.builtIn) return;
-    if (!confirm(`Delete category "${d.label}"?\n\nThis will also delete all associated crons and advice on ALL projects.`)) return;
+    if (!confirm(`Delete category "${d.label}"?\n\nThis will also delete all associated tasks and advice on ALL projects.`)) return;
     const r = await fetch(`/api/advice/defaults/${d.id}`, { method: 'DELETE' });
     if (r.ok) {
       const j = await r.json();
-      notify('ok', `Deleted: ${j.cascade.crons} cron(s) + ${j.cascade.advices} advice(s).`);
+      notify('ok', `Deleted: ${j.cascade.tasks} cron(s) + ${j.cascade.advices} advice(s).`);
       await load();
     } else {
       const j = await r.json().catch(() => ({}));
@@ -104,9 +104,9 @@ export default function AdviceSettingsPage() {
     if (
       !confirm(
         `GLOBAL OVERWRITE for "${d.label}"?\n\n` +
-          `This will rewrite the prompt, schedule and name of ALL crons ` +
+          `This will rewrite the prompt, schedule and name of ALL tasks ` +
           `in this category on ALL projects, losing any local ` +
-          `customisations. Missing crons will also be created.\n\n` +
+          `customisations. Missing tasks will also be created.\n\n` +
           `Useful to standardise or rebuild old prompts.`,
       )
     )
@@ -139,7 +139,7 @@ export default function AdviceSettingsPage() {
           <Lightbulb size={22} className="text-amber-500" /> Advice categories
         </h1>
         <p className="text-sm text-slate-500 mt-1">
-          Templates for the weekly analysis crons. Changes only affect{' '}
+          Templates for the weekly analysis tasks. Changes only affect{' '}
           <b>new</b> projects. Use <b>Propagate</b> to deploy a template to
           existing projects that don&apos;t have it yet.
         </p>
@@ -293,7 +293,7 @@ function DefCard({
         <button
           onClick={() => overwrite(d)}
           className="px-3 py-2 rounded border border-amber-400 dark:border-amber-700 text-sm text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 inline-flex items-center gap-1"
-          title="Overwrites the prompt/schedule of ALL project crons in this category (destructive)"
+          title="Overwrites the prompt/schedule of ALL project tasks in this category (destructive)"
         >
           <AlertTriangle size={14} /> Overwrite everywhere
         </button>

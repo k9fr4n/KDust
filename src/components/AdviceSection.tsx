@@ -23,7 +23,7 @@ import {
  * "Re-run" button triggers the matching cron on demand.
  *
  * The "Run all sequentially" batch button lives OUTSIDE this component
- * (on the Project crons section header) so the user can trigger a
+ * (on the Project tasks section header) so the user can trigger a
  * rerun without scrolling to Advice. Batch progress is fed back here
  * via the `batchStartedAt` prop: when set, this component auto-polls
  * /advice every 4s and highlights categories whose cron.lastRunAt is
@@ -67,10 +67,10 @@ export function AdviceSection({
   }, [batchStartedAt]);
 
   const rerun = async (slot: AdviceSlot) => {
-    if (!slot.cron) return;
+    if (!slot.task) return;
     setRunningCat(slot.category);
     try {
-      await fetch(`/api/crons/${slot.cron.id}/run`, { method: 'POST' });
+      await fetch(`/api/tasks/${slot.task.id}/run`, { method: 'POST' });
       setTimeout(() => void load(), 5000);
     } finally {
       setRunningCat(null);
@@ -102,11 +102,11 @@ export function AdviceSection({
         // "pending in batch" = batch is running AND this slot's cron
         // hasn't reported a fresh lastRunAt yet. Used to grey out the
         // card so the user sees progress visually.
-        const lastRunMs = slot.cron?.lastRunAt
-          ? new Date(slot.cron.lastRunAt).getTime()
+        const lastRunMs = slot.task?.lastRunAt
+          ? new Date(slot.task.lastRunAt).getTime()
           : 0;
         const pendingInBatch =
-          !!batchStartedAt && !!slot.cron && lastRunMs < batchStartedAt;
+          !!batchStartedAt && !!slot.task && lastRunMs < batchStartedAt;
         return (
           <div
             key={slot.category}
@@ -126,7 +126,7 @@ export function AdviceSection({
                 <ScoreBadge score={slot.score} />
                 <button
                   onClick={() => rerun(slot)}
-                  disabled={runningCat === slot.category || !slot.cron || pendingInBatch}
+                  disabled={runningCat === slot.category || !slot.task || pendingInBatch}
                   title="Re-run the cron now"
                   className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
                 >
@@ -145,17 +145,17 @@ export function AdviceSection({
               {slot.generatedAt
                 ? `Generated ${new Date(slot.generatedAt).toLocaleString()}`
                 : 'No analysis yet'}
-              {slot.cron?.lastStatus === 'failed' && (
+              {slot.task?.lastStatus === 'failed' && (
                 <span className="text-red-500 inline-flex items-center gap-1">
                   <AlertTriangle size={10} /> last run failed
                 </span>
               )}
-              {slot.cron?.lastStatus === 'success' && !pendingInBatch && (
+              {slot.task?.lastStatus === 'success' && !pendingInBatch && (
                 <span className="text-green-600 inline-flex items-center gap-1">
                   <CheckCircle2 size={10} /> OK
                 </span>
               )}
-              {!slot.cron && (
+              {!slot.task && (
                 <span className="text-orange-500">cron not provisioned</span>
               )}
             </div>

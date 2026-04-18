@@ -25,7 +25,7 @@ type Project = {
   lastSyncStatus: string | null;
 };
 
-type Cron = {
+type Task = {
   id: string;
   name: string;
   schedule: string;
@@ -43,7 +43,7 @@ type Cron = {
  *   - project metadata
  *   - weekly "Advice" panel (advice slots, one per enabled template)
  *   - list of every cron attached to the project, with direct link
- *     to /crons/:id for prompt/schedule editing
+ *     to /tasks/:id for prompt/schedule editing
  */
 export default function ProjectDashboardPage({
   params,
@@ -52,7 +52,7 @@ export default function ProjectDashboardPage({
 }) {
   const { id } = use(params);
   const [project, setProject] = useState<Project | null>(null);
-  const [crons, setCrons] = useState<Cron[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   // State shared with AdviceSection: epoch-ms when "Run all" kicked
   // off. The AdviceSection uses it to highlight pending categories +
@@ -67,18 +67,18 @@ export default function ProjectDashboardPage({
     setLoading(true);
     const [pRes, cRes] = await Promise.all([
       fetch(`/api/projects`).then((r) => r.json()),
-      fetch(`/api/projects/${id}/crons`).then((r) => r.json()),
+      fetch(`/api/projects/${id}/tasks`).then((r) => r.json()),
     ]);
     setProject((pRes.projects ?? []).find((p: Project) => p.id === id) ?? null);
-    setCrons(cRes.crons ?? []);
+    setTasks(cRes.tasks ?? []);
     setLoading(false);
   };
   useEffect(() => {
     void loadAll();
   }, [id]);
 
-  const toggleEnabled = async (c: Cron) => {
-    await fetch(`/api/crons/${c.id}`, {
+  const toggleEnabled = async (c: Task) => {
+    await fetch(`/api/tasks/${c.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: !c.enabled }),
@@ -115,11 +115,11 @@ export default function ProjectDashboardPage({
     // advice cron has a lastRunAt newer than startedAt, we can drop
     // the batch state.
     const iv = setInterval(async () => {
-      const cronsRes = await fetch(`/api/projects/${id}/crons`).then((rr) =>
+      const tasksRes = await fetch(`/api/projects/${id}/tasks`).then((rr) =>
         rr.json(),
       );
-      const list: Cron[] = cronsRes.crons ?? [];
-      setCrons(list);
+      const list: Task[] = tasksRes.tasks ?? [];
+      setTasks(list);
       const advCrons = list.filter((c) => c.kind === 'advice' && c.enabled);
       const allDone =
         advCrons.length > 0 &&
@@ -145,8 +145,8 @@ export default function ProjectDashboardPage({
       </div>
     );
 
-  const adviceCrons = crons.filter((c) => c.kind === 'advice');
-  const otherCrons = crons.filter((c) => c.kind !== 'advice');
+  const adviceTasks = tasks.filter((c) => c.kind === 'advice');
+  const otherTasks = tasks.filter((c) => c.kind !== 'advice');
 
   return (
     <div className="space-y-6">
@@ -180,16 +180,16 @@ export default function ProjectDashboardPage({
         <AdviceSection projectId={id} batchStartedAt={adviceBatchStartedAt} />
       </section>
 
-      {/* ====== Project crons ====== */}
+      {/* ====== Project tasks ====== */}
       <section>
         <h2 className="text-lg font-semibold flex items-center gap-2 mb-3 flex-wrap">
           <Clock size={18} />
           Project tasks
           <span className="text-xs font-normal text-slate-500">
-            — {crons.length} active
+            — {tasks.length} active
           </span>
           {/* "Run all advice sequentially" button. Placed here so users
-              can trigger a full batch from the crons control centre,
+              can trigger a full batch from the tasks control centre,
               not buried inside the Advice panel. The batch state is
               lifted to this component and piped into AdviceSection so
               both surfaces stay in sync. */}
@@ -202,7 +202,7 @@ export default function ProjectDashboardPage({
             )}
             <button
               onClick={runAllAdvice}
-              disabled={!!adviceBatchStartedAt || adviceCrons.length === 0}
+              disabled={!!adviceBatchStartedAt || adviceTasks.length === 0}
               title="Run every enabled advice cron of this project, one after the other"
               className="text-xs px-2 py-1 rounded border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
             >
@@ -218,16 +218,16 @@ export default function ProjectDashboardPage({
           </div>
         </h2>
 
-        <CronTable
+        <TaskTable
           title="Advice (mandatory)"
-          rows={adviceCrons}
+          rows={adviceTasks}
           onToggle={toggleEnabled}
         />
-        {otherCrons.length > 0 && (
+        {otherTasks.length > 0 && (
           <div className="mt-4">
-            <CronTable
-              title="Other crons"
-              rows={otherCrons}
+            <TaskTable
+              title="Other tasks"
+              rows={otherTasks}
               onToggle={toggleEnabled}
             />
           </div>
@@ -237,14 +237,14 @@ export default function ProjectDashboardPage({
   );
 }
 
-function CronTable({
+function TaskTable({
   title,
   rows,
   onToggle,
 }: {
   title: string;
-  rows: Cron[];
-  onToggle: (c: Cron) => void;
+  rows: Task[];
+  onToggle: (c: Task) => void;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -257,7 +257,7 @@ function CronTable({
           <tr>
             <th className="py-1">Name</th>
             <th>Cat.</th>
-            <th>Schedule</th>
+
             <th>TZ</th>
             <th>Last run</th>
             <th>Status</th>
@@ -271,7 +271,7 @@ function CronTable({
               className="border-t border-slate-200 dark:border-slate-800 align-middle"
             >
               <td className="py-2">
-                <Link href={`/crons/${c.id}`} className="hover:underline">
+                <Link href={`/tasks/${c.id}`} className="hover:underline">
                   {c.name}
                 </Link>
                 {c.mandatory && (
@@ -284,7 +284,7 @@ function CronTable({
                 )}
               </td>
               <td className="text-xs text-slate-500">{c.category ?? '—'}</td>
-              <td className="text-xs font-mono">{c.schedule}</td>
+
               <td className="text-xs text-slate-500">{c.timezone}</td>
               <td className="text-xs">
                 {c.lastRunAt ? new Date(c.lastRunAt).toLocaleString() : '—'}
@@ -317,7 +317,7 @@ function CronTable({
                     )}
                   </button>
                   <Link
-                    href={`/crons/${c.id}`}
+                    href={`/tasks/${c.id}`}
                     className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1"
                   >
                     <Settings2 size={10} /> Edit

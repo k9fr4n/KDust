@@ -172,7 +172,7 @@ export default function AdvicePage() {
           <p className="text-sm text-slate-500">
             No advice has been generated yet. Go to a project dashboard
             and click <b>Run all advice sequentially</b> under{' '}
-            <b>Project crons</b>.
+            <b>Project tasks</b>.
           </p>
         </div>
       ) : (

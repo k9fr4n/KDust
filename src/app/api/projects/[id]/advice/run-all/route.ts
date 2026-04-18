@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { runCronJob } from '@/lib/cron/runner';
+import { runTask } from '@/lib/cron/runner';
 
 export const runtime = 'nodejs';
 
@@ -10,13 +10,13 @@ export const runtime = 'nodejs';
  * Kick off every enabled advice cron of the project, ONE AT A TIME,
  * in sort order (by category key for stable ordering). The sequential
  * loop runs in the background (fire-and-forget) and is protected by
- * `runCronJob`'s built-in per-projectPath concurrency lock, so:
+ * `runTask`'s built-in per-projectPath concurrency lock, so:
  *   - each job finishes (success/failed/skipped) before the next
  *     starts (we `await` in a for-loop);
  *   - if the user also clicks the per-slot "Re-run" button, that one
  *     will just land as "skipped" while the batch is in flight.
  *
- * The endpoint returns immediately with the list of crons that were
+ * The endpoint returns immediately with the list of tasks that were
  * scheduled so the UI can track progress by polling `/advice`.
  */
 export async function POST(
@@ -29,7 +29,7 @@ export async function POST(
     return NextResponse.json({ error: 'project_not_found' }, { status: 404 });
   }
 
-  const crons = await db.cronJob.findMany({
+  const tasks = await db.task.findMany({
     where: {
       projectPath: project.name,
       kind: 'advice',
@@ -41,8 +41,8 @@ export async function POST(
     orderBy: [{ category: 'asc' }, { createdAt: 'asc' }],
   });
 
-  if (crons.length === 0) {
-    return NextResponse.json({ ok: true, count: 0, crons: [] });
+  if (tasks.length === 0) {
+    return NextResponse.json({ ok: true, count: 0, tasks: [] });
   }
 
   // Sequential async loop in the background. We intentionally do NOT
@@ -52,12 +52,12 @@ export async function POST(
   void (async () => {
     const startedAt = new Date().toISOString();
     console.log(
-      `[advice/run-all] project="${project.name}" starting batch of ${crons.length} cron(s) at ${startedAt}`,
+      `[advice/run-all] project="${project.name}" starting batch of ${tasks.length} cron(s) at ${startedAt}`,
     );
-    for (const c of crons) {
+    for (const c of tasks) {
       try {
         console.log(`[advice/run-all] -> ${c.name} (${c.id})`);
-        await runCronJob(c.id);
+        await runTask(c.id);
       } catch (err) {
         console.warn(
           `[advice/run-all] cron ${c.id} ("${c.name}") threw:`,
@@ -66,13 +66,13 @@ export async function POST(
       }
     }
     console.log(
-      `[advice/run-all] project="${project.name}" batch done (${crons.length} cron(s), started at ${startedAt})`,
+      `[advice/run-all] project="${project.name}" batch done (${tasks.length} cron(s), started at ${startedAt})`,
     );
   })();
 
   return NextResponse.json({
     ok: true,
-    count: crons.length,
-    crons: crons.map((c) => ({ id: c.id, name: c.name, category: c.category })),
+    count: tasks.length,
+    tasks: tasks.map((c) => ({ id: c.id, name: c.name, category: c.category })),
   });
 }

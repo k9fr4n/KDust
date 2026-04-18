@@ -82,7 +82,7 @@ export default function ProjectsPage() {
   const remove = async (id: string, name: string) => {
     // Two-step confirmation: first the destructive cascade (always runs),
     // then the optional on-disk purge. Both prompts spell out exactly what
-    // gets deleted so the user isn't surprised by gone conversations/crons.
+    // gets deleted so the user isn't surprised by gone conversations/tasks.
     if (
       !confirm(
         `Delete project "${name}"?\n\n` +
@@ -109,7 +109,7 @@ export default function ProjectsPage() {
         kind: 'ok',
         text:
           `Deleted "${name}": ${d.conversations ?? 0} conversation(s), ` +
-          `${d.crons ?? 0} cron(s), ${d.advices ?? 0} advice row(s)` +
+          `${d.tasks ?? 0} cron(s), ${d.advices ?? 0} advice row(s)` +
           (d.filesDeleted ? ', files removed from disk.' : ', files kept on disk.'),
       });
       await refresh();

@@ -3,17 +3,17 @@ import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
-export function CronDeleteButton({ id, name }: { id: string; name: string }) {
+export function TaskDeleteButton({ id, name }: { id: string; name: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
   const onClick = async () => {
     if (!confirm(`Delete cron "${name}" ?`)) return;
     setBusy(true);
-    const r = await fetch(`/api/crons/${id}`, { method: 'DELETE' });
+    const r = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
     setBusy(false);
     if (r.ok) {
-      router.push('/crons');
+      router.push('/tasks');
       router.refresh();
     } else {
       alert(`HTTP ${r.status}`);

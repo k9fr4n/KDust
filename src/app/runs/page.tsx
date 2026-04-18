@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
-import { Clock } from 'lucide-react';
+import { Clock, MessageCircle } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,6 +51,26 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     take: limit,
     include: { task: { select: { id: true, name: true, projectPath: true } } },
   });
+
+  // Resolve TaskRun.dustConversationSId → local Conversation.id in a
+  // single query. Stored as a soft reference (no FK) so we do the
+  // lookup here and build a {sId → localId} map for O(1) access in the
+  // render loop. Runs without a conversation (early failures before
+  // the Dust call, or legacy pre-v3 rows) are simply absent from the
+  // map and render no Chat link.
+  const convSIds = Array.from(
+    new Set(runs.map((r) => r.dustConversationSId).filter((s): s is string => !!s)),
+  );
+  const convs = convSIds.length
+    ? await db.conversation.findMany({
+        where: { dustConversationSId: { in: convSIds } },
+        select: { id: true, dustConversationSId: true },
+      })
+    : [];
+  const convIdBySId = new Map<string, string>();
+  for (const c of convs) {
+    if (c.dustConversationSId) convIdBySId.set(c.dustConversationSId, c.id);
+  }
 
   const statuses = ['all', 'running', 'success', 'failed', 'aborted', 'no-op', 'skipped'];
 
@@ -190,6 +210,41 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       : '-'}
                   </td>
                   <td className="text-xs font-mono truncate max-w-[240px]">{r.branch ?? '-'}</td>
+                  <td className="text-center">
+                    {(() => {
+                      // Priority: local Conversation row (opens in-app
+                      // /conversations/:id view). Falls back to the raw
+                      // Dust chat URL when the conversation wasn't
+                      // persisted locally (network hiccup during the
+                      // post-stream db.conversation.create). Nothing
+                      // shown when the run never reached Dust.
+                      const localId = r.dustConversationSId
+                        ? convIdBySId.get(r.dustConversationSId)
+                        : undefined;
+                      if (localId) {
+                        return (
+                          <Link
+                            href={`/conversations/${localId}`}
+                            title="Open the persisted conversation"
+                            className="inline-flex items-center gap-1 text-xs text-brand-600 hover:underline"
+                          >
+                            <MessageCircle size={11} /> open
+                          </Link>
+                        );
+                      }
+                      if (r.dustConversationSId) {
+                        return (
+                          <span
+                            title={`Dust sId ${r.dustConversationSId} — not persisted locally`}
+                            className="inline-flex items-center gap-1 text-xs text-slate-400"
+                          >
+                            <MessageCircle size={11} /> orphan
+                          </span>
+                        );
+                      }
+                      return <span className="text-slate-300">—</span>;
+                    })()}
+                  </td>
                   <td className="text-right">
                     {r.task && (
                       <Link

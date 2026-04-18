@@ -184,6 +184,15 @@ model TaskRun {
   phase         String?  // 'queued'|'syncing'|'branching'|'mcp'|'agent'|'diff'|'committing'|'pushing'|'done'
   phaseMessage  String?  // short human-readable status line
 
+  // Dust conversation sId produced by this run, if any. Stored as a
+  // soft reference (no FK) because the conversation lives in the
+  // Conversation table (keyed by dustConversationSId @unique). UI
+  // resolves it at display time to build a link to /conversations/:id.
+  // Kept nullable: early-failing runs (sync/branching phase) never
+  // reach the Dust call and legitimately have no conversation.
+  dustConversationSId String?
+
   @@index([taskId])
+  @@index([dustConversationSId])
   @@map("CronRun")
 }

@@ -51,16 +51,17 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-green-50/40 dark:bg-green-950/10">
+      <div className="border border-slate-200 dark:border-slate-800 rounded-md p-3 bg-brand-50/40 dark:bg-brand-950/10">
         <a
-          href="/settings/billing"
-          className="text-sm font-semibold text-green-700 dark:text-green-300 hover:underline"
+          href="/settings/usage"
+          className="text-sm font-semibold text-brand-700 dark:text-brand-300 hover:underline"
         >
-          💳 Billing sanity check →
+          📊 Usage dashboard →
         </a>
         <p className="text-xs text-slate-500 mt-0.5">
-          Verify that KDust messages stay in the non-programmatic
-          (human usage) bucket and are not billed as API credits.
+          Full stats on your Dust activity through KDust: messages,
+          conversations, task runs, top agents / projects / tasks, 30-day
+          activity timelines.
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Lightbulb } from 'lucide-react';
+import { Lightbulb, RefreshCw, PlayCircle } from 'lucide-react';
 import {
   AuditBrowser,
   AuditBrowserItem,

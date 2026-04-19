@@ -105,6 +105,9 @@ function ChatPageInner() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState('');
   const [agentSId, setAgentSId] = useState('');
+  // Tracks priority of the current agent selection. See the lookup
+  // in the /api/projects/current effect for the override rules.
+  const [agentPickedBy, setAgentPickedBy] = useState<'none' | 'auto' | 'user' | 'conv'>('none');
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [cotText, setCotText] = useState('');
@@ -158,6 +161,9 @@ function ChatPageInner() {
     const c = j.conversation;
     setMessages(c?.messages ?? []);
     setAgentSId(c?.agentSId ?? '');
+    // An open conversation \"owns\" the agent choice \u2014 beats project
+    // default and beats list[0] fallback.
+    if (c?.agentSId) setAgentPickedBy('conv');
     // Reflect server-side stream status so users who navigated away
     // mid-answer can still see that the reply is being produced.
     setServerStreaming(!!j.streaming);
@@ -211,11 +217,13 @@ function ChatPageInner() {
       .then((j) => {
         const list = j.agents ?? [];
         setAgents(list);
-        // Use the functional setter form: only fall back to the first agent
-        // if loadConv hasn't already set one. The closure captures the initial
-        // empty agentSId from mount, so a plain `!agentSId` check would race
-        // with loadConv and silently overwrite the conv's actual agent.
-        if (list.length) setAgentSId((prev) => prev || list[0].sId);
+        // Auto-fallback to list[0]. Only applied when nothing stronger
+        // has claimed the selection yet. Project default (resolved
+        // later in /api/projects/current) will overwrite this.
+        if (list.length) {
+          setAgentSId((prev) => prev || list[0].sId);
+          setAgentPickedBy((p) => (p === 'none' ? 'auto' : p));
+        }
       })
       .catch(() => setError('Cannot list agents — are you connected to Dust?'));
     void refreshConvs();
@@ -258,6 +266,20 @@ function ChatPageInner() {
       .then(async (j) => {
         const name = j?.name ?? null;
         setCurrentProject(name);
+        // Project-level default agent (Franck 2026-04-19 19:13).
+        // Overrides the generic list[0] auto-fallback but yields to
+        // any stronger claim ('user' manual pick, 'conv' from an
+        // open conversation). Skipped entirely when the URL points
+        // at a specific conversation.
+        const defAgent = j?.project?.defaultAgentSId as string | null | undefined;
+        const requested = searchParams.get('id');
+        if (defAgent && !requested) {
+          setAgentPickedBy((p) => {
+            if (p === 'user' || p === 'conv') return p;
+            setAgentSId(defAgent);
+            return 'auto';
+          });
+        }
         if (name) {
           setMcpStatus('starting');
           try {
@@ -680,7 +702,10 @@ function ChatPageInner() {
           <select
             className={field + ' max-w-xs'}
             value={agentSId}
-            onChange={(e) => setAgentSId(e.target.value)}
+            onChange={(e) => {
+              setAgentSId(e.target.value);
+              setAgentPickedBy('user');
+            }}
             disabled={!!currentId}
           >
             {agents.map((a) => (

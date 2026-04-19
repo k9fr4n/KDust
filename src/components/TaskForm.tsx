@@ -38,7 +38,13 @@ export type CronFormValues = {
 };
 
 type Agent = { sId: string; name: string; description?: string };
-type Project = { id: string; name: string; gitUrl: string; branch: string };
+type Project = {
+  id: string;
+  name: string;
+  gitUrl: string | null;
+  branch: string;
+  defaultAgentSId: string | null;
+};
 
 export function TaskForm({
   initial,

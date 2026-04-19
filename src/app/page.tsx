@@ -106,7 +106,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             Last sync:{' '}
             {current.lastSyncAt ? (
               <>
-                {new Date(current.lastSyncAt).toLocaleString()} ·{' '}
+                {new Date(current.lastSyncAt).toLocaleString('fr-FR')} ·{' '}
                 <span
                   className={
                     current.lastSyncStatus === 'success' ? 'text-green-600' : 'text-red-500'

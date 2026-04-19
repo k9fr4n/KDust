@@ -451,7 +451,7 @@ export default function ProjectsPage() {
                         <GitBranch size={11} /> {p.branch}
                       </span>
                       {p.lastSyncAt && (
-                        <span className="text-slate-400" title={new Date(p.lastSyncAt).toLocaleString()}>
+                        <span className="text-slate-400" title={new Date(p.lastSyncAt).toLocaleString('fr-FR')}>
                           · synced {relativeTime(p.lastSyncAt)}
                         </span>
                       )}

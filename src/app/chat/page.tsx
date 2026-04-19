@@ -53,7 +53,7 @@ function relTime(iso?: string | null): string {
   if (d < 7) return `${d}d`;
   const dt = new Date(iso);
   const sameYear = dt.getFullYear() === new Date().getFullYear();
-  return dt.toLocaleDateString(undefined, {
+  return dt.toLocaleDateString('fr-FR', {
     day: 'numeric',
     month: 'short',
     ...(sameYear ? {} : { year: 'numeric' }),
@@ -63,7 +63,7 @@ function relTime(iso?: string | null): string {
 /** Short HH:MM for message bubbles. */
 function clockTime(iso?: string | null): string {
   if (!iso) return '';
-  return new Date(iso).toLocaleTimeString([], {
+  return new Date(iso).toLocaleTimeString('fr-FR', {
     hour: '2-digit',
     minute: '2-digit',
   });
@@ -72,7 +72,7 @@ function clockTime(iso?: string | null): string {
 /** Full human label for tooltips. */
 function fullTime(iso?: string | null): string {
   if (!iso) return '';
-  return new Date(iso).toLocaleString();
+  return new Date(iso).toLocaleString('fr-FR');
 }
 
 /** Elapsed seconds → "1m 23s" / "45s" / "2h 03m". */
@@ -783,7 +783,7 @@ function ChatPageInner() {
                 {showDay && (
                   <div className="flex justify-center my-1">
                     <span className="text-[10px] uppercase tracking-wider text-slate-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
-                      {new Date(m.createdAt!).toLocaleDateString(undefined, {
+                      {new Date(m.createdAt!).toLocaleDateString('fr-FR', {
                         weekday: 'short',
                         day: 'numeric',
                         month: 'short',
@@ -952,7 +952,7 @@ function ChatPageInner() {
                     {serverStreamingSince && (
                       <span title={fullTime(serverStreamingSince)}>
                         · started{' '}
-                        {new Date(serverStreamingSince).toLocaleTimeString()}{' '}
+                        {new Date(serverStreamingSince).toLocaleTimeString('fr-FR')}{' '}
                         ({elapsed(serverStreamingSince, nowTick)})
                       </span>
                     )}

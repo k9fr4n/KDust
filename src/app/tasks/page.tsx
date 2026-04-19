@@ -370,9 +370,9 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   </td>
                   <td className="text-xs text-slate-500 whitespace-nowrap">
                     {last?.finishedAt
-                      ? new Date(last.finishedAt).toLocaleString()
+                      ? new Date(last.finishedAt).toLocaleString('fr-FR')
                       : last?.startedAt
-                      ? new Date(last.startedAt).toLocaleString()
+                      ? new Date(last.startedAt).toLocaleString('fr-FR')
                       : '—'}
                   </td>
                   <td className="text-xs whitespace-nowrap">
@@ -382,7 +382,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       </span>
                     ) : next ? (
                       <span className="text-slate-500" title={next.toISOString()}>
-                        {next.toLocaleString()}
+                        {next.toLocaleString('fr-FR')}
                       </span>
                     ) : (
                       <span className="text-slate-400" title="cron expression did not parse">

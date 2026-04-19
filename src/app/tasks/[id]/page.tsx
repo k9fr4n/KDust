@@ -37,9 +37,9 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
           <Link
             href={`/runs?task=${cron.id}`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-            title={`${runCount.toLocaleString()} past run${runCount === 1 ? '' : 's'}`}
+            title={`${runCount.toLocaleString('fr-FR')} past run${runCount === 1 ? '' : 's'}`}
           >
-            <History size={14} /> History ({runCount.toLocaleString()})
+            <History size={14} /> History ({runCount.toLocaleString('fr-FR')})
           </Link>
           <Link
             href={`/tasks/${cron.id}/edit`}
@@ -111,7 +111,7 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
               <div><span className="text-slate-500">Base branch:</span> <span className="font-mono">{cron.baseBranch}</span></div>
               <div><span className="text-slate-500">Branch mode:</span> <span className="font-mono">{cron.branchMode}</span></div>
               <div><span className="text-slate-500">Branch prefix:</span> <span className="font-mono">{cron.branchPrefix}</span></div>
-              <div><span className="text-slate-500">Max diff lines:</span> <span className="font-mono">{cron.maxDiffLines.toLocaleString()}</span></div>
+              <div><span className="text-slate-500">Max diff lines:</span> <span className="font-mono">{cron.maxDiffLines.toLocaleString('fr-FR')}</span></div>
               <div className="col-span-full">
                 <span className="text-slate-500">Protected branches:</span>{' '}
                 <span className="font-mono text-xs break-all">{cron.protectedBranches}</span>
@@ -138,16 +138,16 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         <div className="col-span-full pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           <div>
             <span className="text-slate-500">Created:</span>{' '}
-            <span className="font-mono">{cron.createdAt.toLocaleString()}</span>
+            <span className="font-mono">{cron.createdAt.toLocaleString('fr-FR')}</span>
           </div>
           <div>
             <span className="text-slate-500">Updated:</span>{' '}
-            <span className="font-mono">{cron.updatedAt.toLocaleString()}</span>
+            <span className="font-mono">{cron.updatedAt.toLocaleString('fr-FR')}</span>
           </div>
           <div>
             <span className="text-slate-500">Last run:</span>{' '}
             <span className="font-mono">
-              {cron.lastRunAt ? cron.lastRunAt.toLocaleString() : '\u2014 never'}
+              {cron.lastRunAt ? cron.lastRunAt.toLocaleString('fr-FR') : '\u2014 never'}
             </span>
           </div>
         </div>

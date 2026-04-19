@@ -161,7 +161,7 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
       {/* Live agent output */}
       <details className="mt-3" open>
         <summary className="cursor-pointer text-xs font-semibold text-blue-700 dark:text-blue-300 hover:text-blue-900">
-          Live output {run.output ? `(${run.output.length.toLocaleString()} chars)` : '(waiting…)'}
+          Live output {run.output ? `(${run.output.length.toLocaleString('fr-FR')} chars)` : '(waiting…)'}
         </summary>
         <pre
           ref={outputRef}

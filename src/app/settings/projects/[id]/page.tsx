@@ -166,11 +166,11 @@ export default function ProjectSettingsPage({
           </div>
           <div>
             <label className="text-slate-500 text-xs">Created</label>
-            <div className="font-mono text-xs mt-1">{new Date(p.createdAt).toLocaleString()}</div>
+            <div className="font-mono text-xs mt-1">{new Date(p.createdAt).toLocaleString('fr-FR')}</div>
           </div>
           <div>
             <label className="text-slate-500 text-xs">Updated</label>
-            <div className="font-mono text-xs mt-1">{new Date(p.updatedAt).toLocaleString()}</div>
+            <div className="font-mono text-xs mt-1">{new Date(p.updatedAt).toLocaleString('fr-FR')}</div>
           </div>
         </div>
         {/* Description (editable). Free-form, 500-char cap enforced
@@ -231,7 +231,7 @@ export default function ProjectSettingsPage({
           {/* Inline last-sync summary — single line, readable at a glance. */}
           <div className="text-[11px] text-slate-500 flex items-center gap-2">
             <span className="uppercase tracking-wide">Last sync:</span>
-            <span>{p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : 'never'}</span>
+            <span>{p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString('fr-FR') : 'never'}</span>
             {p.lastSyncStatus === 'success' && <span className="text-green-600 dark:text-green-400">● success</span>}
             {p.lastSyncStatus === 'failed'  && <span className="text-red-500">● failed</span>}
           </div>

@@ -61,7 +61,7 @@ function Stat({
     value === null || value === undefined || value === ''
       ? '—'
       : typeof value === 'number'
-      ? value.toLocaleString()
+      ? value.toLocaleString('fr-FR')
       : value;
   return (
     <div className="rounded-md border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-950">
@@ -166,11 +166,11 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           <p className="text-sm text-slate-500">
             {run.task ? run.task.name : '(task deleted)'}
             {' · '}
-            started {new Date(run.startedAt).toLocaleString()}
+            started {new Date(run.startedAt).toLocaleString('fr-FR')}
             {run.finishedAt && (
               <>
                 {' · '}
-                finished {new Date(run.finishedAt).toLocaleString()}
+                finished {new Date(run.finishedAt).toLocaleString('fr-FR')}
               </>
             )}
           </p>
@@ -253,7 +253,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <Stat label="Files changed" value={run.filesChanged} />
             <Stat label="Lines +" value={run.linesAdded} hint="inserted" />
             <Stat label="Lines −" value={run.linesRemoved} hint="deleted" />
-            <Stat label="Output size" value={run.output ? `${run.output.length.toLocaleString()} ch` : null} mono />
+            <Stat label="Output size" value={run.output ? `${run.output.length.toLocaleString('fr-FR')} ch` : null} mono />
             <Stat label="Phase reached" value={run.phase} mono />
             <Stat label="Base branch" value={run.baseBranch ?? run.task?.baseBranch ?? null} mono />
             <Stat label="Task kind" value={run.task?.kind ?? null} mono />
@@ -305,7 +305,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <section className="mb-6">
               <details>
                 <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600">
-                  Prompt ({run.task.prompt.length.toLocaleString()} chars)
+                  Prompt ({run.task.prompt.length.toLocaleString('fr-FR')} chars)
                 </summary>
                 <pre className="mt-2 whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-xs max-h-80 overflow-auto">
                   {run.task.prompt}
@@ -318,7 +318,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {run.output && (
             <section className="mb-6">
               <h2 className="font-semibold mb-2 text-sm">
-                Agent output ({run.output.length.toLocaleString()} chars)
+                Agent output ({run.output.length.toLocaleString('fr-FR')} chars)
               </h2>
               <pre className="whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-xs max-h-[600px] overflow-auto">
                 {run.output}
@@ -371,7 +371,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                     {streamEventsSorted.map(([name, count]) => (
                       <tr key={name} className="border-t border-slate-200 dark:border-slate-800">
                         <td className="px-3 py-1.5 font-mono text-xs">{name}</td>
-                        <td className="px-3 py-1.5 text-right font-mono">{count.toLocaleString()}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{count.toLocaleString('fr-FR')}</td>
                       </tr>
                     ))}
                   </tbody>

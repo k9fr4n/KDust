@@ -127,7 +127,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
                   {c.pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
                   <span className="font-medium truncate flex-1">{c.title}</span>
                   <span className="text-xs text-slate-400 shrink-0">
-                    {new Date(c.updatedAt).toLocaleString()}
+                    {new Date(c.updatedAt).toLocaleString('fr-FR')}
                   </span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">

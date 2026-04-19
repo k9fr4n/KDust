@@ -560,7 +560,7 @@ export default async function UsagePage({
           icon={<Hash size={14} />}
           label="Est. tokens"
           value={tokensTotalAll}
-          sub={`~${tokensRecentAll.toLocaleString()} in ${rangeLabel}`}
+          sub={`~${tokensRecentAll.toLocaleString('fr-FR')} in ${rangeLabel}`}
           title={`Rough estimate from message content length (${CHARS_PER_TOKEN} chars ≈ 1 token). Not a billed figure.`}
         />
         <KPI
@@ -612,7 +612,7 @@ export default async function UsagePage({
                     />
                   </span>
                   <span className="w-28 text-right text-xs font-mono">
-                    {t.toLocaleString()} ({pct}%)
+                    {t.toLocaleString('fr-FR')} ({pct}%)
                   </span>
                 </li>
               );
@@ -685,7 +685,7 @@ export default async function UsagePage({
         <h2 className="text-lg font-semibold flex items-center gap-2 mb-2">
           <Zap size={16} className="text-amber-500" /> Dust API calls &amp; tools
           <span className="text-[10px] font-normal text-slate-400">
-            ({nAgentMsgsWithStats.toLocaleString()} / {nAgentMsgs.toLocaleString()} agent messages instrumented)
+            ({nAgentMsgsWithStats.toLocaleString('fr-FR')} / {nAgentMsgs.toLocaleString('fr-FR')} agent messages instrumented)
           </span>
         </h2>
         {nAgentMsgsWithStats === 0 ? (
@@ -701,7 +701,7 @@ export default async function UsagePage({
                 icon={<Wrench size={14} />}
                 label="Total tool calls"
                 value={totalToolCalls}
-                sub={`${recentToolCalls.toLocaleString()} in ${rangeLabel}`}
+                sub={`${recentToolCalls.toLocaleString('fr-FR')} in ${rangeLabel}`}
               />
               <KPI
                 icon={<Wrench size={14} />}
@@ -769,7 +769,7 @@ export default async function UsagePage({
                             style={{ width: `${pct}%` }}
                           />
                         </span>
-                        <span className="w-12 text-right">{count.toLocaleString()}</span>
+                        <span className="w-12 text-right">{count.toLocaleString('fr-FR')}</span>
                       </li>
                     );
                   })}
@@ -826,7 +826,7 @@ export default async function UsagePage({
                             : '—'}
                         </td>
                         <td className="py-1 text-right text-[10px] text-slate-400">
-                          {new Date(m.createdAt).toLocaleDateString()}
+                          {new Date(m.createdAt).toLocaleDateString('fr-FR')}
                         </td>
                       </tr>
                     ))}
@@ -881,7 +881,7 @@ export default async function UsagePage({
                           {m.toolCalls}
                         </td>
                         <td className="py-1 text-right text-[10px] text-slate-400">
-                          {new Date(m.createdAt).toLocaleDateString()}
+                          {new Date(m.createdAt).toLocaleDateString('fr-FR')}
                         </td>
                       </tr>
                     ))}
@@ -1058,7 +1058,7 @@ export default async function UsagePage({
                     </td>
                     <td className="py-1 text-right font-mono">{a.pointsCount}</td>
                     <td className="py-1 text-right text-xs text-slate-500">
-                      {a.generatedAt.toLocaleDateString()}
+                      {a.generatedAt.toLocaleDateString('fr-FR')}
                     </td>
                   </tr>
                 ))}
@@ -1107,7 +1107,7 @@ export default async function UsagePage({
                     {b._count._all}
                   </td>
                   <td className="py-1 text-right text-xs text-slate-500">
-                    {c.createdAt.toLocaleDateString()}
+                    {c.createdAt.toLocaleDateString('fr-FR')}
                   </td>
                 </tr>
               );
@@ -1150,7 +1150,7 @@ export default async function UsagePage({
                   )}
                 </span>
                 <span className="text-slate-400">
-                  {new Date(r.startedAt).toLocaleString(undefined, {
+                  {new Date(r.startedAt).toLocaleString('fr-FR', {
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
@@ -1182,7 +1182,7 @@ export default async function UsagePage({
                 </span>
                 <span className="text-slate-500 font-mono">{c._count.messages}m</span>
                 <span className="text-slate-400">
-                  {new Date(c.createdAt).toLocaleString(undefined, {
+                  {new Date(c.createdAt).toLocaleString('fr-FR', {
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
@@ -1235,7 +1235,7 @@ function KPI({
         {icon} {label}
       </div>
       <div className="text-2xl font-bold mt-1 font-mono">
-        {value.toLocaleString()}
+        {value.toLocaleString('fr-FR')}
       </div>
       {sub && <div className="text-[10px] text-slate-400">{sub}</div>}
     </div>

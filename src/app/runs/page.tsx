@@ -312,7 +312,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                         single timestamp link per Franck 2026-04-19
                         12:58. */}
                     {/* Plain text \u2014 row is now clickable (Franck 2026-04-19 13:10). */}
-                    {new Date(r.startedAt).toLocaleString()}
+                    {new Date(r.startedAt).toLocaleString('fr-FR')}
                   </td>
                   <td className="text-xs font-mono">{dur !== null ? `${dur}s` : '-'}</td>
                   <td className="text-xs font-mono">

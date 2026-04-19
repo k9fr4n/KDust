@@ -57,7 +57,7 @@ export function HeaderIcons() {
   const logsTitle = hasErrors
     ? `${status.errors} error(s) in logs` +
       (status.lastErrorTs
-        ? ` (last: ${new Date(status.lastErrorTs).toLocaleTimeString()})`
+        ? ` (last: ${new Date(status.lastErrorTs).toLocaleTimeString('fr-FR')})`
         : '')
     : hasWarnings
     ? `${status.warnings} warning(s) in logs`

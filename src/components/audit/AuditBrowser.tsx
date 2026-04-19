@@ -719,7 +719,7 @@ function AuditListRow(props: {
               </>
             )}
             <span>
-              Generated {new Date(item.generatedAt).toLocaleDateString()}
+              Generated {new Date(item.generatedAt).toLocaleDateString('fr-FR')}
             </span>
           </div>
         </div>

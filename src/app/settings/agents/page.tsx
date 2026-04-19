@@ -32,6 +32,48 @@ type Agent = {
   userFavorite?: boolean;
 };
 
+/**
+ * Agent avatar with silent 404 fallback (Franck 2026-04-19 20:35).
+ *
+ * The Dust SDK exposes `pictureUrl` for every agent. Many of those
+ * URLs point to the workspace CDN with an auth-gated path \u2014 an
+ * anonymous <img> load from our domain gets a 404. Instead of
+ * leaving a broken image, we swap to a tinted Bot tile whenever
+ * the fetch fails. Key on sId so switching agents resets the
+ * error state.
+ */
+function AgentAvatar({ agent, isDefault }: { agent: Agent; isDefault: boolean }) {
+  const [broken, setBroken] = useState(false);
+  const fallbackTile = (
+    <div
+      className={
+        'w-10 h-10 rounded-md flex items-center justify-center ' +
+        (isDefault
+          ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+          : 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400')
+      }
+    >
+      <Bot size={18} />
+    </div>
+  );
+  if (!agent.pictureUrl || broken) {
+    return <div className="shrink-0">{fallbackTile}</div>;
+  }
+  return (
+    <div className="shrink-0">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        key={agent.sId}
+        src={agent.pictureUrl}
+        alt=""
+        className="w-10 h-10 rounded-md object-cover bg-slate-100 dark:bg-slate-800"
+        onError={() => setBroken(true)}
+        referrerPolicy="no-referrer"
+      />
+    </div>
+  );
+}
+
 export default function AgentsSettingsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,24 +166,10 @@ export default function AgentsSettingsPage() {
             : 'border-slate-200 dark:border-slate-800 hover:border-brand-400 hover:shadow-sm')
         }
       >
-        {/* Avatar */}
-        <div className="shrink-0">
-          {a.pictureUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img src={a.pictureUrl} alt="" className="w-10 h-10 rounded-md object-cover" />
-          ) : (
-            <div
-              className={
-                'w-10 h-10 rounded-md flex items-center justify-center ' +
-                (isDefault
-                  ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
-                  : 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400')
-              }
-            >
-              <Bot size={18} />
-            </div>
-          )}
-        </div>
+        {/* Avatar \u2014 uses AgentAvatar, which falls back to a Bot
+            icon if the Dust picture URL 404s (common for custom
+            workspace uploads that require an authenticated session). */}
+        <AgentAvatar agent={a} isDefault={isDefault} />
 
         {/* Body */}
         <div className="flex-1 min-w-0">

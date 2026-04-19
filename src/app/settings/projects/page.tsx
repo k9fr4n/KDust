@@ -347,93 +347,105 @@ export default function ProjectsPage() {
           </p>
         </div>
       ) : (
-        <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-900/50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="text-left px-3 py-2">Project</th>
-                <th className="text-left px-3 py-2 w-[30%]">Repository</th>
-                <th className="text-left px-3 py-2 w-28">Branch</th>
-                <th className="text-left px-3 py-2 w-40">Last sync</th>
-                <th className="text-right px-3 py-2 w-32">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((p) => (
-                <tr
-                  key={p.id}
-                  onClick={() => router.push(`/settings/projects/${p.id}`)}
-                  className="border-t border-slate-200 dark:border-slate-800 align-middle cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/30"
-                  title="Click to open project settings"
-                >
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Folder size={14} className="shrink-0 text-slate-400" />
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{p.name}</div>
-                        {p.description && (
-                          <div className="text-[11px] text-slate-500 truncate" title={p.description}>
-                            {p.description}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-500">
-                    {p.gitUrl ? (
-                      <span className="font-mono block truncate" title={p.gitUrl}>{p.gitUrl}</span>
-                    ) : (
-                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500">
+        // Card grid (Franck 2026-04-19 19:56) — /settings-style visuals:
+        // each project is a big clickable card with an icon tile on the
+        // left, metadata in the middle, and hover-revealed actions on
+        // the right. Responsive: 1 col on mobile, 2 cols md+, 3 cols xl+.
+        // The whole card is the nav target; actions stop propagation.
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {projects.map((p) => {
+            const isSandbox = !p.gitUrl;
+            const accent = isSandbox
+              ? 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800'
+              : 'text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/30';
+            return (
+              <div
+                key={p.id}
+                onClick={() => router.push(`/settings/projects/${p.id}`)}
+                className="group relative flex gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 cursor-pointer hover:border-brand-400 hover:shadow-sm transition"
+                title="Click to open project settings"
+              >
+                {/* Icon tile */}
+                <div className={'shrink-0 w-10 h-10 rounded-md flex items-center justify-center ' + accent}>
+                  {isSandbox ? <FolderOpen size={18} /> : <GitBranch size={18} />}
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-medium truncate">{p.name}</h3>
+                    {isSandbox && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">
                         sandbox
                       </span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-xs font-mono">
-                    {p.gitUrl ? p.branch : <span className="text-slate-400">—</span>}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {p.lastSyncAt ? (
-                      <div className="flex items-center gap-1.5">
-                        <span>{new Date(p.lastSyncAt).toLocaleString()}</span>
-                        {p.lastSyncStatus === 'success' && <span className="text-green-600 dark:text-green-400">●</span>}
-                        {p.lastSyncStatus === 'failed' && (
-                          <span className="text-red-500" title={p.lastSyncError ?? ''}>●</span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-slate-400">never</span>
+                    {p.lastSyncStatus === 'success' && (
+                      <span className="text-green-600 dark:text-green-400 text-xs shrink-0" title="Last sync: success">●</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex gap-1 justify-end" onClick={stop}>
-                      <Link
-                        href={`/projects/${p.id}`}
-                        className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-xs inline-flex items-center gap-1 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        title="Open project dashboard"
-                      >
-                        <LayoutDashboard size={12} />
-                      </Link>
-                      <button
-                        className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-xs inline-flex items-center gap-1 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-                        disabled={busyId === p.id || !p.gitUrl}
-                        onClick={(e) => { e.stopPropagation(); void sync(p.id); }}
-                        title={p.gitUrl ? 'Sync (git pull)' : 'Sandbox — no remote to sync'}
-                      >
-                        <RefreshCw size={12} className={busyId === p.id ? 'animate-spin' : ''} />
-                      </button>
-                      <button
-                        className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-xs inline-flex items-center gap-1 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600"
-                        onClick={(e) => { e.stopPropagation(); void remove(p.id, p.name); }}
-                        title="Delete project"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                    {p.lastSyncStatus === 'failed' && (
+                      <span className="text-red-500 text-xs shrink-0" title={p.lastSyncError ?? 'Last sync failed'}>●</span>
+                    )}
+                  </div>
+
+                  {p.description && (
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2" title={p.description}>
+                      {p.description}
+                    </p>
+                  )}
+
+                  <dl className="mt-2 space-y-0.5 text-[11px] text-slate-500">
+                    {p.gitUrl && (
+                      <div className="flex gap-1.5 min-w-0">
+                        <dt className="text-slate-400 shrink-0">url</dt>
+                        <dd className="font-mono truncate" title={p.gitUrl}>{p.gitUrl}</dd>
+                      </div>
+                    )}
+                    {p.gitUrl && (
+                      <div className="flex gap-1.5">
+                        <dt className="text-slate-400 shrink-0">branch</dt>
+                        <dd className="font-mono">{p.branch}</dd>
+                      </div>
+                    )}
+                    <div className="flex gap-1.5">
+                      <dt className="text-slate-400 shrink-0">last sync</dt>
+                      <dd className="truncate">
+                        {p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : <span className="text-slate-400">never</span>}
+                      </dd>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </dl>
+                </div>
+
+                {/* Actions — visible on hover/focus, always on touch */}
+                <div
+                  className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition"
+                  onClick={stop}
+                >
+                  <Link
+                    href={`/projects/${p.id}`}
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs hover:bg-slate-100 dark:hover:bg-slate-800"
+                    title="Open project dashboard"
+                  >
+                    <LayoutDashboard size={12} />
+                  </Link>
+                  <button
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                    disabled={busyId === p.id || !p.gitUrl}
+                    onClick={(e) => { e.stopPropagation(); void sync(p.id); }}
+                    title={p.gitUrl ? 'Sync (git pull)' : 'Sandbox — no remote to sync'}
+                  >
+                    <RefreshCw size={12} className={busyId === p.id ? 'animate-spin' : ''} />
+                  </button>
+                  <button
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    onClick={(e) => { e.stopPropagation(); void remove(p.id, p.name); }}
+                    title="Delete project"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

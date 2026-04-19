@@ -32,14 +32,9 @@ export default function SettingsIndex() {
       icon: <SettingsIcon size={18} />,
       accent: 'text-slate-600 dark:text-slate-300',
     },
-    {
-      href: '/settings/projects',
-      title: 'Projects',
-      description:
-        'Register / unregister projects tracked by KDust: git URL, default branch, manual sync trigger.',
-      icon: <FolderGit2 size={18} />,
-      accent: 'text-teal-600 dark:text-teal-400',
-    },
+    // Agents placed BEFORE Projects (Franck 2026-04-19 19:56):
+    // the "set up an agent" step is more often the starting point
+    // for a new Ecritel user than adding a git project.
     {
       href: '/settings/agents',
       title: 'Agents',
@@ -47,6 +42,14 @@ export default function SettingsIndex() {
         'Browse the Dust agents visible on your tenant and create new ones from KDust (name, description, instructions, emoji).',
       icon: <Bot size={18} />,
       accent: 'text-indigo-600 dark:text-indigo-400',
+    },
+    {
+      href: '/settings/projects',
+      title: 'Projects',
+      description:
+        'Register / unregister projects tracked by KDust: git URL, default branch, manual sync trigger.',
+      icon: <FolderGit2 size={18} />,
+      accent: 'text-teal-600 dark:text-teal-400',
     },
     {
       href: '/settings/audits',

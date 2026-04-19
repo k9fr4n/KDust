@@ -281,10 +281,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   backward-compat. */}
               <SortableTh col="name"       sort={sort} dir={dir} href={sortHref('name')}>Name</SortableTh>
               <SortableTh col="agent"      sort={sort} dir={dir} href={sortHref('agent')}>Agent</SortableTh>
-              {/* Project column removed (Franck 2026-04-19 13:48)
-                  \u2014 all rows belong to the cookie-scoped project.
-                  The `project` sort key stays in the backend for
-                  URL backward-compat. */}
+              <SortableTh col="project"    sort={sort} dir={dir} href={sortHref('project')}>Project</SortableTh>
               <SortableTh col="enabled"    sort={sort} dir={dir} href={sortHref('enabled')}>Enabled</SortableTh>
               <th className="py-2">Running</th>
               <SortableTh col="lastStatus" sort={sort} dir={dir} href={sortHref('lastStatus')}>Last status</SortableTh>
@@ -322,8 +319,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       of the left-border color and the task title. */}
                   <td className="py-2 font-medium">{c.name}</td>
                   <td className="text-xs">{c.agentName ?? c.agentSId}</td>
-                  {/* Project column removed 2026-04-19 13:48 \u2014
-                      page already scoped by the project cookie. */}
+                  <td className="text-xs">{c.projectPath}</td>
                   <td>
                     {c.enabled ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">

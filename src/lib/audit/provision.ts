@@ -33,7 +33,12 @@ async function createCronFromDefault(
 ): Promise<void> {
   await db.task.create({
     data: {
-      name: `Audit: ${def.label} — ${projectName}`,
+      // Task name intentionally does NOT include the project name
+      // (Franck 2026-04-19 13:53): /tasks has a dedicated Project
+      // column, so appending " — <project>" was pure duplication.
+      // The createCronFromDefault() function remains project-scoped
+      // thanks to the `projectPath` column below.
+      name: `Audit: ${def.label}`,
       kind: 'audit',
       category: def.key,
       mandatory: def.builtIn,
@@ -121,6 +126,26 @@ export async function provisionAuditCrons(projectName: string): Promise<number> 
     where: { projectPath: projectName, kind: 'audit', pushEnabled: true },
     data: { pushEnabled: false },
   });
+
+  // Retro-fix: strip the " — <projectName>" suffix from legacy
+  // audit task names (Franck 2026-04-19 13:53). New tasks are
+  // created with just "Audit: <label>" above. We use endsWith so
+  // we only rewrite rows that actually carry the suffix \u2014
+  // custom-renamed audits are left alone.
+  const stalenamed = await db.task.findMany({
+    where: {
+      projectPath: projectName,
+      kind: 'audit',
+      name: { endsWith: ` — ${projectName}` },
+    },
+    select: { id: true, name: true },
+  });
+  for (const t of stalenamed) {
+    await db.task.update({
+      where: { id: t.id },
+      data: { name: t.name.replace(` — ${projectName}`, '') },
+    });
+  }
 
   const defaults = await listEnabledAuditDefaults();
   const existing = await db.task.findMany({

@@ -83,7 +83,7 @@ export default function ProjectSettingsPage({
   }, [id]);
 
   // Dirty tracking — compares trimmed form values against the
-  // server state (normalizing null \u2194 ''). All three fields
+  // server state (normalizing null ↔ ''). All three fields
   // contribute.
   const normGitUrl = (p?.gitUrl ?? '');
   const normDesc   = (p?.description ?? '');
@@ -175,7 +175,10 @@ export default function ProjectSettingsPage({
         </div>
         {/* Description (editable). Free-form, 500-char cap enforced
             server-side. Uses a textarea so multi-line notes (setup
-            hints, ownership, links) are readable. */}
+            hints, ownership, links) are readable.
+            Has its OWN Save button (Franck 2026-04-19 20:04) —
+            users kept missing the global Save that lived in the
+            Git section, leading to silent description losses. */}
         <div>
           <label htmlFor="description" className="text-slate-500 text-xs">
             Description <span className="text-slate-400">(optional, ≤ 500 chars)</span>
@@ -187,7 +190,24 @@ export default function ProjectSettingsPage({
             className="mt-1 w-full text-sm px-3 py-2 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 min-h-[72px]"
             placeholder="What is this project about? Owner, links, context…"
           />
-          <div className="text-[10px] text-slate-400 text-right">{description.length}/500</div>
+          <div className="flex items-center justify-between mt-1">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={save}
+                disabled={description === normDesc || saveState === 'saving'}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 disabled:opacity-50 text-xs"
+              >
+                {saveState === 'saving' ? <RefreshCw size={12} className="animate-spin" /> :
+                 saveState === 'ok'     ? <Check size={12} /> :
+                                          <Save size={12} />}
+                {saveState === 'saving' ? 'Saving…' : saveState === 'ok' ? 'Saved' : 'Save description'}
+              </button>
+              {description !== normDesc && (
+                <span className="text-[10px] text-amber-600 dark:text-amber-400">Unsaved</span>
+              )}
+            </div>
+            <div className="text-[10px] text-slate-400">{description.length}/500</div>
+          </div>
         </div>
       </section>
 

@@ -22,7 +22,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   RefreshCw, Trash2, Plus, Folder, LayoutDashboard,
-  ArrowLeft, GitBranch, FolderOpen, X,
+  ArrowLeft, GitBranch, FolderOpen, X, Search,
 } from 'lucide-react';
 
 type P = {
@@ -37,6 +37,22 @@ type P = {
 };
 
 type Mode = 'git' | 'sandbox';
+
+/** Short human-friendly relative-time for last-sync hints on cards. */
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -54,6 +70,7 @@ export default function ProjectsPage() {
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [filter, setFilter] = useState('');
 
   const refresh = async () => {
     setLoading(true);
@@ -189,6 +206,23 @@ export default function ProjectsPage() {
     'w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm';
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  // Alphabetical sort (case-insensitive, locale-aware) + search
+  // over name and description (Franck 2026-04-19 20:04). Kept as
+  // derived memo to avoid mutating the server response.
+  const visibleProjects = (() => {
+    const q = filter.trim().toLowerCase();
+    const filtered = q
+      ? projects.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            (p.description ?? '').toLowerCase().includes(q),
+        )
+      : projects;
+    return [...filtered].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+    );
+  })();
 
   return (
     <div className="space-y-6">
@@ -352,8 +386,13 @@ export default function ProjectsPage() {
         // left, metadata in the middle, and hover-revealed actions on
         // the right. Responsive: 1 col on mobile, 2 cols md+, 3 cols xl+.
         // The whole card is the nav target; actions stop propagation.
+        visibleProjects.length === 0 ? (
+          <p className="text-slate-400 text-sm italic">
+            No project matches "{filter}".
+          </p>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {projects.map((p) => {
+          {visibleProjects.map((p) => {
             const isSandbox = !p.gitUrl;
             const accent = isSandbox
               ? 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800'
@@ -387,32 +426,37 @@ export default function ProjectsPage() {
                     )}
                   </div>
 
-                  {p.description && (
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2" title={p.description}>
-                      {p.description}
-                    </p>
-                  )}
+                  {/* Description always shown (Franck 2026-04-19 20:04):
+                      primary info on the card. Placeholder in italic
+                      when missing so the card height stays consistent. */}
+                  <p
+                    className={
+                      'text-xs mt-0.5 line-clamp-2 ' +
+                      (p.description
+                        ? 'text-slate-600 dark:text-slate-400'
+                        : 'text-slate-400 italic')
+                    }
+                    title={p.description ?? ''}
+                  >
+                    {p.description || 'No description'}
+                  </p>
 
-                  <dl className="mt-2 space-y-0.5 text-[11px] text-slate-500">
-                    {p.gitUrl && (
-                      <div className="flex gap-1.5 min-w-0">
-                        <dt className="text-slate-400 shrink-0">url</dt>
-                        <dd className="font-mono truncate" title={p.gitUrl}>{p.gitUrl}</dd>
-                      </div>
-                    )}
-                    {p.gitUrl && (
-                      <div className="flex gap-1.5">
-                        <dt className="text-slate-400 shrink-0">branch</dt>
-                        <dd className="font-mono">{p.branch}</dd>
-                      </div>
-                    )}
-                    <div className="flex gap-1.5">
-                      <dt className="text-slate-400 shrink-0">last sync</dt>
-                      <dd className="truncate">
-                        {p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : <span className="text-slate-400">never</span>}
-                      </dd>
+                  {/* Git info kept minimal: only the branch on
+                      git-backed projects, rendered as a small
+                      monospace pill. URL is shown on the settings
+                      page instead to keep the card uncluttered. */}
+                  {p.gitUrl && (
+                    <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-500">
+                      <span className="inline-flex items-center gap-1 font-mono">
+                        <GitBranch size={11} /> {p.branch}
+                      </span>
+                      {p.lastSyncAt && (
+                        <span className="text-slate-400" title={new Date(p.lastSyncAt).toLocaleString()}>
+                          · synced {relativeTime(p.lastSyncAt)}
+                        </span>
+                      )}
                     </div>
-                  </dl>
+                  )}
                 </div>
 
                 {/* Actions — visible on hover/focus, always on touch */}
@@ -447,6 +491,7 @@ export default function ProjectsPage() {
             );
           })}
         </div>
+        )
       )}
     </div>
   );

@@ -113,6 +113,31 @@ model Project {
   branchPrefix       String   @default("kdust")
   protectedBranches  String   @default("main,master,develop,production,prod")
 
+  // --- Git platform integration (Phase 2, Franck 2026-04-19 22:49) ---
+  // 'github' | 'gitlab' | 'none'. NULL means "auto-detect from gitUrl
+  // at call time" \u2014 UX: zero-config happy path on github.com.
+  platform           String?
+  // REST API root. Defaults per platform:
+  //   github \u2192 https://api.github.com
+  //   gitlab \u2192 https://<host>/api/v4 (derived from gitUrl host)
+  platformApiUrl     String?
+  // NAME of an environment variable containing the PAT / token. The
+  // raw token itself is NEVER stored in the DB. Runtime resolves via
+  // process.env[platformTokenRef]. Missing env = autoOpenPR skipped
+  // with a warning in TaskRun.output so the pipeline doesn\u0027t break.
+  platformTokenRef   String?
+  // 'owner/repo' (GitHub) or 'group/subgroup/repo' (GitLab). NULL
+  // \u2192 parse from gitUrl.
+  remoteProjectRef   String?
+  // Master switch: open a draft PR/MR after every successful push.
+  autoOpenPR         Boolean  @default(false)
+  // Override branch to target; NULL \u2192 defaultBaseBranch.
+  prTargetBranch     String?
+  // CSV of GitHub usernames / GitLab user IDs to request review from.
+  prRequiredReviewers String?
+  // CSV of labels to apply to the new PR/MR.
+  prLabels           String   @default("kdust,automation")
+
   lastSyncAt     DateTime?
   lastSyncStatus String?              // 'success' | 'failed'
   lastSyncError  String?
@@ -263,6 +288,17 @@ model TaskRun {
   // Kept nullable: early-failing runs (sync/branching phase) never
   // reach the Dust call and legitimately have no conversation.
   dustConversationSId String?
+
+  // --- Git platform artefacts (Phase 2, Franck 2026-04-19 22:49) ---
+  // Populated when the owning Project has autoOpenPR=true and the
+  // push phase succeeded. NULL for runs that didn\u0027t open a PR
+  // (autoOpenPR off, dryRun, push skipped, audit kind, \u2026).
+  prUrl         String?
+  prNumber      Int?
+  // 'draft' | 'open' | 'merged' | 'closed' | 'failed'. 'failed' is
+  // KDust-internal: the PR API call itself errored (rate-limit, 404,
+  // auth) \u2014 the branch is pushed, but no PR exists upstream.
+  prState       String?
 
   @@index([taskId])
   @@index([dustConversationSId])

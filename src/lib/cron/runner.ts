@@ -6,6 +6,7 @@ import { getFsServerId } from '../mcp/registry';
 import { parseAuditOutput } from '../audit/parser';
 import { getAuditDefaultByKey } from '../audit/defaults';
 import { resolveBranchPolicy, type ResolvedBranchPolicy } from '../branch-policy';
+import { resolveGitPlatform } from '../git-platform';
 import {
   parseGitRepo,
   buildGitLinks,
@@ -717,6 +718,63 @@ export async function runTask(taskId: string): Promise<void> {
       console.log(`[cron] dryRun=true, skipping push`);
     }
 
+    // [8b] Auto-open PR/MR (Phase 2, Franck 2026-04-19 22:49) -----------------
+    // Only when the push actually happened (i.e. not dry-run) and the
+    // parent Project has autoOpenPR=true with valid platform config.
+    // Failure here never fails the run \u2014 the branch is already
+    // pushed; worst case prState='failed' and the user opens the PR
+    // manually via the Teams link.
+    let prUrl: string | null = null;
+    let prNumber: number | null = null;
+    let prState: string | null = null;
+    if (!job.dryRun && branch) {
+      const platformTarget = project.prTargetBranch ?? policy.baseBranch;
+      const resolved = resolveGitPlatform({
+        gitUrl: project.gitUrl,
+        platform: project.platform,
+        platformApiUrl: project.platformApiUrl,
+        platformTokenRef: project.platformTokenRef,
+        remoteProjectRef: project.remoteProjectRef,
+        autoOpenPR: project.autoOpenPR,
+      });
+      if (resolved.ok) {
+        await setPhase('pr', `opening ${resolved.platform === 'github' ? 'pull request' : 'merge request'}`);
+        const reviewers = (project.prRequiredReviewers ?? '')
+          .split(',').map((s) => s.trim()).filter(Boolean);
+        const labels = (project.prLabels ?? '')
+          .split(',').map((s) => s.trim()).filter(Boolean);
+        const prBody =
+          `Automated by KDust task **${job.name}**.\n\n` +
+          `**Diff:** ${filesChanged} file(s), +${linesAdded} / -${linesRemoved} lines\n` +
+          `**Commit:** \`${commitSha?.slice(0, 12) ?? 'n/a'}\`\n` +
+          `**Base:** \`${platformTarget}\`\n` +
+          `**KDust run:** ${process.env.KDUST_PUBLIC_URL ? `${process.env.KDUST_PUBLIC_URL}/runs/${run.id}` : `run ${run.id}`}\n\n` +
+          `---\n\n` +
+          `**Agent summary**\n\n${agentText.slice(0, 2000)}${agentText.length > 2000 ? '\n\n\u2026 (truncated)' : ''}`;
+        const r = await resolved.adapter.openPullRequest({
+          head: branch,
+          base: platformTarget,
+          title: `[KDust] ${job.name}`,
+          body: prBody,
+          draft: true,
+          reviewers,
+          labels,
+        });
+        if (r.ok) {
+          prUrl = r.url;
+          prNumber = r.number;
+          prState = r.state;
+          console.log(`[cron] opened ${resolved.platform} PR #${r.number} ${r.url}`);
+        } else {
+          prState = 'failed';
+          console.warn(`[cron] PR open failed (${resolved.platform}): ${r.error}`);
+        }
+      } else {
+        // Not actionable as a run failure \u2014 just trace for later.
+        console.log(`[cron] PR auto-open skipped: ${resolved.reason}`);
+      }
+    }
+
     const durationMs = Date.now() - startedAt;
     await db.taskRun.update({
       where: { id: run.id },
@@ -730,6 +788,9 @@ export async function runTask(taskId: string): Promise<void> {
         linesAdded,
         linesRemoved,
         output: agentText,
+        prUrl,
+        prNumber,
+        prState,
         finishedAt: new Date(),
       },
     });
@@ -749,7 +810,11 @@ export async function runTask(taskId: string): Promise<void> {
       const linkLines: string[] = [];
       if (links.branch) linkLines.push(`🌿 Branch: ${links.branch}`);
       if (links.commit) linkLines.push(`🔖 Commit: ${links.commit}`);
-      if (links.newMr && !job.dryRun) linkLines.push(`🚀 Open MR/PR: ${links.newMr}`);
+      // Prefer the real PR URL opened by KDust (Phase 2) over the
+      // generic "New MR" link when we have one. Falls back to the
+      // compare link for manual-PR workflows.
+      if (prUrl) linkLines.push(`\u2705 PR opened by KDust: ${prUrl}`);
+      else if (links.newMr && !job.dryRun) linkLines.push(`🚀 Open MR/PR: ${links.newMr}`);
       const details =
         (linkLines.length ? linkLines.join('\n') + '\n\n' : '') +
         `Agent output:\n${agentText.slice(0, 1500)}${agentText.length > 1500 ? '…' : ''}\n\n` +

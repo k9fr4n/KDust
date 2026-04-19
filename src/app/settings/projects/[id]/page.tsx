@@ -37,6 +37,15 @@ type Project = {
   defaultBaseBranch: string;
   branchPrefix: string;
   protectedBranches: string;
+  // Phase 2 (2026-04-19): git platform integration.
+  platform: string | null;
+  platformApiUrl: string | null;
+  platformTokenRef: string | null;
+  remoteProjectRef: string | null;
+  autoOpenPR: boolean;
+  prTargetBranch: string | null;
+  prRequiredReviewers: string | null;
+  prLabels: string;
   lastSyncAt: string | null;
   lastSyncStatus: string | null;
   lastSyncError: string | null;
@@ -60,6 +69,15 @@ export default function ProjectSettingsPage({
   const [defaultBaseBranch, setDefaultBaseBranch] = useState('main');
   const [branchPrefix, setBranchPrefix] = useState('kdust');
   const [protectedBranches, setProtectedBranches] = useState('main,master,develop,production,prod');
+  // Phase 2: platform state. Empty strings map to null server-side.
+  const [platform, setPlatform] = useState<'auto' | 'github' | 'gitlab' | 'none'>('auto');
+  const [platformApiUrl, setPlatformApiUrl] = useState('');
+  const [platformTokenRef, setPlatformTokenRef] = useState('');
+  const [remoteProjectRef, setRemoteProjectRef] = useState('');
+  const [autoOpenPR, setAutoOpenPR] = useState(false);
+  const [prTargetBranch, setPrTargetBranch] = useState('');
+  const [prRequiredReviewers, setPrRequiredReviewers] = useState('');
+  const [prLabels, setPrLabels] = useState('kdust,automation');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'ko'>('idle');
   const [syncing, setSyncing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -81,6 +99,19 @@ export default function ProjectSettingsPage({
             setGitUrl(found.gitUrl ?? '');
             setBranch(found.branch);
             setDescription(found.description ?? '');
+            // Phase 1: branch policy hydration.
+            setDefaultBaseBranch(found.defaultBaseBranch);
+            setBranchPrefix(found.branchPrefix);
+            setProtectedBranches(found.protectedBranches);
+            // Phase 2: platform hydration.
+            setPlatform((found.platform as any) ?? 'auto');
+            setPlatformApiUrl(found.platformApiUrl ?? '');
+            setPlatformTokenRef(found.platformTokenRef ?? '');
+            setRemoteProjectRef(found.remoteProjectRef ?? '');
+            setAutoOpenPR(found.autoOpenPR);
+            setPrTargetBranch(found.prTargetBranch ?? '');
+            setPrRequiredReviewers(found.prRequiredReviewers ?? '');
+            setPrLabels(found.prLabels);
           }
         }
       } finally {
@@ -95,6 +126,13 @@ export default function ProjectSettingsPage({
   // contribute.
   const normGitUrl = (p?.gitUrl ?? '');
   const normDesc   = (p?.description ?? '');
+  // Phase 2: normalised server values for platform comparison.
+  const normPlatform = (p?.platform ?? 'auto') as string;
+  const normPlatformApiUrl = p?.platformApiUrl ?? '';
+  const normPlatformTokenRef = p?.platformTokenRef ?? '';
+  const normRemoteProjectRef = p?.remoteProjectRef ?? '';
+  const normPrTargetBranch = p?.prTargetBranch ?? '';
+  const normPrRequiredReviewers = p?.prRequiredReviewers ?? '';
   const dirty =
     !!p && (
       gitUrl.trim() !== normGitUrl ||
@@ -102,7 +140,15 @@ export default function ProjectSettingsPage({
       description !== normDesc ||
       defaultBaseBranch.trim() !== p.defaultBaseBranch ||
       branchPrefix.trim() !== p.branchPrefix ||
-      protectedBranches.trim() !== p.protectedBranches
+      protectedBranches.trim() !== p.protectedBranches ||
+      platform !== normPlatform ||
+      platformApiUrl.trim() !== normPlatformApiUrl ||
+      platformTokenRef.trim() !== normPlatformTokenRef ||
+      remoteProjectRef.trim() !== normRemoteProjectRef ||
+      autoOpenPR !== p.autoOpenPR ||
+      prTargetBranch.trim() !== normPrTargetBranch ||
+      prRequiredReviewers.trim() !== normPrRequiredReviewers ||
+      prLabels.trim() !== p.prLabels
     );
 
   const save = async () => {
@@ -119,6 +165,17 @@ export default function ProjectSettingsPage({
       if (defaultBaseBranch.trim() !== p.defaultBaseBranch) body.defaultBaseBranch = defaultBaseBranch.trim();
       if (branchPrefix.trim() !== p.branchPrefix)           body.branchPrefix = branchPrefix.trim();
       if (protectedBranches.trim() !== p.protectedBranches) body.protectedBranches = protectedBranches.trim();
+      // Phase 2: platform fields. body shape allows string | boolean
+      // so the PATCH handler receives the right types per field.
+      const bodyAny = body as Record<string, unknown>;
+      if (platform !== normPlatform) bodyAny.platform = platform === 'auto' ? '' : platform;
+      if (platformApiUrl.trim() !== normPlatformApiUrl) bodyAny.platformApiUrl = platformApiUrl.trim();
+      if (platformTokenRef.trim() !== normPlatformTokenRef) bodyAny.platformTokenRef = platformTokenRef.trim();
+      if (remoteProjectRef.trim() !== normRemoteProjectRef) bodyAny.remoteProjectRef = remoteProjectRef.trim();
+      if (autoOpenPR !== p.autoOpenPR) bodyAny.autoOpenPR = autoOpenPR;
+      if (prTargetBranch.trim() !== normPrTargetBranch) bodyAny.prTargetBranch = prTargetBranch.trim();
+      if (prRequiredReviewers.trim() !== normPrRequiredReviewers) bodyAny.prRequiredReviewers = prRequiredReviewers.trim();
+      if (prLabels.trim() !== p.prLabels) bodyAny.prLabels = prLabels.trim();
       const r = await fetch(`/api/projects/${id}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
@@ -415,6 +472,120 @@ export default function ProjectSettingsPage({
 
         <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-200 dark:border-slate-800">
           [INFO] Changes apply to every task whose corresponding field is empty (inheriting). Tasks with an explicit override keep their value.
+        </p>
+      </section>
+
+      {/* Git platform (Phase 2, 2026-04-19). Enables auto-opening a
+          draft PR/MR after every successful push. Keeps secrets out
+          of the DB by storing the NAME of an env var holding the
+          token; missing env = KDust warns and skips the PR call
+          without failing the whole run. */}
+      <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-wide text-slate-500">Git platform \u00b7 Auto-PR</h2>
+          <span className="text-[11px] text-slate-400">Opens a draft PR/MR after each successful push</span>
+        </div>
+
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={autoOpenPR}
+            onChange={(e) => setAutoOpenPR(e.target.checked)}
+          />
+          <span className="text-sm">
+            <span className="font-medium">Enable auto-PR</span>
+            <span className="block text-xs text-slate-500">
+              When enabled, KDust opens a <strong>draft</strong> Pull Request / Merge Request on the git host after every non-dry-run push.
+              When disabled, the branch is still pushed but no PR is created (you may open one manually).
+            </span>
+          </span>
+        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-slate-500">Platform</span>
+            <select
+              className="w-full mt-1 text-sm px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={platform}
+              onChange={(e) => setPlatform(e.target.value as any)}
+            >
+              <option value="auto">auto-detect from git URL</option>
+              <option value="github">github</option>
+              <option value="gitlab">gitlab (Phase 3 \u2014 not yet implemented)</option>
+              <option value="none">none (disable)</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-slate-500">Remote project ref <span className="text-slate-400">(owner/repo)</span></span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={remoteProjectRef}
+              onChange={(e) => setRemoteProjectRef(e.target.value)}
+              placeholder="auto from git URL"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-slate-500">API base URL <span className="text-slate-400">(optional override)</span></span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={platformApiUrl}
+              onChange={(e) => setPlatformApiUrl(e.target.value)}
+              placeholder="https://api.github.com"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-slate-500">
+              Token env var name <span className="text-amber-600">(required for auto-PR)</span>
+            </span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={platformTokenRef}
+              onChange={(e) => setPlatformTokenRef(e.target.value)}
+              placeholder="GITHUB_TOKEN_ACME"
+            />
+            <span className="block text-[10px] text-slate-400 mt-0.5">
+              [CRITICAL] Store the <strong>name</strong> of an env var, not the token itself. The raw PAT stays in your secret manager / container env.
+            </span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-slate-500">PR target branch <span className="text-slate-400">(defaults to base branch)</span></span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={prTargetBranch}
+              onChange={(e) => setPrTargetBranch(e.target.value)}
+              placeholder={defaultBaseBranch || 'main'}
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-slate-500">PR labels (CSV)</span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={prLabels}
+              onChange={(e) => setPrLabels(e.target.value)}
+              placeholder="kdust,automation"
+            />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="text-xs text-slate-500">Required reviewers <span className="text-slate-400">(CSV of GitHub logins / GitLab user IDs)</span></span>
+          <input
+            className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+            value={prRequiredReviewers}
+            onChange={(e) => setPrRequiredReviewers(e.target.value)}
+            placeholder="alice,bob"
+          />
+        </label>
+
+        <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-200 dark:border-slate-800">
+          [INFO] PRs are always opened as <strong>draft</strong>. Mark them ready-for-review manually once you\u0027ve audited the diff.
         </p>
       </section>
 

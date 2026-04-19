@@ -68,6 +68,15 @@ export async function PATCH(
     defaultBaseBranch?: unknown;
     branchPrefix?: unknown;
     protectedBranches?: unknown;
+    // Phase 2 (2026-04-19): git platform integration.
+    platform?: unknown;
+    platformApiUrl?: unknown;
+    platformTokenRef?: unknown;
+    remoteProjectRef?: unknown;
+    autoOpenPR?: unknown;
+    prTargetBranch?: unknown;
+    prRequiredReviewers?: unknown;
+    prLabels?: unknown;
   };
 
   // Null-aware trim: an explicit empty string on gitUrl/description
@@ -83,6 +92,14 @@ export async function PATCH(
     defaultBaseBranch?: string;
     branchPrefix?: string;
     protectedBranches?: string;
+    platform?: string | null;
+    platformApiUrl?: string | null;
+    platformTokenRef?: string | null;
+    remoteProjectRef?: string | null;
+    autoOpenPR?: boolean;
+    prTargetBranch?: string | null;
+    prRequiredReviewers?: string | null;
+    prLabels?: string;
   } = {};
   if (body.gitUrl !== undefined) {
     if (typeof body.gitUrl !== 'string') {
@@ -121,6 +138,42 @@ export async function PATCH(
       return NextResponse.json({ error: `${k} must be a non-empty string` }, { status: 400 });
     }
     data[k] = v.trim();
+  }
+
+  // Git platform fields (Phase 2, 2026-04-19). Strict enum for
+  // `platform` (typo would silently break auto-PR). All nullable
+  // string fields accept '' as an explicit clear.
+  if (body.platform !== undefined) {
+    if (body.platform === null || (typeof body.platform === 'string' && body.platform.trim() === '')) {
+      data.platform = null;
+    } else if (typeof body.platform === 'string' && ['github', 'gitlab', 'none'].includes(body.platform)) {
+      data.platform = body.platform;
+    } else {
+      return NextResponse.json(
+        { error: 'platform must be one of: github | gitlab | none | null' },
+        { status: 400 },
+      );
+    }
+  }
+  for (const k of ['platformApiUrl', 'platformTokenRef', 'remoteProjectRef', 'prTargetBranch', 'prRequiredReviewers'] as const) {
+    const v = body[k];
+    if (v === undefined) continue;
+    if (v !== null && typeof v !== 'string') {
+      return NextResponse.json({ error: `${k} must be a string or null` }, { status: 400 });
+    }
+    data[k] = typeof v === 'string' && v.trim() ? v.trim() : null;
+  }
+  if (body.autoOpenPR !== undefined) {
+    if (typeof body.autoOpenPR !== 'boolean') {
+      return NextResponse.json({ error: 'autoOpenPR must be boolean' }, { status: 400 });
+    }
+    data.autoOpenPR = body.autoOpenPR;
+  }
+  if (body.prLabels !== undefined) {
+    if (typeof body.prLabels !== 'string' || !body.prLabels.trim()) {
+      return NextResponse.json({ error: 'prLabels must be a non-empty string' }, { status: 400 });
+    }
+    data.prLabels = body.prLabels.trim();
   }
 
   if (Object.keys(data).length === 0) {

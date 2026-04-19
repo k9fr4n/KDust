@@ -291,7 +291,31 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                     )}
                   </span>
                 )}
-                {links?.newMr && run.status === 'success' && !run.dryRun && (
+                {/* Phase 2: real PR opened by KDust \u2014 takes
+                    precedence over the generic compare-link. */}
+                {run.prUrl && (
+                  <span>
+                    <span className="text-slate-500">\u2705 PR: </span>
+                    <a href={run.prUrl} target="_blank" rel="noreferrer" className="underline hover:text-brand-500 font-mono">
+                      #{run.prNumber ?? '?'}
+                    </a>
+                    {run.prState && (
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                        run.prState === 'merged' ? 'bg-purple-200 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                        : run.prState === 'open' ? 'bg-green-200 text-green-800 dark:bg-green-900 dark:text-green-200'
+                        : run.prState === 'draft' ? 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        : run.prState === 'closed' ? 'bg-red-200 text-red-800 dark:bg-red-900 dark:text-red-200'
+                        : 'bg-amber-200 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+                      }`}>
+                        {run.prState}
+                      </span>
+                    )}
+                  </span>
+                )}
+                {!run.prUrl && run.prState === 'failed' && (
+                  <span className="text-amber-600 text-xs">[WARN] auto-PR failed \u2014 check logs</span>
+                )}
+                {!run.prUrl && links?.newMr && run.status === 'success' && !run.dryRun && (
                   <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">
                     🚀 Open MR / PR
                   </a>

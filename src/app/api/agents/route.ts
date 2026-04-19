@@ -16,11 +16,17 @@ export async function GET() {
   if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
   const res = await d.client.getAgentConfigurations({ view: 'list' } as any);
   if (res.isErr()) return NextResponse.json({ error: res.error.message }, { status: 500 });
+  // Scope surfaced 2026-04-19 20:23 so the UI can split \"global\"
+  // (Dust-provided defaults) from \"workspace/published/visible/private\"
+  // (agents created in this tenant). userFavorite too for a
+  // future \"Starred\" tab.
   const agents = res.value.map((a: any) => ({
     sId: a.sId,
     name: a.name,
     description: a.description,
     pictureUrl: a.pictureUrl,
+    scope: a.scope as string | undefined,
+    userFavorite: a.userFavorite as boolean | undefined,
   }));
   return NextResponse.json({ agents });
 }

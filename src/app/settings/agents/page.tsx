@@ -1,27 +1,35 @@
 'use client';
 /**
- * /settings/agents — dedicated page to browse and create Dust agents
- * from KDust (Franck 2026-04-19 19:32).
+ * /settings/agents — browse + create Dust agents (card layout).
  *
- * Previously the create-agent form lived inline on the per-project
- * settings page, which made the latter too busy. Split responsibilities:
- *   - /settings/projects/[id]       pick an existing agent as project default
- *   - /settings/agents (this file)  browse + create agents globally
- *
- * Creation still calls Dust SDK createGenericAgentConfiguration via
- * POST /api/agents; visibility is enforced by the Ecritel tenant.
- * The page refreshes the list after a successful create so the new
- * agent shows up immediately.
+ * Rewritten 2026-04-19 20:23 (Franck):
+ *   - card grid aligned with /settings and /settings/projects
+ *   - split into two sections:
+ *       · My agents     → scope in {private, workspace, published}
+ *                        (created in this tenant: by me or by a
+ *                        colleague)
+ *       · Default agents→ scope = "global" (Dust-provided, shared
+ *                        across all tenants)
+ *     Unknown/missing scope falls into "My agents" as a safe
+ *     default so nothing disappears silently if the API shape
+ *     changes.
+ *   - search field filters both sections at once
+ *   - create form unchanged behaviour; cosmetic tweaks only
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Bot, Plus, RefreshCw, ExternalLink } from 'lucide-react';
+import {
+  ArrowLeft, Bot, Plus, RefreshCw, Search, X,
+  Sparkles, Star, ExternalLink,
+} from 'lucide-react';
 
 type Agent = {
   sId: string;
   name: string;
   description?: string | null;
   pictureUrl?: string | null;
+  scope?: string;
+  userFavorite?: boolean;
 };
 
 export default function AgentsSettingsPage() {
@@ -85,11 +93,90 @@ export default function AgentsSettingsPage() {
   };
 
   const input = 'w-full text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950';
-  const filtered = agents.filter((a) => {
-    if (!filter.trim()) return true;
-    const q = filter.toLowerCase();
-    return a.name.toLowerCase().includes(q) || (a.description ?? '').toLowerCase().includes(q);
-  });
+
+  // Split + sort + filter, memoized. Sort alphabetically within
+  // each bucket. Filter applies to name + description.
+  const { mine, defaults } = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const match = (a: Agent) =>
+      !q ||
+      a.name.toLowerCase().includes(q) ||
+      (a.description ?? '').toLowerCase().includes(q);
+    const sorted = [...agents]
+      .filter(match)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return {
+      mine: sorted.filter((a) => a.scope !== 'global'),
+      defaults: sorted.filter((a) => a.scope === 'global'),
+    };
+  }, [agents, filter]);
+
+  const renderCard = (a: Agent) => {
+    const isDefault = a.scope === 'global';
+    const isJustCreated = a.sId === lastCreatedSId;
+    return (
+      <div
+        key={a.sId}
+        className={
+          'relative flex gap-3 rounded-lg border bg-white dark:bg-slate-900 p-4 transition ' +
+          (isJustCreated
+            ? 'border-green-400 dark:border-green-600'
+            : 'border-slate-200 dark:border-slate-800 hover:border-brand-400 hover:shadow-sm')
+        }
+      >
+        {/* Avatar */}
+        <div className="shrink-0">
+          {a.pictureUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={a.pictureUrl} alt="" className="w-10 h-10 rounded-md object-cover" />
+          ) : (
+            <div
+              className={
+                'w-10 h-10 rounded-md flex items-center justify-center ' +
+                (isDefault
+                  ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+                  : 'bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400')
+              }
+            >
+              <Bot size={18} />
+            </div>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium truncate">{a.name}</h3>
+            {a.userFavorite && (
+              <Star size={11} className="text-amber-500 fill-amber-500 shrink-0" aria-label="Favorite" />
+            )}
+            {isDefault && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 shrink-0 inline-flex items-center gap-1"
+                title="Provided by Dust — available in every workspace"
+              >
+                <Sparkles size={9} /> default
+              </span>
+            )}
+          </div>
+          <p
+            className={
+              'text-xs mt-0.5 line-clamp-2 ' +
+              (a.description
+                ? 'text-slate-600 dark:text-slate-400'
+                : 'text-slate-400 italic')
+            }
+            title={a.description ?? ''}
+          >
+            {a.description || 'No description'}
+          </p>
+          <code className="mt-1.5 block font-mono text-[10px] text-slate-400 truncate" title={a.sId}>
+            {a.sId}
+          </code>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -116,7 +203,7 @@ export default function AgentsSettingsPage() {
             onClick={() => setShowCreate((v) => !v)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm"
           >
-            <Plus size={14} /> {showCreate ? 'Cancel' : 'New agent'}
+            {showCreate ? <><X size={14} /> Cancel</> : <><Plus size={14} /> New agent</>}
           </button>
         </div>
       </div>
@@ -128,11 +215,11 @@ export default function AgentsSettingsPage() {
       )}
 
       {showCreate && (
-        <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3 bg-slate-50/30 dark:bg-slate-900/20">
           <h2 className="text-sm font-medium">Create a new Dust agent</h2>
           <p className="text-[11px] text-slate-500">
-            Visibility is set by the Ecritel tenant policy — the agent is
-            created in your Dust workspace and scoped automatically.
+            Visibility is set by the Ecritel tenant policy — the agent
+            is created in your Dust workspace and scoped automatically.
           </p>
           <div className="grid md:grid-cols-[2fr_80px_3fr] gap-2">
             <label className="block">
@@ -172,52 +259,88 @@ export default function AgentsSettingsPage() {
         </section>
       )}
 
-      <input
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder="Filter by name or description..."
-        className={input}
-      />
+      {!loading && agents.length > 0 && (
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={`Search in ${agents.length} agent${agents.length > 1 ? 's' : ''}...`}
+            className="w-full pl-8 pr-8 py-1.5 text-sm rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+          />
+          {filter && (
+            <button
+              onClick={() => setFilter('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              title="Clear filter"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
 
-      <section className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 dark:bg-slate-900/50 text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th className="text-left px-3 py-2 w-10"></th>
-              <th className="text-left px-3 py-2">Name</th>
-              <th className="text-left px-3 py-2">Description</th>
-              <th className="text-left px-3 py-2 w-40 font-mono normal-case tracking-normal">sId</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={4} className="px-3 py-4 text-slate-400 text-center">Loading...</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={4} className="px-3 py-4 text-slate-400 text-center">No agent matches the filter.</td></tr>
-            ) : filtered.map((a) => (
-              <tr key={a.sId} className={'border-t border-slate-200 dark:border-slate-800 ' + (a.sId === lastCreatedSId ? 'bg-green-50/40 dark:bg-green-950/20' : '')}>
-                <td className="px-3 py-2">
-                  {a.pictureUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.pictureUrl} alt="" className="w-6 h-6 rounded-full" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center">
-                      <Bot size={14} className="text-slate-500" />
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2 font-medium">{a.name}</td>
-                <td className="px-3 py-2 text-slate-600 dark:text-slate-400 text-xs">{a.description ?? ''}</td>
-                <td className="px-3 py-2 font-mono text-[11px] text-slate-400">{a.sId}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      {loading ? (
+        <p className="text-slate-400 text-sm">Loading...</p>
+      ) : agents.length === 0 ? (
+        <div className="rounded-md border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center">
+          <Bot size={24} className="text-slate-400 mx-auto mb-2" />
+          <p className="text-slate-500 text-sm">
+            No agent yet. Click <strong>New agent</strong> to create your first one.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {/* My agents section */}
+          <section>
+            <div className="flex items-baseline justify-between mb-2">
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                My agents
+                <span className="ml-2 text-xs font-normal text-slate-400">({mine.length})</span>
+              </h2>
+              <span className="text-[11px] text-slate-400">
+                Created in your workspace
+              </span>
+            </div>
+            {mine.length === 0 ? (
+              <p className="text-[13px] text-slate-400 italic">
+                {filter ? `No workspace agent matches "${filter}".` : 'No agent created in your workspace yet.'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {mine.map(renderCard)}
+              </div>
+            )}
+          </section>
+
+          {/* Default agents section */}
+          <section>
+            <div className="flex items-baseline justify-between mb-2">
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 inline-flex items-center gap-1.5">
+                <Sparkles size={14} className="text-amber-500" />
+                Default agents
+                <span className="ml-1 text-xs font-normal text-slate-400">({defaults.length})</span>
+              </h2>
+              <span className="text-[11px] text-slate-400">
+                Provided by Dust
+              </span>
+            </div>
+            {defaults.length === 0 ? (
+              <p className="text-[13px] text-slate-400 italic">
+                {filter ? `No default agent matches "${filter}".` : 'No Dust-provided agent visible on this tenant.'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {defaults.map(renderCard)}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
 
       <p className="text-[11px] text-slate-500">
-        Agents are managed in your Dust workspace. Edit / delete them from the
-        Dust UI — KDust only creates and lists them.{' '}
+        Agents are managed in your Dust workspace. Edit / delete them from
+        the Dust UI — KDust only creates and lists them.{' '}
         <a
           href="https://dust.tt"
           target="_blank"

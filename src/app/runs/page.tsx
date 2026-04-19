@@ -302,7 +302,18 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                     )}
                   </td>
                   <td className="text-xs font-mono text-slate-500">{r.task?.projectPath ?? '-'}</td>
-                  <td className="text-xs">{new Date(r.startedAt).toLocaleString()}</td>
+                  <td className="text-xs">
+                    {/* Started cell is the entry-point to the per-
+                        run detail page /runs/:id (full agent output,
+                        diff, git links, error traceback). Previously
+                        a separate \"details \u2192\" column duplicated
+                        the Task name link; both collapsed into this
+                        single timestamp link per Franck 2026-04-19
+                        12:58. */}
+                    <Link href={`/runs/${r.id}`} className="underline hover:text-brand-500">
+                      {new Date(r.startedAt).toLocaleString()}
+                    </Link>
+                  </td>
                   <td className="text-xs font-mono">{dur !== null ? `${dur}s` : '-'}</td>
                   <td className="text-xs font-mono">
                     {r.filesChanged !== null && r.filesChanged !== undefined
@@ -358,16 +369,6 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       }
                       return <span className="text-slate-300 text-xs">—</span>;
                     })()}
-                  </td>
-                  <td className="text-right">
-                    {r.task && (
-                      <Link
-                        href={`/tasks/${r.task.id}`}
-                        className="text-xs text-brand-600 hover:underline"
-                      >
-                        details →
-                      </Link>
-                    )}
                   </td>
                 </tr>
               );

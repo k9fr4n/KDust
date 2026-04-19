@@ -33,6 +33,69 @@ export const runtime = 'nodejs';
  *
  * Returns a summary of what was removed so the UI can surface it.
  */
+/**
+ * PATCH /api/projects/:id
+ *
+ * Partial update of editable Project fields.
+ * Allowed today:
+ *   - gitUrl: string  (implies re-clone on next sync \u2014 we invalidate
+ *                      the MCP fs server so cached roots aren't reused)
+ *   - branch: string  (implies reset of working copy on next sync)
+ *
+ * Intentionally NOT editable via this route:
+ *   - name        \u2014 doubles as FS path and scope key for Task,
+ *                   Conversation, ProjectAudit, the current-project
+ *                   cookie and MCP fs mount. A rename would have to
+ *                   update 5 tables + mv a directory + invalidate
+ *                   cookies. Out of scope; must be done via a
+ *                   dedicated migration endpoint.
+ *   - createdAt / updatedAt / lastSync*: auto-managed by Prisma or
+ *                   the sync runner.
+ *
+ * Returns the fresh Project row on success.
+ */
+export async function PATCH(
+  req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id } = await ctx.params;
+  const body = await req.json().catch(() => ({})) as {
+    gitUrl?: unknown;
+    branch?: unknown;
+  };
+
+  const data: { gitUrl?: string; branch?: string } = {};
+  if (typeof body.gitUrl === 'string' && body.gitUrl.trim()) {
+    data.gitUrl = body.gitUrl.trim();
+  }
+  if (typeof body.branch === 'string' && body.branch.trim()) {
+    data.branch = body.branch.trim();
+  }
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: 'no_editable_fields' }, { status: 400 });
+  }
+
+  const before = await db.project.findUnique({ where: { id } });
+  if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  const updated = await db.project.update({ where: { id }, data });
+
+  // If gitUrl changed the working copy is now talking to the wrong
+  // remote; invalidate the MCP fs handle so next /chat resolves a
+  // fresh server rooted at a re-cloned folder. We do NOT force a
+  // sync here \u2014 that's the user's call via the dashboard.
+  if (data.gitUrl && data.gitUrl !== before.gitUrl) {
+    invalidateFsServer(before.name);
+  }
+
+  return NextResponse.json({
+    project: updated,
+    reSyncRecommended:
+      (!!data.gitUrl && data.gitUrl !== before.gitUrl) ||
+      (!!data.branch && data.branch !== before.branch),
+  });
+}
+
 export async function DELETE(
   req: Request,
   ctx: { params: Promise<{ id: string }> },

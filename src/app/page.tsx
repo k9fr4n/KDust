@@ -11,6 +11,7 @@ import {
   PlayCircle,
   AlertTriangle,
   Pin,
+  Settings,
 } from 'lucide-react';
 import { db } from '@/lib/db';
 
@@ -76,8 +77,20 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           <FolderGit2 className="text-slate-400" />
           <h1 className="text-2xl font-bold">{current.name}</h1>
           <span className="text-xs text-slate-500">{current.branch}</span>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
             <SyncProjectButton projectId={current.id} />
+            {/* Settings button sits next to \"Sync now\" (Franck
+                2026-04-19 18:29) so the user can jump straight to
+                /settings/projects/:id to edit gitUrl / branch and
+                see the full identity panel. */}
+            <Link
+              href={`/settings/projects/${current.id}`}
+              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              title="Edit this project's settings"
+            >
+              <Settings size={14} />
+              Settings
+            </Link>
           </div>
         </div>
 

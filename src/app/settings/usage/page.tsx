@@ -1028,9 +1028,13 @@ export default async function UsagePage({
                     className="border-t border-slate-200 dark:border-slate-800"
                   >
                     <td className="py-1">
+                      {/* Was linking to /projects/[id]#audits \u2014 the
+                          per-project dashboard was removed on 2026-04-19.
+                          Target /audits (global scope) instead. */}
                       <Link
-                        href={`/projects/${encodeURIComponent(project)}#audits`}
+                        href="/audits"
                         className="hover:underline"
+                        title={project}
                       >
                         {project}
                       </Link>

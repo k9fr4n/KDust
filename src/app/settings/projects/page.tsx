@@ -464,13 +464,10 @@ export default function ProjectsPage() {
                   className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition"
                   onClick={stop}
                 >
-                  <Link
-                    href={`/projects/${p.id}`}
-                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs hover:bg-slate-100 dark:hover:bg-slate-800"
-                    title="Open project dashboard"
-                  >
-                    <LayoutDashboard size={12} />
-                  </Link>
+                  {/* Dashboard action removed 2026-04-19 20:16 (Franck) \u2014
+                      /projects/[id] no longer exists. Card click now
+                      goes to /settings/projects/[id] which carries
+                      every feature the dashboard used to expose. */}
                   <button
                     className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
                     disabled={busyId === p.id || !p.gitUrl}

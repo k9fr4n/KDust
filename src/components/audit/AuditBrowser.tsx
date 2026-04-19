@@ -705,10 +705,13 @@ function AuditListRow(props: {
           <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1.5">
             {!hideProject && (
               <>
+                {/* Link routes to /audits (the global audits view);
+                    per-project dashboards were removed 2026-04-19. */}
                 <Link
-                  href={`/projects/${item.projectId}#audits`}
+                  href="/audits"
                   onClick={(e) => e.stopPropagation()}
                   className="inline-flex items-center gap-1 hover:underline"
+                  title={`Project: ${item.projectName}`}
                 >
                   <Folder size={10} /> {item.projectName}
                 </Link>

@@ -9,13 +9,16 @@ export const runtime = 'nodejs';
 // serverless budget is too tight. We cap at 150s.
 export const maxDuration = 150;
 
+// gitUrl: optional — empty / missing means sandbox mode.
+// description: optional — surfaces on dashboards. Trimmed, max 500.
 const Input = z.object({
   name: z
     .string()
     .min(1)
     .regex(/^[a-zA-Z0-9._-]+$/, 'nom doit matcher [a-zA-Z0-9._-]+'),
-  gitUrl: z.string().min(5),
+  gitUrl: z.string().optional().nullable(),
   branch: z.string().default('main'),
+  description: z.string().max(500).optional().nullable(),
 });
 
 export async function GET() {

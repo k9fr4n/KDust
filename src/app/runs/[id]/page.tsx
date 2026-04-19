@@ -138,7 +138,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   const agentDurationStr = agentDurationMs > 0 ? `${(agentDurationMs / 1000).toFixed(1)}s` : null;
 
   return (
-    // Full-width (Franck 2026-04-19 13:23) \u2014 the stats grid
+    // Full-width (Franck 2026-04-19 13:23) — the stats grid
     // benefits most: at max-w-5xl we capped at 5 columns; free
     // width lets lg:grid-cols-5 fill naturally on 1440/1920px.
     <div>

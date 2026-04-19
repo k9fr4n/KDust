@@ -29,17 +29,17 @@ export async function GET() {
  * POST /api/agents
  *
  * Create a new Dust agent from KDust (Franck 2026-04-19 19:04
- * \u2014 option B of the Agents ADR).
+ * — option B of the Agents ADR).
  *
  * Body (zod-validated):
- *   - name         : string, 1\u201364 chars
- *   - description  : string, 1\u2013256 chars (shown in agent pickers)
- *   - instructions : string, 1\u20138000 chars (the system prompt)
- *   - emoji        : optional string, 1\u201310 chars (single emoji)
+ *   - name         : string, 1–64 chars
+ *   - description  : string, 1–256 chars (shown in agent pickers)
+ *   - instructions : string, 1–8000 chars (the system prompt)
+ *   - emoji        : optional string, 1–10 chars (single emoji)
  *
  * Visibility is intentionally NOT exposed: the Ecritel tenant
  * enforces a default privacy scope server-side, so newly-created
- * agents are automatically restricted to the creator\u2019s group
+ * agents are automatically restricted to the creator’s group
  * regardless of what we send.
  *
  * Returns { agent: { sId, name, description, pictureUrl } } on 201

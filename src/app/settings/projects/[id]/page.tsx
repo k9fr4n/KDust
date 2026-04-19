@@ -53,6 +53,7 @@ export default function ProjectSettingsPage({
   const [branch, setBranch] = useState('');
   const [description, setDescription] = useState('');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'ko'>('idle');
+  const [syncing, setSyncing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [reSyncHint, setReSyncHint] = useState(false);
 
@@ -81,7 +82,7 @@ export default function ProjectSettingsPage({
     return () => { cancelled = true; };
   }, [id]);
 
-  // Dirty tracking \u2014 compares trimmed form values against the
+  // Dirty tracking — compares trimmed form values against the
   // server state (normalizing null \u2194 ''). All three fields
   // contribute.
   const normGitUrl = (p?.gitUrl ?? '');
@@ -177,121 +178,132 @@ export default function ProjectSettingsPage({
             hints, ownership, links) are readable. */}
         <div>
           <label htmlFor="description" className="text-slate-500 text-xs">
-            Description <span className="text-slate-400">(optional, \u2264 500 chars)</span>
+            Description <span className="text-slate-400">(optional, ≤ 500 chars)</span>
           </label>
           <textarea
             id="description"
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, 500))}
             className="mt-1 w-full text-sm px-3 py-2 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 min-h-[72px]"
-            placeholder="What is this project about? Owner, links, context\u2026"
+            placeholder="What is this project about? Owner, links, context…"
           />
           <div className="text-[10px] text-slate-400 text-right">{description.length}/500</div>
         </div>
       </section>
 
-      {/* Git + Last sync \u2014 merged (Franck 2026-04-19 18:45).
-          The right column shows the last-sync summary so users
-          can read the outcome of their latest change without
-          scrolling. Sandbox mode (no gitUrl) collapses the whole
-          block into a compact notice. */}
-      <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-xs uppercase tracking-wide text-slate-500">Git</h2>
-          {!gitUrl.trim() && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
-              sandbox
-            </span>
-          )}
-        </div>
-
-        <div className="grid md:grid-cols-[2fr_1fr] gap-4">
-          {/* Left: editable fields */}
-          <div className="space-y-3">
-            <div>
-              <label htmlFor="gitUrl" className="text-slate-500 text-xs">
-                Repository URL <span className="text-slate-400">(leave empty for a sandbox)</span>
-              </label>
-              <input
-                id="gitUrl"
-                type="text"
-                value={gitUrl}
-                onChange={(e) => setGitUrl(e.target.value)}
-                className="mt-1 w-full font-mono text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                placeholder="git@gitlab.example.com:group/repo.git"
-              />
-              {normGitUrl !== gitUrl.trim() && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                  {gitUrl.trim()
-                    ? 'Changing the URL will require a full re-clone on next sync. The MCP fs server will be invalidated.'
-                    : 'Clearing the URL turns this project into a sandbox: sync/push are disabled, the working copy is kept as-is.'}
-                </p>
-              )}
-            </div>
-            <div>
-              <label htmlFor="branch" className="text-slate-500 text-xs">Default branch</label>
-              <input
-                id="branch"
-                type="text"
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                className="mt-1 w-full md:w-64 font-mono text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-                placeholder="main"
-                disabled={!gitUrl.trim()}
-                title={!gitUrl.trim() ? 'Only relevant when a remote URL is set' : undefined}
-              />
-              {p.branch !== branch.trim() && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                  Working copy will be reset to this branch on next sync.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Right: last-sync summary */}
-          <div className="rounded bg-slate-50 dark:bg-slate-900/50 p-3 text-xs space-y-1.5">
-            <div className="text-slate-500 uppercase tracking-wide text-[10px]">Last sync</div>
-            <div>
-              <span className="text-slate-500">When:</span>{' '}
-              {p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : <span className="text-slate-400">\u2014 never</span>}
-            </div>
-            <div>
-              <span className="text-slate-500">Status:</span>{' '}
-              {p.lastSyncStatus === 'success' ? (
-                <span className="text-green-600 dark:text-green-400 font-mono">success</span>
-              ) : p.lastSyncStatus === 'failed' ? (
-                <span className="text-red-500 font-mono">failed</span>
-              ) : (
-                <span className="text-slate-400">\u2014</span>
-              )}
-            </div>
-            {p.lastSyncError && (
-              <pre className="whitespace-pre-wrap rounded bg-red-50 dark:bg-red-950/30 p-2 text-[11px] text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900 max-h-32 overflow-auto mt-2">
-                {p.lastSyncError}
-              </pre>
+      {/* Git — compact layout (Franck 2026-04-19 19:32).
+          One row for URL + branch, an inline last-sync summary,
+          and the actions (Save, Sync now) on a single line. The
+          Sync button POSTs to /api/projects/:id/sync so the user
+          never has to leave the settings page to push a refresh.
+          A sandbox badge appears inline in the header when the
+          URL is empty; Sync is disabled in that state. */}
+      <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-2">
+            Git
+            {!gitUrl.trim() && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 normal-case tracking-normal">
+                sandbox
+              </span>
             )}
+          </h2>
+          {/* Inline last-sync summary — single line, readable at a glance. */}
+          <div className="text-[11px] text-slate-500 flex items-center gap-2">
+            <span className="uppercase tracking-wide">Last sync:</span>
+            <span>{p.lastSyncAt ? new Date(p.lastSyncAt).toLocaleString() : 'never'}</span>
+            {p.lastSyncStatus === 'success' && <span className="text-green-600 dark:text-green-400">● success</span>}
+            {p.lastSyncStatus === 'failed'  && <span className="text-red-500">● failed</span>}
           </div>
         </div>
 
-        {/* Save row */}
-        <div className="flex items-center gap-3 pt-1 border-t border-slate-200 dark:border-slate-800">
+        {/* Row: URL (flex-grow) + branch (fixed 160px). */}
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-2">
+          <input
+            id="gitUrl"
+            type="text"
+            value={gitUrl}
+            onChange={(e) => setGitUrl(e.target.value)}
+            className="font-mono text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+            placeholder="git@gitlab.example.com:group/repo.git (empty = sandbox)"
+            aria-label="Repository URL"
+          />
+          <input
+            id="branch"
+            type="text"
+            value={branch}
+            onChange={(e) => setBranch(e.target.value)}
+            className="font-mono text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 disabled:opacity-50"
+            placeholder="main"
+            disabled={!gitUrl.trim()}
+            aria-label="Default branch"
+          />
+        </div>
+
+        {/* Actions row */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={save}
             disabled={!dirty || saveState === 'saving'}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 disabled:opacity-50 text-sm mt-3"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 disabled:opacity-50 text-sm"
           >
             {saveState === 'saving' ? <RefreshCw size={14} className="animate-spin" /> :
              saveState === 'ok'     ? <Check size={14} /> :
                                       <Save size={14} />}
-            {saveState === 'saving' ? 'Saving\u2026' : saveState === 'ok' ? 'Saved' : 'Save changes'}
+            {saveState === 'saving' ? 'Saving…' : saveState === 'ok' ? 'Saved' : 'Save changes'}
           </button>
-          {reSyncHint && (
-            <span className="text-xs text-amber-600 dark:text-amber-400 mt-3">
-              Click \u201cSync now\u201d on the dashboard to apply.
+          <button
+            onClick={async () => {
+              setSyncing(true);
+              setErr(null);
+              try {
+                const r = await fetch(`/api/projects/${id}/sync`, { method: 'POST' });
+                if (!r.ok) throw new Error(await r.text());
+                // Re-fetch the project row so lastSync* refresh.
+                const lr = await fetch('/api/projects', { cache: 'no-store' });
+                const lj = await lr.json();
+                const found: Project | undefined = (lj.projects ?? []).find((x: Project) => x.id === id);
+                if (found) setP(found);
+              } catch (e: any) {
+                setErr(e?.message ?? String(e));
+              } finally {
+                setSyncing(false);
+              }
+            }}
+            disabled={syncing || !p.gitUrl}
+            title={!p.gitUrl ? 'Sandbox project — no remote to sync' : 'Pull latest from the remote'}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 text-sm"
+          >
+            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
+
+          {/* Inline warnings — compact, amber text, no extra row. */}
+          {dirty && (
+            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+              {normGitUrl !== gitUrl.trim() && !gitUrl.trim()
+                ? 'Clearing URL → sandbox mode.'
+                : normGitUrl !== gitUrl.trim()
+                ? 'URL change → full re-clone on next sync.'
+                : p.branch !== branch.trim()
+                ? 'Branch change → working copy reset on next sync.'
+                : 'Unsaved changes.'}
             </span>
           )}
-          {err && <span className="text-xs text-red-500 mt-3">{err}</span>}
+          {err && <span className="text-[11px] text-red-500">{err}</span>}
         </div>
+
+        {/* Last-sync error collapsed by default — rendered only when present. */}
+        {p.lastSyncError && (
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-red-600 dark:text-red-400 hover:underline">
+              Last sync error
+            </summary>
+            <pre className="whitespace-pre-wrap rounded bg-red-50 dark:bg-red-950/30 p-2 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900 max-h-40 overflow-auto mt-1">
+              {p.lastSyncError}
+            </pre>
+          </details>
+        )}
       </section>
 
       {/* Agents panel (Franck 2026-04-19 19:04, option B).
@@ -299,7 +311,7 @@ export default function ProjectSettingsPage({
             1. Pick an existing Dust agent as the project default
             2. Create a brand-new Dust agent from KDust (POSTs to
                /api/agents \u2192 Dust createGenericAgentConfiguration).
-          Visibility is handled by the tenant \u2014 not exposed in
+          Visibility is handled by the tenant — not exposed in
           the form. The selected sId is saved on the Project via
           PATCH /api/projects/[id] { defaultAgentSId }. */}
       <AgentsSection
@@ -328,7 +340,7 @@ export default function ProjectSettingsPage({
           onClick={() => router.push(`/settings/projects?delete=${id}`)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
         >
-          <Trash2 size={14} /> Delete this project\u2026
+          <Trash2 size={14} /> Delete this project…
         </button>
       </section>
     </div>
@@ -343,7 +355,7 @@ export default function ProjectSettingsPage({
 // project settings route: it knows the route's projectId, calls the
 // project's PATCH endpoint, and mirrors the styling of the parent
 // sections. Extraction would pay off only if we ever need the same
-// widget on another surface \u2014 unlikely for now.
+// widget on another surface — unlikely for now.
 // ============================================================================
 type Agent = {
   sId: string;
@@ -365,12 +377,6 @@ function AgentsSection({
   const [loading, setLoading] = useState(true);
   const [pickValue, setPickValue] = useState<string>(defaultAgentSId ?? '');
   const [savingPick, setSavingPick] = useState(false);
-
-  // Create-form state. Collapsed by default to avoid burying the
-  // primary \"pick\" flow under 4 input fields.
-  const [showCreate, setShowCreate] = useState(false);
-  const [c, setC] = useState({ name: '', description: '', instructions: '', emoji: '' });
-  const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   // Fetch the agents list. Not-connected (401) is treated as an
@@ -382,7 +388,7 @@ function AgentsSection({
       const r = await fetch('/api/agents', { cache: 'no-store' });
       if (r.status === 401) {
         setAgents([]);
-        setErr('Not connected to Dust \u2014 reconnect in /settings to manage agents.');
+        setErr('Not connected to Dust — reconnect in /settings to manage agents.');
         return;
       }
       const j = await r.json();
@@ -415,46 +421,6 @@ function AgentsSection({
     }
   };
 
-  const createAgent = async () => {
-    setCreating(true);
-    setErr(null);
-    try {
-      const body: Record<string, string> = {
-        name: c.name.trim(),
-        description: c.description.trim(),
-        instructions: c.instructions.trim(),
-      };
-      if (c.emoji.trim()) body.emoji = c.emoji.trim();
-      const r = await fetch('/api/agents', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!r.ok) {
-        const detail = typeof j.error === 'string' ? j.error : JSON.stringify(j.error);
-        throw new Error(detail);
-      }
-      // Auto-select the newly created agent as the project default.
-      // This is the whole point of creating from this page \u2014
-      // saves a second click.
-      const newSId = j.agent.sId;
-      await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ defaultAgentSId: newSId }),
-      });
-      await refresh();
-      await onChanged();
-      setShowCreate(false);
-      setC({ name: '', description: '', instructions: '', emoji: '' });
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    } finally {
-      setCreating(false);
-    }
-  };
-
   const input = 'w-full text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950';
 
   return (
@@ -467,7 +433,7 @@ function AgentsSection({
       {/* Current selection chip */}
       <div className="text-sm">
         {loading ? (
-          <span className="text-slate-400">Loading\u2026</span>
+          <span className="text-slate-400">Loading…</span>
         ) : current ? (
           <span className="inline-flex items-center gap-2 px-2 py-1 rounded bg-brand-50 dark:bg-brand-950/30 border border-brand-300 dark:border-brand-800">
             {current.pictureUrl && (
@@ -478,7 +444,7 @@ function AgentsSection({
             <span className="text-xs text-slate-500 font-mono">{current.sId}</span>
           </span>
         ) : (
-          <span className="text-slate-400">No default agent set \u2014 users pick per task/chat.</span>
+          <span className="text-slate-400">No default agent set — users pick per task/chat.</span>
         )}
       </div>
 
@@ -492,10 +458,10 @@ function AgentsSection({
             className={input}
             disabled={loading || agents.length === 0}
           >
-            <option value="">\u2014 none \u2014</option>
+            <option value="">— none —</option>
             {agents.map((a) => (
               <option key={a.sId} value={a.sId}>
-                {a.name}{a.description ? ` \u2014 ${a.description.slice(0, 80)}` : ''}
+                {a.name}{a.description ? ` — ${a.description.slice(0, 80)}` : ''}
               </option>
             ))}
           </select>
@@ -522,64 +488,14 @@ function AgentsSection({
         )}
       </div>
 
-      {/* Create new agent */}
-      <div className="border-t border-slate-200 dark:border-slate-800 pt-3">
-        {!showCreate ? (
-          <button
-            onClick={() => setShowCreate(true)}
-            className="inline-flex items-center gap-1.5 text-sm text-brand-600 dark:text-brand-400 hover:underline"
-          >
-            <Plus size={14} /> Create a new Dust agent
-          </button>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Create a new Dust agent</h3>
-              <button onClick={() => setShowCreate(false)} className="text-xs text-slate-500 hover:underline">Cancel</button>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Visibility is set by the Ecritel tenant policy \u2014 the
-              new agent will be scoped automatically. It is created in
-              your Dust workspace and bound to this project on save.
-            </p>
-            <div className="grid md:grid-cols-[2fr_1fr_1fr] gap-2">
-              <label className="block">
-                <span className="text-slate-500 text-xs">Name *</span>
-                <input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} className={input} placeholder="kdust-project-X" />
-              </label>
-              <label className="block">
-                <span className="text-slate-500 text-xs">Emoji</span>
-                <input value={c.emoji} onChange={(e) => setC({ ...c, emoji: e.target.value })} className={input} placeholder="\ud83e\udd16" maxLength={10} />
-              </label>
-              <label className="block md:col-span-1">
-                <span className="text-slate-500 text-xs">Description * (max 256)</span>
-                <input value={c.description} onChange={(e) => setC({ ...c, description: e.target.value })} className={input} placeholder="One-line summary" maxLength={256} />
-              </label>
-            </div>
-            <label className="block">
-              <span className="text-slate-500 text-xs">Instructions * (max 8000)</span>
-              <textarea
-                value={c.instructions}
-                onChange={(e) => setC({ ...c, instructions: e.target.value })}
-                className={input + ' min-h-[120px] font-mono text-xs'}
-                placeholder="You are an expert in&#10;\u2026"
-                maxLength={8000}
-              />
-              <div className="text-[10px] text-slate-400 text-right">{c.instructions.length}/8000</div>
-            </label>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={createAgent}
-                disabled={creating || !c.name.trim() || !c.description.trim() || !c.instructions.trim()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 disabled:opacity-50 text-sm"
-              >
-                {creating ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
-                {creating ? 'Creating\u2026' : 'Create and set as default'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* Create-agent lives in a dedicated page now (Franck 2026-04-19 19:32).
+          Kept here as a tiny hint so users know where to go. */}
+      <p className="text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-800 pt-3">
+        Need a new agent?{' '}
+        <Link href="/settings/agents" className="text-brand-600 dark:text-brand-400 hover:underline inline-flex items-center gap-1">
+          <Plus size={11} /> Create one in /settings/agents
+        </Link>
+      </p>
 
       {err && (
         <pre className="whitespace-pre-wrap text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded p-2">

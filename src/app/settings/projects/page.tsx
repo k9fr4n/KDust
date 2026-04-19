@@ -143,7 +143,7 @@ export default function ProjectsPage() {
       </div>
 
       {/* Creation form.
-          Git URL is now OPTIONAL (Franck 2026-04-19 18:45) \u2014
+          Git URL is now OPTIONAL (Franck 2026-04-19 18:45) —
           leave empty to provision a sandbox project (local dir
           only, no clone, no sync). Branch stays editable because
           it also controls the dir layout once a URL is added
@@ -164,7 +164,7 @@ export default function ProjectsPage() {
         </label>
         <label className="block">
           <span className="text-sm">
-            Git URL <span className="text-slate-400 font-normal">(optional \u2014 leave empty for sandbox)</span>
+            Git URL <span className="text-slate-400 font-normal">(optional — leave empty for sandbox)</span>
           </span>
           <input
             className={field}
@@ -183,7 +183,7 @@ export default function ProjectsPage() {
           />
         </label>
         <Button type="submit" className="h-[38px]" disabled={creating}>
-          <Plus size={16} /> {creating ? (form.gitUrl ? 'Cloning\u2026' : 'Creating\u2026') : 'Add'}
+          <Plus size={16} /> {creating ? (form.gitUrl ? 'Cloning…' : 'Creating…') : 'Add'}
         </Button>
       </form>
 
@@ -244,7 +244,7 @@ export default function ProjectsPage() {
                     ) : (
                       <span
                         className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500"
-                        title="Sandbox project \u2014 no git remote, local directory only"
+                        title="Sandbox project — no git remote, local directory only"
                       >
                         sandbox
                       </span>

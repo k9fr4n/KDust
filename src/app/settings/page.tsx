@@ -5,6 +5,7 @@ import {
   BarChart3,
   ChevronRight,
   FolderGit2,
+  Bot,
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,14 @@ export default function SettingsIndex() {
         'Register / unregister projects tracked by KDust: git URL, default branch, manual sync trigger.',
       icon: <FolderGit2 size={18} />,
       accent: 'text-teal-600 dark:text-teal-400',
+    },
+    {
+      href: '/settings/agents',
+      title: 'Agents',
+      description:
+        'Browse the Dust agents visible on your tenant and create new ones from KDust (name, description, instructions, emoji).',
+      icon: <Bot size={18} />,
+      accent: 'text-indigo-600 dark:text-indigo-400',
     },
     {
       href: '/settings/audits',

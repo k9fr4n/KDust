@@ -56,7 +56,7 @@ export function isTaskRunActive(taskId: string): boolean {
  * `pushEnabled=true`, KDust appends an automation-context footer so
  * the agent knows its edits will be auto-committed & pushed by the
  * runner (and therefore should NOT run git commands itself). When
- * `pushEnabled=false`, the prompt is passed through verbatim \u2014
+ * `pushEnabled=false`, the prompt is passed through verbatim —
  * the task behaves like a recurring chat prompt: the agent reply is
  * captured, files it may write stay uncommitted in the working tree.
  *
@@ -84,7 +84,7 @@ function buildAutomationPrompt(job: {
     `- Branch prefix: ${job.branchPrefix}`,
     `- Dry-run: ${job.dryRun ? 'yes (local commit only, no push)' : 'no (commit + push)'}`,
     `- Max diff lines: ${job.maxDiffLines} (KDust aborts the push if exceeded)`,
-    'Do NOT run `git add` / `git commit` / `git push` yourself \u2014 KDust handles',
+    'Do NOT run `git add` / `git commit` / `git push` yourself — KDust handles',
     'all git writes from the working-tree diff after your reply. Just edit files',
     'via the fs-cli MCP server as needed and explain your changes in your reply.',
   ];
@@ -563,7 +563,7 @@ export async function runTask(taskId: string): Promise<void> {
     // captured the agent reply and persisted the conversation; we
     // must NOT touch git. Any files the agent happened to write via
     // fs-cli remain in the working tree (next sync on a different
-    // task run will reset them \u2014 that is the expected behavior).
+    // task run will reset them — that is the expected behavior).
     // Mark the TaskRun as success and exit before the diff/commit/
     // push pipeline. Introduced 2026-04-19 with the pushEnabled flag.
     if (!job.pushEnabled) {
@@ -608,7 +608,7 @@ export async function runTask(taskId: string): Promise<void> {
     console.log(`[cron] diff files=${filesChanged} +${linesAdded}/-${linesRemoved}`);
 
     // A sandbox project (no git remote) cannot produce MR/commit
-    // links \u2014 we build a stub GitRepo so downstream code reads
+    // links — we build a stub GitRepo so downstream code reads
     // empty strings instead of crashing. All push/commit/MR
     // branches are already guarded by `project.gitUrl` checks or
     // `pushEnabled` which is automatically false for sandboxes.

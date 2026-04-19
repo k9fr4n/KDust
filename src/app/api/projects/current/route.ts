@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
  *
  * Extended 2026-04-19 (Franck) to also return `defaultAgentSId`
  * so the chat page and the new-task form can fall back to the
- * project\u2019s default agent without a second round-trip. Older
+ * project’s default agent without a second round-trip. Older
  * callers that only read `name` keep working unchanged.
  */
 export async function GET() {

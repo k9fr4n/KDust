@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  // Sandbox project (no git remote) \u2014 ensure the local dir exists
+  // Sandbox project (no git remote) — ensure the local dir exists
   // so MCP fs tools can still read/write, but skip the clone.
   if (!project.gitUrl) {
     const { mkdir } = await import('node:fs/promises');

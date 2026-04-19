@@ -24,7 +24,7 @@ export async function Nav() {
     // Chat is accessible with or without a selected project
     // (Franck 2026-04-19 18:02). Project-less sessions create
     // conversations with projectName=null; fs/git MCP tools are
-    // auto-disabled in that mode \u2014 see chat/layout.tsx and
+    // auto-disabled in that mode — see chat/layout.tsx and
     // chat/page.tsx's MCP ensure effect. Dropping requiresProject
     // so the Nav link stays clickable on the \"All Projects\"
     // filter.

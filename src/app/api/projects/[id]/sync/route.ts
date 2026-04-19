@@ -16,7 +16,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     const { join } = await import('node:path');
     const { PROJECTS_ROOT } = await import('@/lib/projects');
     await mkdir(join(PROJECTS_ROOT, p.name), { recursive: true });
-    return NextResponse.json({ ok: true, sandbox: true, output: 'No remote \u2014 sandbox project, directory ensured.' });
+    return NextResponse.json({ ok: true, sandbox: true, output: 'No remote — sandbox project, directory ensured.' });
   }
 
   const res = await cloneOrPull(p.name, p.gitUrl, p.branch);

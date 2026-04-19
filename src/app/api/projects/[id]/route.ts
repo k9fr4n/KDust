@@ -38,12 +38,12 @@ export const runtime = 'nodejs';
  *
  * Partial update of editable Project fields.
  * Allowed today:
- *   - gitUrl: string  (implies re-clone on next sync \u2014 we invalidate
+ *   - gitUrl: string  (implies re-clone on next sync — we invalidate
  *                      the MCP fs server so cached roots aren't reused)
  *   - branch: string  (implies reset of working copy on next sync)
  *
  * Intentionally NOT editable via this route:
- *   - name        \u2014 doubles as FS path and scope key for Task,
+ *   - name        — doubles as FS path and scope key for Task,
  *                   Conversation, ProjectAudit, the current-project
  *                   cookie and MCP fs mount. A rename would have to
  *                   update 5 tables + mv a directory + invalidate
@@ -116,7 +116,7 @@ export async function PATCH(
   // If gitUrl changed the working copy is now talking to the wrong
   // remote; invalidate the MCP fs handle so next /chat resolves a
   // fresh server rooted at a re-cloned folder. We do NOT force a
-  // sync here \u2014 that's the user's call via the dashboard.
+  // sync here — that's the user's call via the dashboard.
   if (data.gitUrl && data.gitUrl !== before.gitUrl) {
     invalidateFsServer(before.name);
   }

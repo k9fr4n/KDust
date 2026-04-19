@@ -29,12 +29,18 @@ export type CronFormValues = {
    * without losing the branch settings).
    */
   pushEnabled: boolean;
-  baseBranch: string;
+  /**
+   * Branch fields are nullable (Phase 1, Franck 2026-04-19).
+   * NULL / empty string \u2192 inherit from the parent Project. The
+   * server-side API (PATCH/POST) accepts string | null and the
+   * resolver (src/lib/branch-policy.ts) merges task + project.
+   */
+  baseBranch: string | null;
   branchMode: 'timestamped' | 'stable';
-  branchPrefix: string;
+  branchPrefix: string | null;
   dryRun: boolean;
   maxDiffLines: number;
-  protectedBranches: string;
+  protectedBranches: string | null;
 };
 
 type Agent = { sId: string; name: string; description?: string };
@@ -44,6 +50,9 @@ type Project = {
   gitUrl: string | null;
   branch: string;
   defaultAgentSId: string | null;
+  defaultBaseBranch: string;
+  branchPrefix: string;
+  protectedBranches: string;
 };
 
 export function TaskForm({
@@ -72,12 +81,15 @@ export function TaskForm({
     enabled: initial?.enabled ?? true,
     kind: initial?.kind ?? 'automation',
     pushEnabled: initial?.pushEnabled ?? true,
-    baseBranch: initial?.baseBranch ?? 'main',
+    // Phase 1: these now accept null (= inherit from project).
+    // Preserve explicit initial values; otherwise start null so
+    // the edit form shows the project's value as placeholder.
+    baseBranch: initial?.baseBranch ?? null,
     branchMode: initial?.branchMode ?? 'timestamped',
-    branchPrefix: initial?.branchPrefix ?? 'kdust',
+    branchPrefix: initial?.branchPrefix ?? null,
     dryRun: initial?.dryRun ?? false,
     maxDiffLines: initial?.maxDiffLines ?? 2000,
-    protectedBranches: initial?.protectedBranches ?? 'main,master,develop,production,prod',
+    protectedBranches: initial?.protectedBranches ?? null,
   });
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -258,35 +270,72 @@ export function TaskForm({
           then auto-commits &amp; pushes. Protected branches are never touched.
         </p>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-sm">Base branch</span>
-            <input className={`${field} font-mono`} value={form.baseBranch} onChange={(e) => setForm({ ...form, baseBranch: e.target.value })} required />
-          </label>
-          <label className="block">
-            <span className="text-sm">Branch mode</span>
-            <select className={field} value={form.branchMode} onChange={(e) => setForm({ ...form, branchMode: e.target.value as 'timestamped' | 'stable' })}>
-              <option value="timestamped" className={optCls}>timestamped (new branch per run)</option>
-              <option value="stable" className={optCls}>stable (reuse + force-push)</option>
-            </select>
-          </label>
-        </div>
+        {/* Phase 1: branch fields are optional overrides. Empty =
+            inherit from the parent project. The current project's
+            default is shown as placeholder + hint text so the user
+            knows exactly what the empty state resolves to. */}
+        {(() => {
+          const proj = projects.find((p) => p.name === form.projectPath);
+          const projBase = proj?.defaultBaseBranch ?? 'main';
+          const projPrefix = proj?.branchPrefix ?? 'kdust';
+          const projProtected = proj?.protectedBranches ?? 'main,master,develop,production,prod';
+          const inheritHint = (from: string) => (
+            <span className="text-[10px] text-slate-400 mt-0.5 block">
+              Empty \u2192 inherit from project (<span className="font-mono">{from}</span>)
+            </span>
+          );
+          return (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-sm">Base branch <span className="text-slate-400 text-xs">(override)</span></span>
+                  <input
+                    className={`${field} font-mono`}
+                    value={form.baseBranch ?? ''}
+                    placeholder={projBase}
+                    onChange={(e) => setForm({ ...form, baseBranch: e.target.value.trim() || null })}
+                  />
+                  {inheritHint(projBase)}
+                </label>
+                <label className="block">
+                  <span className="text-sm">Branch mode</span>
+                  <select className={field} value={form.branchMode} onChange={(e) => setForm({ ...form, branchMode: e.target.value as 'timestamped' | 'stable' })}>
+                    <option value="timestamped" className={optCls}>timestamped (new branch per run)</option>
+                    <option value="stable" className={optCls}>stable (reuse + force-push)</option>
+                  </select>
+                </label>
+              </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-sm">Branch prefix</span>
-            <input className={`${field} font-mono`} value={form.branchPrefix} onChange={(e) => setForm({ ...form, branchPrefix: e.target.value })} placeholder="kdust" required />
-          </label>
-          <label className="block">
-            <span className="text-sm">Max diff lines (abort if exceeded)</span>
-            <input type="number" min={1} className={field} value={form.maxDiffLines} onChange={(e) => setForm({ ...form, maxDiffLines: parseInt(e.target.value, 10) || 2000 })} required />
-          </label>
-        </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-sm">Branch prefix <span className="text-slate-400 text-xs">(override)</span></span>
+                  <input
+                    className={`${field} font-mono`}
+                    value={form.branchPrefix ?? ''}
+                    placeholder={projPrefix}
+                    onChange={(e) => setForm({ ...form, branchPrefix: e.target.value.trim() || null })}
+                  />
+                  {inheritHint(projPrefix)}
+                </label>
+                <label className="block">
+                  <span className="text-sm">Max diff lines (abort if exceeded)</span>
+                  <input type="number" min={1} className={field} value={form.maxDiffLines} onChange={(e) => setForm({ ...form, maxDiffLines: parseInt(e.target.value, 10) || 2000 })} required />
+                </label>
+              </div>
 
-        <label className="block">
-          <span className="text-sm">Protected branches (comma-separated)</span>
-          <input className={`${field} font-mono`} value={form.protectedBranches} onChange={(e) => setForm({ ...form, protectedBranches: e.target.value })} required />
-        </label>
+              <label className="block">
+                <span className="text-sm">Protected branches <span className="text-slate-400 text-xs">(override, comma-separated)</span></span>
+                <input
+                  className={`${field} font-mono`}
+                  value={form.protectedBranches ?? ''}
+                  placeholder={projProtected}
+                  onChange={(e) => setForm({ ...form, protectedBranches: e.target.value.trim() || null })}
+                />
+                {inheritHint(projProtected)}
+              </label>
+            </>
+          );
+        })()}
 
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={form.dryRun} onChange={(e) => setForm({ ...form, dryRun: e.target.checked })} />

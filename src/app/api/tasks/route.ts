@@ -45,12 +45,16 @@ const TaskInput = z.object({
   enabled: z.boolean().default(true),
   // automation-push settings
   pushEnabled: z.boolean().default(true),
-  baseBranch: z.string().min(1).default('main'),
+  // Phase 1 (2026-04-19): branch fields are optional overrides.
+  // NULL / omitted \u2192 inherit from the parent Project row. An
+  // empty string on the wire is coerced to null so "clear override"
+  // from the UI works without a special sentinel.
+  baseBranch: z.string().nullable().optional().transform((v) => (v ? v : null)),
   branchMode: z.enum(['timestamped', 'stable']).default('timestamped'),
-  branchPrefix: z.string().min(1).default('kdust'),
+  branchPrefix: z.string().nullable().optional().transform((v) => (v ? v : null)),
   dryRun: z.boolean().default(false),
   maxDiffLines: z.number().int().positive().default(2000),
-  protectedBranches: z.string().default('main,master,develop,production,prod'),
+  protectedBranches: z.string().nullable().optional().transform((v) => (v ? v : null)),
 });
 
 export async function GET() {

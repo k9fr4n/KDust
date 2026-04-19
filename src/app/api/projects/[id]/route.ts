@@ -64,6 +64,10 @@ export async function PATCH(
     branch?: unknown;
     description?: unknown;
     defaultAgentSId?: unknown;
+    // Phase 1 (2026-04-19): branch policy now lives on the project.
+    defaultBaseBranch?: unknown;
+    branchPrefix?: unknown;
+    protectedBranches?: unknown;
   };
 
   // Null-aware trim: an explicit empty string on gitUrl/description
@@ -76,6 +80,9 @@ export async function PATCH(
     branch?: string;
     description?: string | null;
     defaultAgentSId?: string | null;
+    defaultBaseBranch?: string;
+    branchPrefix?: string;
+    protectedBranches?: string;
   } = {};
   if (body.gitUrl !== undefined) {
     if (typeof body.gitUrl !== 'string') {
@@ -104,6 +111,18 @@ export async function PATCH(
     const v = typeof body.defaultAgentSId === 'string' ? body.defaultAgentSId.trim() : '';
     data.defaultAgentSId = v || null;
   }
+  // Branch policy (Phase 1, 2026-04-19). All three are NOT NULL on
+  // the Project table \u2014 we therefore reject empty strings and
+  // treat them as "don't touch" if the key is missing.
+  for (const k of ['defaultBaseBranch', 'branchPrefix', 'protectedBranches'] as const) {
+    const v = body[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || !v.trim()) {
+      return NextResponse.json({ error: `${k} must be a non-empty string` }, { status: 400 });
+    }
+    data[k] = v.trim();
+  }
+
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: 'no_editable_fields' }, { status: 400 });
   }

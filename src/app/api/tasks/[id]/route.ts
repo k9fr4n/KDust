@@ -31,6 +31,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       );
     }
   }
+  // Phase 1 (2026-04-19): branch override fields treat empty string
+  // as "clear the override" so the task falls back to project policy.
+  for (const k of ['baseBranch', 'branchPrefix', 'protectedBranches'] as const) {
+    if (k in data && typeof data[k] === 'string' && data[k].trim() === '') {
+      data[k] = null;
+    }
+  }
   const task = await db.task.update({ where: { id }, data });
   await reloadScheduler();
   return NextResponse.json({ task });

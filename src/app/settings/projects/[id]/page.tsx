@@ -33,6 +33,10 @@ type Project = {
   branch: string;
   description: string | null;
   defaultAgentSId: string | null;
+  // Phase 1 (2026-04-19): project-level branch policy.
+  defaultBaseBranch: string;
+  branchPrefix: string;
+  protectedBranches: string;
   lastSyncAt: string | null;
   lastSyncStatus: string | null;
   lastSyncError: string | null;
@@ -52,6 +56,10 @@ export default function ProjectSettingsPage({
   const [gitUrl, setGitUrl] = useState('');
   const [branch, setBranch] = useState('');
   const [description, setDescription] = useState('');
+  // Phase 1: branch policy state.
+  const [defaultBaseBranch, setDefaultBaseBranch] = useState('main');
+  const [branchPrefix, setBranchPrefix] = useState('kdust');
+  const [protectedBranches, setProtectedBranches] = useState('main,master,develop,production,prod');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'ko'>('idle');
   const [syncing, setSyncing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -91,7 +99,10 @@ export default function ProjectSettingsPage({
     !!p && (
       gitUrl.trim() !== normGitUrl ||
       branch.trim() !== p.branch ||
-      description !== normDesc
+      description !== normDesc ||
+      defaultBaseBranch.trim() !== p.defaultBaseBranch ||
+      branchPrefix.trim() !== p.branchPrefix ||
+      protectedBranches.trim() !== p.protectedBranches
     );
 
   const save = async () => {
@@ -105,6 +116,9 @@ export default function ProjectSettingsPage({
       if (gitUrl.trim() !== normGitUrl) body.gitUrl = gitUrl.trim();
       if (branch.trim() !== p.branch)   body.branch = branch.trim();
       if (description !== normDesc)     body.description = description;
+      if (defaultBaseBranch.trim() !== p.defaultBaseBranch) body.defaultBaseBranch = defaultBaseBranch.trim();
+      if (branchPrefix.trim() !== p.branchPrefix)           body.branchPrefix = branchPrefix.trim();
+      if (protectedBranches.trim() !== p.protectedBranches) body.protectedBranches = protectedBranches.trim();
       const r = await fetch(`/api/projects/${id}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
@@ -346,6 +360,63 @@ export default function ProjectSettingsPage({
           if (found) setP(found);
         }}
       />
+
+      {/* Branch policy (Phase 1, 2026-04-19). Project-level defaults
+          shared by every task on this project. Tasks can still
+          override any field individually from the task edit form;
+          when they don't, they inherit these values. */}
+      <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-xs uppercase tracking-wide text-slate-500">Branch policy</h2>
+          <span className="text-[11px] text-slate-400">
+            Shared defaults for every task on this project
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs text-slate-500">Default base branch</span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={defaultBaseBranch}
+              onChange={(e) => setDefaultBaseBranch(e.target.value)}
+              placeholder="main"
+            />
+            <span className="block text-[10px] text-slate-400 mt-0.5">
+              Sync target + fork point for every KDust branch on this project.
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-xs text-slate-500">Branch prefix</span>
+            <input
+              className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+              value={branchPrefix}
+              onChange={(e) => setBranchPrefix(e.target.value)}
+              placeholder="kdust"
+            />
+            <span className="block text-[10px] text-slate-400 mt-0.5">
+              Identifies KDust-owned branches (helps cleanup + PR filtering).
+            </span>
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="text-xs text-slate-500">Protected branches (CSV)</span>
+          <input
+            className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+            value={protectedBranches}
+            onChange={(e) => setProtectedBranches(e.target.value)}
+            placeholder="main,master,develop,production,prod"
+          />
+          <span className="block text-[10px] text-slate-400 mt-0.5">
+            KDust refuses to push to any branch listed here — comma-separated, no spaces required.
+          </span>
+        </label>
+
+        <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-200 dark:border-slate-800">
+          [INFO] Changes apply to every task whose corresponding field is empty (inheriting). Tasks with an explicit override keep their value.
+        </p>
+      </section>
 
       {/* Danger zone */}
       <section className="rounded-md border border-red-300 dark:border-red-800 p-4 space-y-2 bg-red-50/30 dark:bg-red-950/10">

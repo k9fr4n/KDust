@@ -13,6 +13,7 @@ import { Pencil, History } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskDeleteButton } from '@/components/TaskDeleteButton';
 import { TaskRunButton } from '@/components/TaskRunButton';
+import { resolveBranchPolicy } from '@/lib/branch-policy';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,14 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
   // Cheap count for the History chip: avoids loading run rows just
   // to display "N runs" next to the button label.
   const runCount = await db.taskRun.count({ where: { taskId: cron.id } });
+
+  // Resolve branch policy so the detail page shows the effective
+  // values (task override or inherited from project) \u2014 Phase 1,
+  // Franck 2026-04-19.
+  const project = await db.project.findFirst({ where: { name: cron.projectPath } });
+  const policy = project
+    ? resolveBranchPolicy(cron, project)
+    : null;
 
   return (
     // Full-width (Franck 2026-04-19 13:23) \u2014 previous max-w-3xl
@@ -108,13 +117,28 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
           {cron.kind !== 'audit' ? (
             <>
               <div><span className="text-slate-500">Dry-run:</span> <span className="font-mono">{cron.dryRun ? 'yes' : 'no'}</span></div>
-              <div><span className="text-slate-500">Base branch:</span> <span className="font-mono">{cron.baseBranch}</span></div>
+              <div>
+                <span className="text-slate-500">Base branch:</span>{' '}
+                <span className="font-mono">{policy?.baseBranch ?? cron.baseBranch ?? '\u2014'}</span>
+                {policy?.source.baseBranch === 'project' && (
+                  <span className="ml-1 text-[10px] text-slate-400" title="Inherited from project">(project)</span>
+                )}
+              </div>
               <div><span className="text-slate-500">Branch mode:</span> <span className="font-mono">{cron.branchMode}</span></div>
-              <div><span className="text-slate-500">Branch prefix:</span> <span className="font-mono">{cron.branchPrefix}</span></div>
+              <div>
+                <span className="text-slate-500">Branch prefix:</span>{' '}
+                <span className="font-mono">{policy?.branchPrefix ?? cron.branchPrefix ?? '\u2014'}</span>
+                {policy?.source.branchPrefix === 'project' && (
+                  <span className="ml-1 text-[10px] text-slate-400" title="Inherited from project">(project)</span>
+                )}
+              </div>
               <div><span className="text-slate-500">Max diff lines:</span> <span className="font-mono">{cron.maxDiffLines.toLocaleString('fr-FR')}</span></div>
               <div className="col-span-full">
                 <span className="text-slate-500">Protected branches:</span>{' '}
-                <span className="font-mono text-xs break-all">{cron.protectedBranches}</span>
+                <span className="font-mono text-xs break-all">{policy?.protectedBranches ?? cron.protectedBranches ?? '\u2014'}</span>
+                {policy?.source.protectedBranches === 'project' && (
+                  <span className="ml-1 text-[10px] text-slate-400" title="Inherited from project">(project)</span>
+                )}
               </div>
             </>
           ) : (

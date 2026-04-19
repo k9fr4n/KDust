@@ -95,6 +95,24 @@ model Project {
   // other fields are resolved on demand via GET /api/agents to
   // keep KDust in sync with upstream edits in Dust.
   defaultAgentSId  String?
+
+  // --- Branch policy (Phase 1, Franck 2026-04-19 22:32) ---
+  // Source-of-truth for branch management on this project. Task
+  // rows can still override these individually (nullable columns
+  // on Task), but when null they inherit from here. Keeps all 20
+  // tasks of a project consistent without per-task duplication.
+  //
+  // defaultBaseBranch : git branch on which sync happens and new
+  //                     KDust branches are forked.
+  // branchPrefix      : enforced prefix \u2014 lets the cleanup / PR
+  //                     logic unambiguously recognise KDust branches.
+  // protectedBranches : CSV, never push to these. Evaluated both
+  //                     against the resolved branch name AND against
+  //                     defaultBaseBranch itself.
+  defaultBaseBranch  String   @default("main")
+  branchPrefix       String   @default("kdust")
+  protectedBranches  String   @default("main,master,develop,production,prod")
+
   lastSyncAt     DateTime?
   lastSyncStatus String?              // 'success' | 'failed'
   lastSyncError  String?
@@ -133,12 +151,16 @@ model Task {
   // footer appended). Useful for chat-style recurring tasks that the
   // user just wants to fire on a cron without mutating the repo.
   pushEnabled        Boolean  @default(true)
-  baseBranch         String   @default("main")            // sync & base new branches on this
-  branchMode         String   @default("timestamped")     // 'timestamped' | 'stable'
-  branchPrefix       String   @default("kdust")           // prefix in generated branch names
-  dryRun             Boolean  @default(false)             // agent runs & commits locally, no push
-  maxDiffLines       Int      @default(2000)              // abort push if +/- lines exceed
-  protectedBranches  String   @default("main,master,develop,production,prod") // csv, never push to these
+  // --- Branch overrides (Phase 1, 2026-04-19).
+  // NULL = inherit from the parent Project. Resolved via
+  // src/lib/branch-policy.ts before the runner reads them.
+  baseBranch         String?
+  branchPrefix       String?
+  protectedBranches  String?
+  // Stays per-task: mode is inherently task-specific, not project-wide.
+  branchMode         String   @default("timestamped")
+  dryRun             Boolean  @default(false)
+  maxDiffLines       Int      @default(2000)
 
   // --- advisory task settings ---
   // kind='automation' (default) = classic git-branch/commit/push pipeline.

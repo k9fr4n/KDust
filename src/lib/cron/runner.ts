@@ -5,6 +5,7 @@ import { createDustConversation, streamAgentReply } from '../dust/chat';
 import { getFsServerId } from '../mcp/registry';
 import { parseAuditOutput } from '../audit/parser';
 import { getAuditDefaultByKey } from '../audit/defaults';
+import { resolveBranchPolicy, type ResolvedBranchPolicy } from '../branch-policy';
 import {
   parseGitRepo,
   buildGitLinks,
@@ -63,15 +64,16 @@ export function isTaskRunActive(taskId: string): boolean {
  * Kept near runTask so the coupling between `pushEnabled`, the
  * footer, and the subsequent git pipeline is visible in one place.
  */
-function buildAutomationPrompt(job: {
-  prompt: string;
-  pushEnabled: boolean;
-  baseBranch: string;
-  branchMode: string;
-  branchPrefix: string;
-  dryRun: boolean;
-  maxDiffLines: number;
-}): string {
+function buildAutomationPrompt(
+  job: {
+    prompt: string;
+    pushEnabled: boolean;
+    branchMode: string;
+    dryRun: boolean;
+    maxDiffLines: number;
+  },
+  policy: { baseBranch: string; branchPrefix: string },
+): string {
   if (!job.pushEnabled) return job.prompt;
   const lines = [
     job.prompt,
@@ -79,9 +81,9 @@ function buildAutomationPrompt(job: {
     '---',
     '[KDust automation context]',
     'This run will be auto-committed (and pushed unless dry-run) by KDust after your reply.',
-    `- Base branch: ${job.baseBranch}`,
+    `- Base branch: ${policy.baseBranch}`,
     `- Branch mode: ${job.branchMode}`,
-    `- Branch prefix: ${job.branchPrefix}`,
+    `- Branch prefix: ${policy.branchPrefix}`,
     `- Dry-run: ${job.dryRun ? 'yes (local commit only, no push)' : 'no (commit + push)'}`,
     `- Max diff lines: ${job.maxDiffLines} (KDust aborts the push if exceeded)`,
     'Do NOT run `git add` / `git commit` / `git push` yourself — KDust handles',
@@ -155,25 +157,45 @@ export async function runTask(taskId: string): Promise<void> {
     });
   }
 
+  // Fetch the parent project UP FRONT so we can resolve the branch
+  // policy (Phase 1, Franck 2026-04-19). Project is the source of
+  // truth for baseBranch/branchPrefix/protectedBranches; task rows
+  // carry nullable overrides only. resolveBranchPolicy merges both.
+  const project = job.projectPath
+    ? await db.project.findFirst({ where: { name: job.projectPath } })
+    : null;
+
+  // Fallback policy when no project row exists yet (edge case: legacy
+  // tasks with a projectPath pointing nowhere). We still need defaults
+  // so the initial TaskRun row can be created; the run will fail
+  // immediately afterwards with the existing "project not found" check.
+  const policy: ResolvedBranchPolicy = project
+    ? resolveBranchPolicy(
+        { baseBranch: job.baseBranch, branchPrefix: job.branchPrefix, protectedBranches: job.protectedBranches },
+        project,
+      )
+    : {
+        baseBranch: job.baseBranch ?? 'main',
+        branchPrefix: job.branchPrefix ?? 'kdust',
+        protectedBranches: job.protectedBranches ?? 'main,master,develop,production,prod',
+        source: { baseBranch: 'task', branchPrefix: 'task', protectedBranches: 'task' },
+      };
+
   const run = await db.taskRun.create({
     data: {
       taskId,
       status: 'running',
       dryRun: job.dryRun,
-      baseBranch: job.baseBranch,
+      baseBranch: policy.baseBranch,
       phase: 'queued',
       phaseMessage: 'Starting',
     },
   });
   const startedAt = Date.now();
-  console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${job.baseBranch} mode=${job.branchMode}`);
+  console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${policy.baseBranch} mode=${job.branchMode}`);
 
   const setPhase = (phase: string, message: string) =>
     db.taskRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
-
-  const project = job.projectPath
-    ? await db.project.findFirst({ where: { name: job.projectPath } })
-    : null;
 
   const webhook = job.teamsWebhook || (await getAppConfig()).defaultTeamsWebhook;
   let branch: string | null = null;
@@ -197,9 +219,9 @@ export async function runTask(taskId: string): Promise<void> {
     // agent analyses the latest main, but we go through a lighter path:
     // resetToBase but no branch/commit/push. For automation tasks, same
     // call then a new working branch.
-    await setPhase('syncing', `git fetch + reset --hard origin/${job.baseBranch}`);
-    console.log(`[cron] git sync base=${job.baseBranch}`);
-    const sync = await resetToBase(project.name, job.baseBranch);
+    await setPhase('syncing', `git fetch + reset --hard origin/${policy.baseBranch}`);
+    console.log(`[cron] git sync base=${policy.baseBranch}`);
+    const sync = await resetToBase(project.name, policy.baseBranch);
     if (!sync.ok) throw new Error(`pre-sync failed: ${sync.error}\n${sync.output}`);
 
     // [2b] Audit cron short-circuit: analysis only, no git writes.
@@ -425,17 +447,17 @@ export async function runTask(taskId: string): Promise<void> {
     // tree (next task run will reset them on [2]).
     // Note: protectedList is declared at function scope because step
     // [8] (push) also consults it regardless of this branch creation.
-    const protectedList = job.protectedBranches
+    const protectedList = policy.protectedBranches
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
     if (job.pushEnabled) {
       branch = composeBranchName(
         (job.branchMode === 'stable' ? 'stable' : 'timestamped') as 'stable' | 'timestamped',
-        job.branchPrefix,
+        policy.branchPrefix,
         job.name,
       );
-      if (protectedList.includes(branch) || protectedList.includes(job.baseBranch) && branch === job.baseBranch) {
+      if (protectedList.includes(branch) || protectedList.includes(policy.baseBranch) && branch === policy.baseBranch) {
         throw new Error(`refusing to work on protected branch "${branch}"`);
       }
       await setPhase('branching', `Creating work branch ${branch}`);
@@ -443,7 +465,7 @@ export async function runTask(taskId: string): Promise<void> {
       if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
       console.log(`[cron] branch=${branch}`);
     } else {
-      console.log(`[cron] pushEnabled=false \u2192 skipping branch setup, running on ${job.baseBranch}`);
+      console.log(`[cron] pushEnabled=false \u2192 skipping branch setup, running on ${policy.baseBranch}`);
     }
 
     // [4] MCP fs -------------------------------------------------------------
@@ -463,7 +485,7 @@ export async function runTask(taskId: string): Promise<void> {
     // Enrich the prompt with the KDust automation-context footer when
     // pushEnabled is true. When false, send the prompt as-is (see
     // buildAutomationPrompt above). Per Franck 2026-04-19 00:36.
-    const agentPrompt = buildAutomationPrompt(job);
+    const agentPrompt = buildAutomationPrompt(job, policy);
     const conv = await createDustConversation(job.agentSId, agentPrompt, convTitle, mcpServerIds, 'cli');
     // Stamp the TaskRun with the Dust conversation sId ASAP so the
     // /runs page can show a "Chat" link even if the run later fails
@@ -650,7 +672,7 @@ export async function runTask(taskId: string): Promise<void> {
           details: agentText,
           facts: [
             { name: 'Project', value: project.name },
-            { name: 'Base branch', value: job.baseBranch },
+            { name: 'Base branch', value: policy.baseBranch },
             { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
           ],
         });
@@ -670,10 +692,10 @@ export async function runTask(taskId: string): Promise<void> {
     // [8] Commit + push ------------------------------------------------------
     await setPhase('committing', `Committing ${filesChanged} file(s)`);
     const commitMsg =
-      `chore(${job.branchPrefix}): ${job.name}\n\n` +
+      `chore(${policy.branchPrefix}): ${job.name}\n\n` +
       `Automated by KDust cron "${job.name}".\n` +
       `Agent: ${job.agentName ?? job.agentSId}\n` +
-      `Base: origin/${job.baseBranch}\n` +
+      `Base: origin/${policy.baseBranch}\n` +
       `Files: ${filesChanged} | +${linesAdded} / -${linesRemoved}`;
     commitSha = await commitAll(project.name, commitMsg, 'KDust Bot', 'kdust-bot@ecritel.net');
     if (!commitSha) throw new Error('commitAll returned null despite diff being non-empty');
@@ -720,7 +742,7 @@ export async function runTask(taskId: string): Promise<void> {
     if (webhook) {
       // Same non-null reasoning as step [8]: step [10] is only
       // reached via the pushEnabled=true path.
-      const links = buildGitLinks(repo, branch ?? job.baseBranch, job.baseBranch, commitSha);
+      const links = buildGitLinks(repo, branch ?? policy.baseBranch, policy.baseBranch, commitSha);
       const fileList =
         diff.files.slice(0, 15).map((f) => `• ${f}`).join('\n') +
         (diff.files.length > 15 ? `\n(… +${diff.files.length - 15} more)` : '');
@@ -735,7 +757,7 @@ export async function runTask(taskId: string): Promise<void> {
       const facts: TeamsCardFact[] = [
         { name: 'Project', value: project.name },
         { name: 'Branch', value: branch ?? '-' },
-        { name: 'Base', value: job.baseBranch },
+        { name: 'Base', value: policy.baseBranch },
         { name: 'Commit', value: commitSha ? commitSha.slice(0, 10) : '-' },
         { name: 'Diff', value: `${filesChanged} file(s), +${linesAdded}/-${linesRemoved}` },
         { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
@@ -782,7 +804,7 @@ export async function runTask(taskId: string): Promise<void> {
         details: msg,
         facts: branch ? [
           { name: 'Branch attempt', value: branch },
-          { name: 'Base', value: job.baseBranch },
+          { name: 'Base', value: policy.baseBranch },
         ] : undefined,
       });
     }

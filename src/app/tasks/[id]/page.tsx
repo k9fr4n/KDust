@@ -1,16 +1,15 @@
 /**
  * /tasks/[id] — task configuration page.
  *
- * Scope simplified 2026-04-19 (Franck 12:58): this page now shows
- * ONLY the task configuration (prompt, schedule, branch settings,
- * …) and a count-stamped link to /runs?task=<id> for the history.
- * The full list of runs with inline output/diff/error moved to the
- * dedicated /runs/[id] detail page so run content is linkable and
- * this page stays focused on what the task DOES, not what it did.
+ * Scope simplified 2026-04-19 (Franck 12:58 + 13:10): this page now
+ * shows ONLY the task configuration (prompt, schedule, branch
+ * settings, …). The full list of runs with inline output/diff/
+ * error moved to /runs[?task=<id>], and its entry point is the
+ * "History" chip in the top action bar.
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Pencil, Clock, ArrowRight } from 'lucide-react';
+import { Pencil, History } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskDeleteButton } from '@/components/TaskDeleteButton';
 import { TaskRunButton } from '@/components/TaskRunButton';
@@ -22,8 +21,8 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
   const cron = await db.task.findUnique({ where: { id } });
   if (!cron) return notFound();
 
-  // Cheap count for the history link: avoids loading run rows just
-  // to display "N runs". Runs list lives at /runs?task=<id>.
+  // Cheap count for the History chip: avoids loading run rows just
+  // to display "N runs" next to the button label.
   const runCount = await db.taskRun.count({ where: { taskId: cron.id } });
 
   return (
@@ -32,6 +31,13 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         <h1 className="text-2xl font-bold">{cron.name}</h1>
         <div className="flex items-center gap-2 shrink-0">
           <TaskRunButton id={cron.id} name={cron.name} />
+          <Link
+            href={`/runs?task=${cron.id}`}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+            title={`${runCount.toLocaleString()} past run${runCount === 1 ? '' : 's'}`}
+          >
+            <History size={14} /> History ({runCount.toLocaleString()})
+          </Link>
           <Link
             href={`/tasks/${cron.id}/edit`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -67,20 +73,6 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       <section className="mb-6">
         <h2 className="font-semibold mb-2">Prompt</h2>
         <pre className="whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">{cron.prompt}</pre>
-      </section>
-
-      <section>
-        <h2 className="font-semibold mb-2">Runs</h2>
-        <Link
-          href={`/runs?task=${cron.id}`}
-          className="inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-900"
-        >
-          <Clock size={14} className="text-slate-500" />
-          <span>
-            View {runCount.toLocaleString()} run{runCount === 1 ? '' : 's'}
-          </span>
-          <ArrowRight size={14} className="text-slate-400" />
-        </Link>
       </section>
     </div>
   );

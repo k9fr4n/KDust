@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { Clock, MessageCircle, ChevronUp, ChevronDown } from 'lucide-react';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
+import { ClickableRunRow } from '@/components/ClickableRunRow';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -277,7 +278,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                 : null;
               const statusCls = STATUS_CLASS[r.status] ?? 'bg-slate-100 text-slate-600';
               return (
-                <tr key={r.id} className="border-t border-slate-200 dark:border-slate-800">
+                <ClickableRunRow key={r.id} runId={r.id}>
                   <td className="py-2">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${statusCls}`}>
                       {r.status === 'running' && (
@@ -310,9 +311,8 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                         the Task name link; both collapsed into this
                         single timestamp link per Franck 2026-04-19
                         12:58. */}
-                    <Link href={`/runs/${r.id}`} className="underline hover:text-brand-500">
-                      {new Date(r.startedAt).toLocaleString()}
-                    </Link>
+                    {/* Plain text \u2014 row is now clickable (Franck 2026-04-19 13:10). */}
+                    {new Date(r.startedAt).toLocaleString()}
                   </td>
                   <td className="text-xs font-mono">{dur !== null ? `${dur}s` : '-'}</td>
                   <td className="text-xs font-mono">
@@ -370,7 +370,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       return <span className="text-slate-300 text-xs">—</span>;
                     })()}
                   </td>
-                </tr>
+                </ClickableRunRow>
               );
             })}
           </tbody>

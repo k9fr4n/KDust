@@ -62,14 +62,32 @@ export async function PATCH(
   const body = await req.json().catch(() => ({})) as {
     gitUrl?: unknown;
     branch?: unknown;
+    description?: unknown;
   };
 
-  const data: { gitUrl?: string; branch?: string } = {};
-  if (typeof body.gitUrl === 'string' && body.gitUrl.trim()) {
-    data.gitUrl = body.gitUrl.trim();
+  // Null-aware trim: an explicit empty string on gitUrl/description
+  // means \"clear this field\" (converts to null), not \"ignore this
+  // key\". Only `undefined` means \"don't touch\". This lets the UI
+  // turn a classic project into a sandbox (gitUrl=\"\") and vice
+  // versa without a dedicated endpoint.
+  const data: { gitUrl?: string | null; branch?: string; description?: string | null } = {};
+  if (body.gitUrl !== undefined) {
+    if (typeof body.gitUrl !== 'string') {
+      return NextResponse.json({ error: 'gitUrl must be a string' }, { status: 400 });
+    }
+    data.gitUrl = body.gitUrl.trim() || null;
   }
-  if (typeof body.branch === 'string' && body.branch.trim()) {
+  if (body.branch !== undefined) {
+    if (typeof body.branch !== 'string' || !body.branch.trim()) {
+      return NextResponse.json({ error: 'branch must be a non-empty string' }, { status: 400 });
+    }
     data.branch = body.branch.trim();
+  }
+  if (body.description !== undefined) {
+    if (typeof body.description !== 'string') {
+      return NextResponse.json({ error: 'description must be a string' }, { status: 400 });
+    }
+    data.description = body.description.trim().slice(0, 500) || null;
   }
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: 'no_editable_fields' }, { status: 400 });

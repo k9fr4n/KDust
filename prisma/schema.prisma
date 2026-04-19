@@ -80,9 +80,14 @@ model Message {
 
 model Project {
   id             String    @id @default(cuid())
-  name           String    @unique  // utilis\u00e9 comme dossier dans /projects
-  gitUrl         String               // ex: git@gitlab.ecritel.net:group/repo.git
+  name           String    @unique  // utilise comme dossier dans /projects
+  // gitUrl optional since 2026-04-19 (Franck): projects can exist
+  // without a git remote. When null, sync + push are skipped;
+  // the local dir is still provisioned.
+  gitUrl         String?
   branch         String    @default("main")
+  // Free-form human description shown on dashboards.
+  description    String?
   lastSyncAt     DateTime?
   lastSyncStatus String?              // 'success' | 'failed'
   lastSyncError  String?

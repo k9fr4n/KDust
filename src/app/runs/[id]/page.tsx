@@ -89,7 +89,10 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   const project = run.task?.projectPath
     ? await db.project.findFirst({ where: { name: run.task.projectPath } })
     : null;
-  const repo = project ? parseGitRepo(project.gitUrl) : null;
+  // `project.gitUrl` is nullable since 2026-04-19 (sandbox projects).
+  // A sandbox project never produces MR/commit links, so we skip
+  // repo/link computation entirely for null remotes.
+  const repo = project && project.gitUrl ? parseGitRepo(project.gitUrl) : null;
   const links = repo && run.branch
     ? buildGitLinks(repo, run.branch, run.baseBranch ?? run.task?.baseBranch ?? 'main', run.commitSha)
     : null;

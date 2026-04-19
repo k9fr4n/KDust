@@ -607,7 +607,19 @@ export async function runTask(taskId: string): Promise<void> {
     linesRemoved = diff.linesRemoved;
     console.log(`[cron] diff files=${filesChanged} +${linesAdded}/-${linesRemoved}`);
 
-    const repo = parseGitRepo(project.gitUrl);
+    // A sandbox project (no git remote) cannot produce MR/commit
+    // links \u2014 we build a stub GitRepo so downstream code reads
+    // empty strings instead of crashing. All push/commit/MR
+    // branches are already guarded by `project.gitUrl` checks or
+    // `pushEnabled` which is automatically false for sandboxes.
+    // Sandbox project (no git remote): build a stub GitRepo with
+    // `unknown` host so downstream buildGitLinks() renders empty
+    // strings rather than crashing. Push/commit branches that
+    // depend on a real remote are already guarded by the
+    // pushEnabled flag, which is forced to false for sandboxes.
+    const repo = project.gitUrl
+      ? parseGitRepo(project.gitUrl)
+      : { host: 'unknown' as const, webHost: '', pathWithNamespace: '', baseUrl: '' };
 
     // No-op short-circuit
     if (filesChanged === 0) {

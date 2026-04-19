@@ -39,14 +39,40 @@ export async function POST(req: Request) {
   const parsed = Input.safeParse(await req.json());
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
 
+  // Normalize: empty gitUrl strings become null so the runtime
+  // (sync / push pipeline / buildGitLinks) can use a single
+  // "no remote" predicate instead of two (null OR "").
+  const input = parsed.data as {
+    name: string;
+    gitUrl?: string | null;
+    branch: string;
+    description?: string | null;
+  };
+  const data = {
+    name: input.name,
+    gitUrl: input.gitUrl && input.gitUrl.trim() ? input.gitUrl.trim() : null,
+    branch: input.branch,
+    description: input.description ? input.description.trim() || null : null,
+  };
+
   let project;
   try {
-    project = await db.project.create({ data: parsed.data });
+    project = await db.project.create({ data });
   } catch (err: any) {
     if (err?.code === 'P2002') {
       return NextResponse.json({ error: 'name already used' }, { status: 409 });
     }
     throw err;
+  }
+
+  // Sandbox project (no git remote) \u2014 ensure the local dir exists
+  // so MCP fs tools can still read/write, but skip the clone.
+  if (!project.gitUrl) {
+    const { mkdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { PROJECTS_ROOT } = await import('@/lib/projects');
+    await mkdir(join(PROJECTS_ROOT, project.name), { recursive: true });
+    return NextResponse.json({ project, sandbox: true });
   }
 
   // Clone synchronously. If it fails, persist the failure and signal

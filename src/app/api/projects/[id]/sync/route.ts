@@ -9,6 +9,16 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   const p = await db.project.findUnique({ where: { id } });
   if (!p) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
+  // Sandbox project (no git remote): sync is a no-op but we still
+  // ensure the local dir exists so MCP fs tools don't blow up.
+  if (!p.gitUrl) {
+    const { mkdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { PROJECTS_ROOT } = await import('@/lib/projects');
+    await mkdir(join(PROJECTS_ROOT, p.name), { recursive: true });
+    return NextResponse.json({ ok: true, sandbox: true, output: 'No remote \u2014 sandbox project, directory ensured.' });
+  }
+
   const res = await cloneOrPull(p.name, p.gitUrl, p.branch);
   await db.project.update({
     where: { id },

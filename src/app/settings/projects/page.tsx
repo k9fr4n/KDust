@@ -7,8 +7,9 @@ import { RefreshCw, Trash2, Plus, Folder, LayoutDashboard, ArrowLeft } from 'luc
 type P = {
   id: string;
   name: string;
-  gitUrl: string;
+  gitUrl: string | null;   // nullable since 2026-04-19 (sandbox projects)
   branch: string;
+  description: string | null;
   lastSyncAt: string | null;
   lastSyncStatus: string | null;
   lastSyncError: string | null;
@@ -58,7 +59,12 @@ export default function ProjectsPage() {
         if (j.project) await refresh();
         return;
       }
-      setMsg({ kind: 'ok', text: `Cloned ${form.name} successfully.` });
+      setMsg({
+        kind: 'ok',
+        text: j.sandbox
+          ? `Created sandbox project ${form.name} (no git remote).`
+          : `Cloned ${form.name} successfully.`,
+      });
       setForm({ name: '', gitUrl: '', branch: 'main' });
       await refresh();
     } finally {
@@ -133,10 +139,19 @@ export default function ProjectsPage() {
         >
           <ArrowLeft size={14} /> Settings
         </Link>
-        <h1 className="text-2xl font-bold mt-2">Git projects</h1>
+        <h1 className="text-2xl font-bold mt-2">Projects</h1>
       </div>
 
-      <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-[1fr_2fr_auto_auto] gap-2 items-end">
+      {/* Creation form.
+          Git URL is now OPTIONAL (Franck 2026-04-19 18:45) \u2014
+          leave empty to provision a sandbox project (local dir
+          only, no clone, no sync). Branch stays editable because
+          it also controls the dir layout once a URL is added
+          later via /settings/projects/[id]. */}
+      <form
+        onSubmit={submit}
+        className="grid grid-cols-1 md:grid-cols-[1fr_2fr_120px_auto] gap-2 items-end"
+      >
         <label className="block">
           <span className="text-sm">Name (folder)</span>
           <input
@@ -148,13 +163,14 @@ export default function ProjectsPage() {
           />
         </label>
         <label className="block">
-          <span className="text-sm">Git URL (SSH)</span>
+          <span className="text-sm">
+            Git URL <span className="text-slate-400 font-normal">(optional \u2014 leave empty for sandbox)</span>
+          </span>
           <input
             className={field}
             value={form.gitUrl}
             onChange={(e) => setForm({ ...form, gitUrl: e.target.value })}
             placeholder="git@gitlab.ecritel.net:group/repo.git"
-            required
           />
         </label>
         <label className="block">
@@ -167,7 +183,7 @@ export default function ProjectsPage() {
           />
         </label>
         <Button type="submit" className="h-[38px]" disabled={creating}>
-          <Plus size={16} /> {creating ? 'Cloning…' : 'Add'}
+          <Plus size={16} /> {creating ? (form.gitUrl ? 'Cloning\u2026' : 'Creating\u2026') : 'Add'}
         </Button>
       </form>
 
@@ -223,7 +239,16 @@ export default function ProjectsPage() {
                     </Link>
                   </td>
                   <td className="text-xs font-mono text-slate-500">
-                    <span className="block truncate" title={p.gitUrl}>{p.gitUrl}</span>
+                    {p.gitUrl ? (
+                      <span className="block truncate" title={p.gitUrl}>{p.gitUrl}</span>
+                    ) : (
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500"
+                        title="Sandbox project \u2014 no git remote, local directory only"
+                      >
+                        sandbox
+                      </span>
+                    )}
                   </td>
                   <td className="text-xs">
                     <span className="block truncate" title={p.branch}>{p.branch}</span>

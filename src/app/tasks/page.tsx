@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
+import { nextRunAt } from '@/lib/cron/validator';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -274,14 +275,18 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
             <tr>
+              {/* "Kind" column removed 2026-04-19 13:39 \u2014 replaced
+                  by a kind-colored left border on each row. The
+                  `kind` sort key is kept in the backend for URL
+                  backward-compat. */}
               <SortableTh col="name"       sort={sort} dir={dir} href={sortHref('name')}>Name</SortableTh>
-              <SortableTh col="kind"       sort={sort} dir={dir} href={sortHref('kind')}>Kind</SortableTh>
               <SortableTh col="agent"      sort={sort} dir={dir} href={sortHref('agent')}>Agent</SortableTh>
               <SortableTh col="project"    sort={sort} dir={dir} href={sortHref('project')}>Project</SortableTh>
               <SortableTh col="enabled"    sort={sort} dir={dir} href={sortHref('enabled')}>Enabled</SortableTh>
               <th className="py-2">Running</th>
               <SortableTh col="lastStatus" sort={sort} dir={dir} href={sortHref('lastStatus')}>Last status</SortableTh>
               <SortableTh col="lastRun"    sort={sort} dir={dir} href={sortHref('lastRun')}>Last run</SortableTh>
+              <th className="py-2">Next run</th>
               <th></th>
             </tr>
           </thead>
@@ -289,16 +294,36 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             {paged.map((c) => {
               const isRunning = runningIds.has(c.id);
               const last = c.runs[0];
-              const kindLabel = c.kind === 'audit' ? 'audit' : c.kind;
               const isAudit = c.kind === 'audit';
+              // Next run: null when the task is manual (no cron), or
+              // when the cron expression fails to parse. We show
+              // "manual" for explicit `schedule === 'manual'` and
+              // display '\u2014' for parse errors (visually distinct).
+              const next =
+                c.schedule && c.schedule !== 'manual'
+                  ? nextRunAt(c.schedule, c.timezone)
+                  : null;
+              const isManual = c.schedule === 'manual' || !c.schedule;
+              // Kind-colored left border so the row's kind is
+              // visible at a glance without a dedicated column
+              // (Franck 2026-04-19 13:39). Audit = amber (matches
+              // the audit accent used elsewhere in the app),
+              // automation = sky.
+              const kindBorder = isAudit
+                ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
+                : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
               return (
-                <ClickableTaskRow key={c.id} taskId={c.id}>
+                <ClickableTaskRow key={c.id} taskId={c.id} className={kindBorder}>
                   <td className="py-2 font-medium">
-                    {/* Plain text now \u2014 row is fully clickable
-                        (Franck 2026-04-19 13:23). Keeping the
-                        underline would just duplicate the row
-                        affordance visually. */}
                     {c.name}
+                    {isAudit && c.category && (
+                      <span
+                        title={`Audit category: ${c.category}`}
+                        className="ml-2 text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 rounded px-1.5 py-0.5"
+                      >
+                        {c.category}
+                      </span>
+                    )}
                     {c.mandatory && (
                       <span
                         title="Mandatory built-in cron"
@@ -308,21 +333,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       </span>
                     )}
                   </td>
-                  <td className="text-xs">
-                    <span
-                      className={
-                        'inline-block px-1.5 py-0.5 rounded text-[10px] ' +
-                        (isAudit
-                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
-                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300')
-                      }
-                    >
-                      {kindLabel}
-                      {isAudit && c.category ? ` · ${c.category}` : ''}
-                    </span>
-                  </td>
                   <td className="text-xs">{c.agentName ?? c.agentSId}</td>
-                  <td className="text-xs">/projects/{c.projectPath}</td>
+                  <td className="text-xs">{c.projectPath}</td>
                   <td>
                     {c.enabled ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">
@@ -377,6 +389,21 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       : last?.startedAt
                       ? new Date(last.startedAt).toLocaleString()
                       : '—'}
+                  </td>
+                  <td className="text-xs whitespace-nowrap">
+                    {isManual ? (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500">
+                        manual
+                      </span>
+                    ) : next ? (
+                      <span className="text-slate-500" title={next.toISOString()}>
+                        {next.toLocaleString()}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400" title="cron expression did not parse">
+                        \u2014
+                      </span>
+                    )}
                   </td>
                   <td className="text-right">
                     <RunNowButton cronId={c.id} />

@@ -13,9 +13,13 @@ import React from 'react';
  */
 export function ClickableTaskRow({
   taskId,
+  className = '',
   children,
 }: {
   taskId: string;
+  /** Extra classes merged after the defaults \u2014 used on /tasks to
+   *  paint a kind-specific left border (automation vs audit). */
+  className?: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -41,7 +45,7 @@ export function ClickableTaskRow({
     <tr
       onClick={onClick}
       onAuxClick={onAuxClick}
-      className="border-t border-slate-200 dark:border-slate-800 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/50"
+      className={`border-t border-slate-200 dark:border-slate-800 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/50 ${className}`}
     >
       {children}
     </tr>

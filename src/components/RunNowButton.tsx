@@ -29,8 +29,11 @@ export function RunNowButton({ cronId }: { cronId: string }) {
     state === 'ko' ? <X size={14} /> :
     <Play size={14} />;
 
-  const label =
-    state === 'running' ? 'Running…' :
+  // Icon-only button (Franck 2026-04-19 13:39) \u2014 the table row
+  // already displays the task name/context so the \"Run now\" label
+  // was redundant. Aria-label + title keep a11y + discoverability.
+  const aria =
+    state === 'running' ? 'Running\u2026' :
     state === 'ok' ? 'Started' :
     state === 'ko' ? 'Error' :
     'Run now';
@@ -39,11 +42,11 @@ export function RunNowButton({ cronId }: { cronId: string }) {
     <button
       onClick={run}
       disabled={state === 'running'}
-      className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-      title="Trigger cron execution now"
+      className="inline-flex items-center justify-center p-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+      title={aria}
+      aria-label={aria}
     >
       {icon}
-      {label}
     </button>
   );
 }

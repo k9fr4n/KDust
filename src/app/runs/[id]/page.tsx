@@ -25,7 +25,7 @@
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, MessageCircle } from 'lucide-react';
+import { ArrowLeft, MessageCircle, Settings } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
@@ -135,7 +135,10 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   const agentDurationStr = agentDurationMs > 0 ? `${(agentDurationMs / 1000).toFixed(1)}s` : null;
 
   return (
-    <div className="max-w-5xl">
+    // Full-width (Franck 2026-04-19 13:23) \u2014 the stats grid
+    // benefits most: at max-w-5xl we capped at 5 columns; free
+    // width lets lg:grid-cols-5 fill naturally on 1440/1920px.
+    <div>
       {/* Breadcrumb */}
       <div className="mb-4 flex items-center gap-2 text-sm">
         <Link href="/runs" className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600">
@@ -170,6 +173,21 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* Prominent link to the task config (Franck 2026-04-19
+              13:23). The breadcrumb row above already has the task
+              name, but users asked for an explicit button-style
+              affordance alongside \"Open chat\" so they can jump to
+              the task's settings/prompt without going back to
+              /runs. */}
+          {run.task && (
+            <Link
+              href={`/tasks/${run.task.id}`}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
+            >
+              <Settings size={14} />
+              View task
+            </Link>
+          )}
           {conv && (
             <OpenConversationLink
               conversationId={conv.id}

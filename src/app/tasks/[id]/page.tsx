@@ -26,7 +26,10 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
   const runCount = await db.taskRun.count({ where: { taskId: cron.id } });
 
   return (
-    <div className="max-w-3xl">
+    // Full-width (Franck 2026-04-19 13:23) \u2014 previous max-w-3xl
+    // cap wasted horizontal space on wide screens. Parent layout
+    // already provides horizontal padding.
+    <div>
       <div className="flex items-start justify-between gap-4 mb-2">
         <h1 className="text-2xl font-bold">{cron.name}</h1>
         <div className="flex items-center gap-2 shrink-0">

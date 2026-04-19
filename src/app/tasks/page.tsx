@@ -3,6 +3,7 @@ import { Clock, ChevronUp, ChevronDown, MessageCircle } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
+import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -291,11 +292,13 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               const kindLabel = c.kind === 'audit' ? 'audit' : c.kind;
               const isAudit = c.kind === 'audit';
               return (
-                <tr key={c.id} className="border-t border-slate-200 dark:border-slate-800">
+                <ClickableTaskRow key={c.id} taskId={c.id}>
                   <td className="py-2 font-medium">
-                    <Link href={`/tasks/${c.id}`} className="underline">
-                      {c.name}
-                    </Link>
+                    {/* Plain text now \u2014 row is fully clickable
+                        (Franck 2026-04-19 13:23). Keeping the
+                        underline would just duplicate the row
+                        affordance visually. */}
+                    {c.name}
                     {c.mandatory && (
                       <span
                         title="Mandatory built-in cron"
@@ -378,7 +381,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   <td className="text-right">
                     <RunNowButton cronId={c.id} />
                   </td>
-                </tr>
+                </ClickableTaskRow>
               );
             })}
           </tbody>

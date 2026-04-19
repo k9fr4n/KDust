@@ -43,19 +43,29 @@ export function OpenConversationLink({
       });
       if (!r.ok) throw new Error(`open failed: HTTP ${r.status}`);
       const j = await r.json();
-      // Broadcast project switch so ProjectSwitcher in the shell updates.
-      window.dispatchEvent(
-        new CustomEvent('kdust:project-changed', {
-          detail: { name: j.projectName ?? null },
-        }),
-      );
-      router.push(j.redirect ?? `/chat?id=${conversationId}`);
+      // HARD navigation on purpose \u2014 mirrors ProjectSwitcher.select()
+      // which also does window.location.reload() after toggling the
+      // project cookie. A soft router.push() would keep the persistent
+      // Nav (and its ProjectSwitcher) mounted with the OLD cookie
+      // value; we relied on a CustomEvent to wake the switcher, but
+      // there was a race between the browser absorbing the
+      // Set-Cookie header from the POST response and the switcher's
+      // subsequent fetch('/api/current-project'), which could read
+      // the stale cookie and leave the top selector showing the
+      // previous project. window.location.href guarantees the new
+      // page fully re-renders with the fresh cookie on every
+      // component \u2014 switcher, guards, server layout.
+      // Franck 2026-04-19 11:26: "le filtre de projet ne change pas"
+      // when clicking recent-conversations on the dashboard.
+      window.location.href = j.redirect ?? `/chat?id=${conversationId}`;
     } catch (err) {
       console.error(err);
-      // Fallback: navigate anyway; the /chat layout will redirect to the
-      // dashboard if the cookie is missing.
-      router.push(`/chat?id=${conversationId}`);
+      // Fallback: navigate anyway; the /chat layout will redirect to
+      // the dashboard if the cookie is missing.
+      window.location.href = `/chat?id=${conversationId}`;
     } finally {
+      // `finally` still runs before the unload, but setBusy() here is
+      // mostly cosmetic since the page is about to be replaced.
       setBusy(false);
     }
   };

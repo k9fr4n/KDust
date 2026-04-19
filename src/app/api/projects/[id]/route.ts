@@ -63,6 +63,7 @@ export async function PATCH(
     gitUrl?: unknown;
     branch?: unknown;
     description?: unknown;
+    defaultAgentSId?: unknown;
   };
 
   // Null-aware trim: an explicit empty string on gitUrl/description
@@ -70,7 +71,12 @@ export async function PATCH(
   // key\". Only `undefined` means \"don't touch\". This lets the UI
   // turn a classic project into a sandbox (gitUrl=\"\") and vice
   // versa without a dedicated endpoint.
-  const data: { gitUrl?: string | null; branch?: string; description?: string | null } = {};
+  const data: {
+    gitUrl?: string | null;
+    branch?: string;
+    description?: string | null;
+    defaultAgentSId?: string | null;
+  } = {};
   if (body.gitUrl !== undefined) {
     if (typeof body.gitUrl !== 'string') {
       return NextResponse.json({ error: 'gitUrl must be a string' }, { status: 400 });
@@ -88,6 +94,15 @@ export async function PATCH(
       return NextResponse.json({ error: 'description must be a string' }, { status: 400 });
     }
     data.description = body.description.trim().slice(0, 500) || null;
+  }
+  // defaultAgentSId: empty string / null = clear. Accepted only as
+  // a string to keep the API surface tight (no arrays, no objects).
+  if (body.defaultAgentSId !== undefined) {
+    if (body.defaultAgentSId !== null && typeof body.defaultAgentSId !== 'string') {
+      return NextResponse.json({ error: 'defaultAgentSId must be a string or null' }, { status: 400 });
+    }
+    const v = typeof body.defaultAgentSId === 'string' ? body.defaultAgentSId.trim() : '';
+    data.defaultAgentSId = v || null;
   }
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: 'no_editable_fields' }, { status: 400 });

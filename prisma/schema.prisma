@@ -88,6 +88,13 @@ model Project {
   branch         String    @default("main")
   // Free-form human description shown on dashboards.
   description    String?
+  // Default Dust agent for this project (Franck 2026-04-19 19:04).
+  // Null = no preset, user picks per task/chat. Populated either
+  // by picking an existing agent ("Pick") or by creating a new
+  // one via Dust API ("Create"). We store only the sId; name and
+  // other fields are resolved on demand via GET /api/agents to
+  // keep KDust in sync with upstream edits in Dust.
+  defaultAgentSId  String?
   lastSyncAt     DateTime?
   lastSyncStatus String?              // 'success' | 'failed'
   lastSyncError  String?

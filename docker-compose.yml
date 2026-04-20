@@ -19,6 +19,12 @@ services:
       - ${HOME}/.ssh:/host-ssh:ro
       # Socket ssh-agent (optionnel ; s'évapore si SSH_AUTH_SOCK vide)
       - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
+      # Docker socket (Franck 2026-04-20 23:46) - Option A / DooD.
+      # Permet aux agents d'appeler `docker ...` via fs_cli__run_command.
+      # Le GID du socket est aligné dynamiquement par l'entrypoint sur
+      # le groupe `docker` du container, puis `node` y est ajouté.
+      # [CRITICAL] accès = root sur l'hôte; cf. Dockerfile.
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

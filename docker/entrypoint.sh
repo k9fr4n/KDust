@@ -8,6 +8,45 @@ if [ "$(id -u)" = "0" ]; then
   mkdir -p /data /projects
   chown -R node:node /data /projects || true
 
+  # --- Docker socket GID remap (Franck 2026-04-20 23:46) ---
+  # Option A / DooD: /var/run/docker.sock is bind-mounted from the host,
+  # owned by the host's `docker` group. That GID is host-specific
+  # (999/998/1001 depending on distro) so we discover it at runtime
+  # rather than hard-coding it in the image.
+  #
+  # Strategy:
+  #   1. Read the socket's GID via `stat`.
+  #   2. Ensure a group with that GID exists in the container (create
+  #      a `docker` group if needed, or rename an existing group that
+  #      already owns the GID).
+  #   3. Add the `node` user to it so the process can connect to the
+  #      socket without root/SUID tricks.
+  #   4. If the socket is missing (docker feature disabled locally),
+  #      skip silently \u2014 docker calls from the agent will just fail
+  #      with a clear "Cannot connect to the Docker daemon" message.
+  if [ -S /var/run/docker.sock ]; then
+    DOCKER_SOCK_GID="$(stat -c %g /var/run/docker.sock 2>/dev/null || echo '')"
+    if [ -n "$DOCKER_SOCK_GID" ] && [ "$DOCKER_SOCK_GID" != "0" ]; then
+      EXISTING_GROUP="$(getent group "$DOCKER_SOCK_GID" | cut -d: -f1 || true)"
+      if [ -z "$EXISTING_GROUP" ]; then
+        # No group with this GID yet \u2014 create one named `docker`.
+        # If a `docker` group already exists with a DIFFERENT GID,
+        # delete-and-recreate so the name stays predictable.
+        if getent group docker >/dev/null 2>&1; then
+          groupdel docker || true
+        fi
+        groupadd -g "$DOCKER_SOCK_GID" docker
+        EXISTING_GROUP=docker
+      fi
+      usermod -aG "$EXISTING_GROUP" node || true
+      echo "[entrypoint] docker.sock detected (gid=$DOCKER_SOCK_GID, group=$EXISTING_GROUP), user 'node' granted access"
+    else
+      echo "[entrypoint] docker.sock present but gid lookup failed, skipping remap"
+    fi
+  else
+    echo "[entrypoint] no /var/run/docker.sock mounted, docker CLI will not work (by design if feature unused)"
+  fi
+
   if [ -d /host-ssh ]; then
     echo "[entrypoint] bootstrapping SSH from /host-ssh"
     ls -la /host-ssh || true

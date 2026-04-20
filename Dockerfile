@@ -22,8 +22,28 @@ FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 # On r\u00e9utilise l'utilisateur "node" (uid/gid 1000) fourni par l'image de base,
 # ce qui permet d'acc\u00e9der au socket ssh-agent de l'h\u00f4te (gnome-keyring est
-# tipiquement owned par uid 1000).
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini git openssh-client gosu \
+# typiquement owned par uid 1000).
+#
+# Docker CLI (Franck 2026-04-20 23:46) \u2014 Option A (Docker-out-of-Docker).
+# Installation du client Docker officiel depuis le d\u00e9p\u00f4t docker.com.
+# Le daemon reste celui de l'h\u00f4te ; on monte juste /var/run/docker.sock
+# dans docker-compose.yml. L'entrypoint aligne dynamiquement le GID du
+# groupe `docker` dans le container sur le GID du socket (cf. entrypoint.sh).
+#
+# [CRITICAL] L'acc\u00e8s \u00e0 /var/run/docker.sock \u00e9quivaut \u00e0 root sur l'h\u00f4te
+# (un container peut monter n'importe quel path avec --volume, charger
+# --privileged, etc.). Assum\u00e9 en connaissance de cause : les agents
+# Dust \u00e9crivent d\u00e9j\u00e0 du code ex\u00e9cut\u00e9 dans ce container.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl ca-certificates tini git openssh-client gosu curl gnupg \
+  && install -m 0755 -d /etc/apt/keyrings \
+  && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+  && chmod a+r /etc/apt/keyrings/docker.asc \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin \
+  && apt-get purge -y curl gnupg \
+  && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \
   && install -d -o node -g node -m 700 /home/node/.ssh \
   && printf 'Host *\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /home/node/.ssh/known_hosts\n' > /home/node/.ssh/config \

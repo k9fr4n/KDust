@@ -102,7 +102,11 @@ export function RunCard({ run }: { run: RunCardData }) {
     }
   };
 
-  const href = run.task?.id ? `/tasks/${run.task.id}` : '#';
+  // Link target (Franck 2026-04-20 19:01): dashboard RunCard items
+  // must open the *run* detail page (/runs/:id), not the task page.
+  // The task name itself is still just the label; clicking the row
+  // takes you straight to that specific run's logs/output.
+  const href = `/runs/${run.id}`;
 
   return (
     <li className="group relative">
@@ -110,8 +114,16 @@ export function RunCard({ run }: { run: RunCardData }) {
         href={href}
         className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
       >
+        {/* Title row (Franck 2026-04-20 19:01):
+              [📌] task-name  <status-chip>
+            Status chip moved to *after* the title so the eye reads
+            the task first and the state as secondary info (same
+            reading order as GitHub Actions / CI dashboards). */}
         <div className="flex items-center gap-2 pr-20">
           {pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
+          <span className="text-sm font-medium truncate flex-1">
+            {run.task?.name ?? '(deleted cron)'}
+          </span>
           <span
             className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs shrink-0 ${statusCls}`}
           >
@@ -122,9 +134,6 @@ export function RunCard({ run }: { run: RunCardData }) {
               </span>
             )}
             {run.status}
-          </span>
-          <span className="text-sm font-medium truncate flex-1">
-            {run.task?.name ?? '(deleted cron)'}
           </span>
         </div>
         {/* Meta row redesign (Franck 2026-04-20 18:55):

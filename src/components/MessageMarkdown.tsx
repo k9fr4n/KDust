@@ -126,7 +126,16 @@ export interface MessageMarkdownProps {
   tone?: 'user' | 'agent' | 'system';
 }
 
-export function MessageMarkdown({ children, tone = 'agent' }: MessageMarkdownProps) {
+/**
+ * Internal component \u2014 the actual markdown pipeline. Exported as
+ * a React.memo-wrapped function at the bottom of this file so that
+ * unchanged `children` strings (the common case during streaming,
+ * composer typing, or any nowTick / draft-state re-render of the
+ * chat page) skip the expensive remark-parse + rehype-highlight
+ * traversal entirely. Measured 10x-20x render-cost reduction on
+ * 40-message windows with large code blocks (Franck 2026-04-20).
+ */
+function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps) {
   const linkCls =
     tone === 'user'
       ? 'underline decoration-white/60 hover:decoration-white'
@@ -228,3 +237,11 @@ export function MessageMarkdown({ children, tone = 'agent' }: MessageMarkdownPro
     </div>
   );
 }
+
+/**
+ * Default React.memo shallow compare is exactly what we want here:
+ * `children` is a primitive string (identity == value equality) and
+ * `tone` is a string literal. Two renders with the same `(children,
+ * tone)` tuple bail out of the markdown pipeline entirely.
+ */
+export const MessageMarkdown = React.memo(MessageMarkdownImpl);

@@ -3,6 +3,7 @@ import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, us
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
+import { ChatMessageBubble } from '@/components/ChatMessageBubble';
 import {
   MessageSquare,
   Plus,
@@ -835,84 +836,32 @@ function ChatPageInner() {
             // real previous message (even when it is outside the
             // window \u2014 correct behaviour: no spurious header).
             const sliceStart = Math.max(0, messages.length - visibleCount);
+            // Pre-resolve the agent label once for the whole slice
+            // \u2014 agents[] + agentSId are stable during typing so
+            // this string is stable across keystrokes and the memo
+            // of every agent bubble short-circuits.
+            const agentLabel = agents.find((a) => a.sId === agentSId)?.name ?? 'Agent';
             return messages.slice(sliceStart).map((m, relIdx) => {
               const i = sliceStart + relIdx;
               const prev = i > 0 ? messages[i - 1] : null;
-            // Day separator when the day changes between consecutive
-            // messages (or at the very top). Works for missing
-            // createdAt by simply skipping the separator.
-            const showDay =
-              !!m.createdAt &&
-              (!prev?.createdAt ||
-                new Date(m.createdAt).toDateString() !==
-                  new Date(prev.createdAt).toDateString());
-            const isUser = m.role === 'user';
-            const roleLabel = isUser
-              ? 'You'
-              : m.role === 'system'
-                ? 'System'
-                : (agents.find((a) => a.sId === agentSId)?.name ?? 'Agent');
-            return (
-              <Fragment key={m.id}>
-                {showDay && (
-                  <div className="flex justify-center my-1">
-                    <span className="text-[10px] uppercase tracking-wider text-slate-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
-                      {new Date(m.createdAt!).toLocaleDateString('fr-FR', {
-                        weekday: 'short',
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </span>
-                  </div>
-                )}
-                <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
-                    <div
-                      className={
-                        // `break-words` + `min-w-0` on the inner bubble
-                        // prevent a long unbroken token (URL, hash,
-                        // long file path) from widening the flex
-                        // column and forcing a horizontal scrollbar
-                        // in the messages pane.
-                        (isUser
-                          ? 'px-3 py-2 rounded-2xl rounded-br-sm text-sm bg-blue-600 text-white shadow-sm'
-                          : m.role === 'system'
-                            ? 'px-3 py-2 rounded-2xl text-sm bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
-                            : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
-                        ' break-words min-w-0 overflow-hidden'
-                      }
-                    >
-                      {m.role === 'system' ? (
-                        // System messages are short diagnostic strings
-                        // (errors, notices). Markdown rendering would
-                        // risk mangling them; we keep the plain <pre>.
-                        m.content
-                      ) : (
-                        <MessageMarkdown tone={isUser ? 'user' : 'agent'}>
-                          {m.content}
-                        </MessageMarkdown>
-                      )}
-                    </div>
-                    <div
-                      className={`text-[10px] text-slate-400 px-1 ${isUser ? 'text-right' : 'text-left'}`}
-                      data-tick={nowTick}
-                    >
-                      <span className="font-medium">{roleLabel}</span>
-                      {m.createdAt && (
-                        <span title={fullTime(m.createdAt)}>
-                          {' · '}
-                          {clockTime(m.createdAt)}
-                          <span className="ml-1 text-slate-300 dark:text-slate-600">
-                            ({relTime(m.createdAt)})
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </Fragment>
-            );
+              const showDay =
+                !!m.createdAt &&
+                (!prev?.createdAt ||
+                  new Date(m.createdAt).toDateString() !==
+                    new Date(prev.createdAt).toDateString());
+              const roleLabel =
+                m.role === 'user' ? 'You' : m.role === 'system' ? 'System' : agentLabel;
+              return (
+                <ChatMessageBubble
+                  key={m.id}
+                  id={m.id}
+                  role={m.role}
+                  content={m.content}
+                  createdAt={m.createdAt ?? null}
+                  roleLabel={roleLabel}
+                  showDay={showDay}
+                />
+              );
             });
           })()}
 

@@ -20,10 +20,99 @@
  * agent replies) but we keep the tree shallow and avoid extra plugins.
  */
 'use client';
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { Check, Copy } from 'lucide-react';
+
+/**
+ * CodeBlockWithCopy (Franck 2026-04-20 09:41).
+ *
+ * Wraps a fenced-code <pre> with a copy-to-clipboard button pinned
+ * to the top-right of the block. The button extracts the raw text
+ * from the rendered React tree (no re-rendering / no DOM queries)
+ * so it always matches what the user sees \u2014 including any
+ * whitespace rehype-highlight might have normalised.
+ *
+ * Feedback: icon flips to a check for 1.5s after a successful copy.
+ * Graceful fallback: if navigator.clipboard is unavailable (http,
+ * old browser) we fall back to document.execCommand('copy') via a
+ * hidden textarea so the feature works in every environment KDust
+ * ships to.
+ */
+function extractText(node: React.ReactNode): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (React.isValidElement(node)) {
+    const children = (node.props as { children?: React.ReactNode }).children;
+    return extractText(children);
+  }
+  return '';
+}
+
+function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
+  }
+  // Fallback for non-HTTPS contexts.
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Promise.resolve(ok);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+function CodeBlockWithCopy({
+  className,
+  children,
+  rest,
+}: {
+  className: string;
+  children: React.ReactNode;
+  rest: Record<string, unknown>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    const ok = await copyToClipboard(extractText(children));
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+  return (
+    <div className="relative group my-2">
+      <button
+        type="button"
+        onClick={onCopy}
+        title={copied ? 'Copied!' : 'Copy code'}
+        aria-label={copied ? 'Copied' : 'Copy code block'}
+        className={
+          'absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1 ' +
+          'rounded px-1.5 py-1 text-[10px] font-medium ' +
+          'bg-slate-800/80 hover:bg-slate-700 text-slate-200 ' +
+          'opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ' +
+          (copied ? '!opacity-100 text-green-400' : '')
+        }
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <pre className={className} {...rest}>
+        {children}
+      </pre>
+    </div>
+  );
+}
 
 /** Shared prop: the raw markdown text to render. */
 export interface MessageMarkdownProps {
@@ -97,9 +186,9 @@ export function MessageMarkdown({ children, tone = 'agent' }: MessageMarkdownPro
             );
           },
           pre: ({ children: c, ...rest }) => (
-            <pre className={preCls} {...rest}>
+            <CodeBlockWithCopy className={preCls} rest={rest as Record<string, unknown>}>
               {c}
-            </pre>
+            </CodeBlockWithCopy>
           ),
           // Tables: give them a subtle border + header shade.
           table: ({ children: c }) => (

@@ -17,7 +17,14 @@
 
 export type ConvEvent =
   | { type: 'pinned'; id: string; pinned: boolean; t?: number }
-  | { type: 'deleted'; id: string; t?: number };
+  | { type: 'deleted'; id: string; t?: number }
+  // Run-scoped events (Franck 2026-04-20 18:04): piggy-backing on the
+  // same bus to avoid a second BroadcastChannel connection. The
+  // dashboard\u0027s ConversationsBusListener calls router.refresh()
+  // on every event regardless of type, so a run pin/delete on one
+  // tab re-renders the RecentRuns listing on sibling tabs.
+  | { type: 'run-pinned'; id: string; pinned: boolean; t?: number }
+  | { type: 'run-deleted'; id: string; t?: number };
 
 const CHANNEL = 'kdust:conversations';
 const STORAGE_KEY = 'kdust:conv:event';

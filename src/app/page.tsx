@@ -18,6 +18,7 @@ import { db } from '@/lib/db';
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
 import { ConversationCard } from '@/components/ConversationCard';
+import { RunCard } from '@/components/RunCard';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
 // on pin/delete events from other tabs.
@@ -224,9 +225,12 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     db.project.count(),
     db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 8 }),
     db.taskRun.findMany({
-      orderBy: { startedAt: 'desc' },
+      // Pinned runs float to the top (Franck 2026-04-20 18:04).
+      orderBy: [{ pinned: 'desc' }, { startedAt: 'desc' }],
       take: 8,
-      include: { task: { select: { name: true, projectPath: true } } },
+      include: {
+        task: { select: { id: true, name: true, kind: true, projectPath: true } },
+      },
     }),
   ]);
 
@@ -451,60 +455,33 @@ function RecentRuns({ items }: { items: Array<any> }) {
         No runs yet.
       </p>
     );
+  // Rendering offloaded to <RunCard /> (client component) so each
+  // row gets the always-visible pin/delete action cluster and talks
+  // to the shared conversations bus for cross-tab sync.
   return (
     <ul className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-200 dark:divide-slate-800">
-      {items.map((r) => {
-        const statusCls = STATUS_CLASS[r.status] ?? 'bg-slate-100 text-slate-600';
-        return (
-          // Layout aligned on ConversationCard (Franck 2026-04-20 17:59):
-          //   Line 1: [status chip][task name ............................]
-          //   Line 2: [\u25f2 project] agent/kind                 time
-          // Same border-only project badge, same right-aligned relative
-          // timestamp, consistent spacing. No pin/delete yet on runs
-          // (see follow-up question in chat \u2014 adds a schema field).
-          <li key={r.id}>
-            <Link
-              href={`/tasks/${r.taskId}`}
-              className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
-            >
-              <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs shrink-0 ${statusCls}`}>
-                  {r.status === 'running' && (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                    </span>
-                  )}
-                  {r.status}
-                </span>
-                <span className="text-sm font-medium truncate flex-1">
-                  {r.task?.name ?? '(deleted cron)'}
-                </span>
-              </div>
-              <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 min-w-0">
-                {r.task?.projectPath ? (
-                  <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 font-mono">
-                    <FolderGit2 size={10} /> {r.task.projectPath}
-                  </span>
-                ) : (
-                  <span className="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 italic">
-                    no project
-                  </span>
-                )}
-                {r.task?.kind && (
-                  <span className="truncate">{r.task.kind}</span>
-                )}
-                {r.filesChanged !== null && r.filesChanged !== undefined && (
-                  <span className="font-mono shrink-0">
-                    {r.filesChanged}f +{r.linesAdded ?? 0}/-{r.linesRemoved ?? 0}
-                  </span>
-                )}
-                <span className="text-slate-400 shrink-0 ml-auto">{fmtRel(r.startedAt)}</span>
-              </div>
-            </Link>
-          </li>
-        );
-      })}
+      {items.map((r) => (
+        <RunCard
+          key={r.id}
+          run={{
+            id: r.id,
+            status: r.status,
+            startedAt: r.startedAt,
+            filesChanged: r.filesChanged,
+            linesAdded: r.linesAdded,
+            linesRemoved: r.linesRemoved,
+            pinned: r.pinned,
+            task: r.task
+              ? {
+                  id: r.taskId,
+                  name: r.task.name,
+                  kind: r.task.kind ?? null,
+                  projectPath: r.task.projectPath ?? null,
+                }
+              : null,
+          }}
+        />
+      ))}
     </ul>
   );
 }

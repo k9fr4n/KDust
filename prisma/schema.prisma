@@ -277,6 +277,11 @@ model TaskRun {
   linesRemoved  Int?
   dryRun        Boolean  @default(false)
 
+  // Starred run (Franck 2026-04-20 18:04). Mirrors the `pinned` flag
+  // on Conversation. Set via POST /api/runs/:id/pin, surfaced in
+  // the RunCard UI; pinned runs float to the top of the list.
+  pinned        Boolean  @default(false)
+
   // --- live progress ---
   phase         String?  // 'queued'|'syncing'|'branching'|'mcp'|'agent'|'diff'|'committing'|'pushing'|'done'
   phaseMessage  String?  // short human-readable status line

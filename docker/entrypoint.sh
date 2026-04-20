@@ -74,14 +74,31 @@ fi
 if [ -n "${DATABASE_URL:-}" ]; then
   echo "[entrypoint] prisma db push ..."
   if [ "$(id -u)" = "0" ]; then
-    gosu node:node node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma
+    # See note on gosu user-vs-user:group below. Using bare `node` here
+    # so the Prisma one-shot runs with the same groups as the main
+    # process; no practical impact for db push, but keeps behaviour
+    # symmetrical and avoids surprises if the CLI ever shells out.
+    gosu node node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma
   else
     node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma
   fi
 fi
 
+# gosu(1) gotcha (Franck 2026-04-21 00:10) \u2014 IMPORTANT:
+# `gosu node:node CMD` specifies BOTH user and primary group explicitly.
+# In that mode gosu drops **all supplementary groups** and sets groups
+# to just the specified primary group. This silently broke Docker-from-
+# agent access because the `docker` group (added to `node` via
+# usermod above) was not inherited by the long-running node.js process
+# \u2014 even though /etc/group was correctly updated (an `id` from a new
+# `docker exec` showed the group, but the already-running PID 1 did not
+# pick it up).
+#
+# `gosu node CMD` (user only, no group) tells gosu to call initgroups(3),
+# which reads /etc/group fresh and populates supplementary groups with
+# every group `node` is a member of. This is what we want.
 if [ "$(id -u)" = "0" ]; then
-  exec gosu node:node "$@"
+  exec gosu node "$@"
 else
   exec "$@"
 fi

@@ -35,7 +35,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { z } from 'zod';
-import { getDustClient } from '../dust/client';
+import { getDustClient, startTokenRefreshWatchdog } from '../dust/client';
 import { db } from '../db';
 
 export interface TaskRunnerHandle {
@@ -44,6 +44,8 @@ export interface TaskRunnerHandle {
   serverId: string;
   server: McpServer;
   transport: DustMcpServerTransport;
+  /** Stops the background apiKey refresh interval (see startTokenRefreshWatchdog). */
+  stopTokenWatchdog: () => void;
 }
 
 const MAX_DEPTH = Math.max(
@@ -245,6 +247,15 @@ export async function startTaskRunnerServer(
   );
   const VERBOSE = process.env.KDUST_MCP_VERBOSE !== '0';
 
+  // Token refresh watchdog (Franck 2026-04-21 01:00). Same rationale
+  // as in fs-server: rotate client._options.apiKey every 30min so
+  // heartbeat/register never send a stale bearer. Stopped by the
+  // handle.dispose() call made from releaseTaskRunnerServer().
+  const stopTokenWatchdog = startTokenRefreshWatchdog(
+    dust.client,
+    `mcp/task-runner run=${orchestratorRunId}`,
+  );
+
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
       dust.client,
@@ -259,24 +270,65 @@ export async function startTaskRunnerServer(
       HEARTBEAT_MS,
     );
     transport.onerror = (err: any) => {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : typeof err === 'string'
-          ? err
-          : JSON.stringify(err ?? {});
-      if (/No activity within \d+ milliseconds/i.test(msg) || /SSE connection error/i.test(msg)) {
+      // Normalize the Dust SDK\u0027s three error shapes (Error / string /
+      // structured { dustError, status, url }) \u2014 same logic as fs-server.
+      let msg = '';
+      let status: number | undefined;
+      let dustErrType: string | undefined;
+      if (err instanceof Error) msg = err.message;
+      else if (typeof err === 'string') msg = err;
+      else if (err && typeof err === 'object') {
+        status = typeof err.status === 'number' ? err.status : undefined;
+        dustErrType = err.dustError?.type ?? err.cause?.dustError?.type;
+        msg = err.message ?? err.dustError?.message ?? err.type ?? '';
+        try { msg = msg || JSON.stringify(err); } catch { /* circular */ }
+      }
+      const isAuthFailure =
+        status === 401 ||
+        dustErrType === 'expired_oauth_token_error' ||
+        /401\s+Unauthorized/i.test(msg) ||
+        /expired_oauth_token_error/i.test(msg) ||
+        /access token (has )?expired/i.test(msg);
+      if (isAuthFailure) {
+        // Release the run\u0027s handle so the next run_task call (if the
+        // orchestrator is still active) triggers a fresh startTaskRunnerServer
+        // with a refreshed token. The watchdog *should* have prevented
+        // this, but the invalidate path is our safety net.
+        console.warn(
+          `[mcp/task-runner] auth failure for run=${orchestratorRunId} (status=${status ?? '?'} dustErrType=${dustErrType ?? '?'}): releasing handle`,
+        );
+        void (async () => {
+          try {
+            const { releaseTaskRunnerServer } = await import('./registry');
+            await releaseTaskRunnerServer(orchestratorRunId);
+          } catch { /* ignore */ }
+        })();
+        return;
+      }
+      if (!msg || /No activity within \d+ milliseconds/i.test(msg) || /SSE connection error/i.test(msg)) {
         // Same idle-close pattern as fs-server; polyfill auto-reconnects.
         return;
       }
       console.warn(`[mcp/task-runner] transport error: ${msg}`);
     };
     (server as any).__transport = transport;
-    server.connect(transport).catch(reject);
+    server.connect(transport).catch((err) => {
+      // If connect fails, stop the watchdog we just started so we don\u0027t
+      // leak a ticker.
+      stopTokenWatchdog();
+      reject(err);
+    });
     setTimeout(() => reject(new Error('task-runner registration timed out after 15s')), 15000);
   });
 
   const serverId = await ready;
   const transport = (server as any).__transport as DustMcpServerTransport;
-  return { orchestratorRunId, projectName, serverId, server, transport };
+  return {
+    orchestratorRunId,
+    projectName,
+    serverId,
+    server,
+    transport,
+    stopTokenWatchdog,
+  };
 }

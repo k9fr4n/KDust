@@ -2,7 +2,7 @@ import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
-import { getDustClient } from '../dust/client';
+import { getDustClient, startTokenRefreshWatchdog } from '../dust/client';
 import { loadTokens } from '../dust/tokens';
 import { allFsTools } from './fs-tools';
 import { PROJECTS_ROOT } from '../projects';
@@ -45,10 +45,21 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
   let serverId: string | null = null;
   let invalidated = false;
 
+  // Token refresh watchdog (Franck 2026-04-21 01:00): mutate the
+  // DustAPI apiKey every 30min so heartbeats/registers always see a
+  // fresh bearer. Belt to the proactive-rebuild suspenders below,
+  // specifically to cover cases where the scheduled rebuild doesn\u0027t
+  // fire (timer lost, unref race, refresh transiently failing).
+  const stopTokenWatchdog = startTokenRefreshWatchdog(
+    dust.client,
+    `mcp/fs-server project=${projectName}`,
+  );
+
   // Late-bound to avoid import cycle (registry imports this module).
   const invalidate = async () => {
     if (invalidated) return;
     invalidated = true;
+    stopTokenWatchdog();
     try {
       const { invalidateFsServer } = await import('./registry');
       await invalidateFsServer(projectName);

@@ -69,6 +69,57 @@ export async function getValidAccessToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Keeps the apiKey of a DustAPI instance fresh for the duration of a
+ * long-running MCP handle (Franck 2026-04-21 01:00).
+ *
+ * Problem
+ * -------
+ * DustAPI captures the bearer token in `_options.apiKey` at construction
+ * time. Long-lived handles (fs-cli, task-runner) keep using that cached
+ * token for hours \u2014 heartbeats and SDK-internal re-registers start
+ * failing with `expired_oauth_token_error` once the WorkOS token ages
+ * out (~1h). The invalidate-on-401 path in fs-server catches it AFTER
+ * the first failure; this watchdog prevents the failure happening in
+ * the first place by rotating `_options.apiKey` in place periodically.
+ *
+ * Why mutate in place instead of rebuilding the client
+ * ----------------------------------------------------
+ * DustMcpServerTransport holds a reference to the DustAPI instance.
+ * Rebuilding the client would mean rebuilding the transport, which
+ * is what the proactive-rebuild path already does at a slower cadence.
+ * Here we want the cheapest possible mid-flight refresh: just swap
+ * the string property. The SDK reads `_options.apiKey` on every HTTP
+ * call, so the new token is picked up on the very next request.
+ *
+ * Returns a cleanup function that stops the watchdog (call it from the
+ * invalidate/release path).
+ */
+export function startTokenRefreshWatchdog(
+  client: DustAPI,
+  label: string,
+  intervalMs: number = 30 * 60 * 1000, // 30 min (< 1h token TTL)
+): () => void {
+  const timer = setInterval(async () => {
+    try {
+      const fresh = await getValidAccessToken();
+      if (!fresh) {
+        console.warn(`[${label}] token refresh watchdog: no token available`);
+        return;
+      }
+      const opts = (client as any)._options;
+      if (opts && opts.apiKey !== fresh) {
+        opts.apiKey = fresh;
+        console.log(`[${label}] token refresh watchdog: apiKey rotated`);
+      }
+    } catch (e: any) {
+      console.warn(`[${label}] token refresh watchdog failed: ${e?.message ?? e}`);
+    }
+  }, intervalMs);
+  (timer as any).unref?.();
+  return () => clearInterval(timer);
+}
+
 export async function getDustClient(): Promise<{
   client: DustAPI;
   workspaceId: string;

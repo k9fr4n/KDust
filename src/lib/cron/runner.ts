@@ -69,6 +69,53 @@ export function isTaskRunActive(taskId: string): boolean {
  * Kept near runTask so the coupling between `pushEnabled`, the
  * footer, and the subsequent git pipeline is visible in one place.
  */
+/**
+ * DooD host-path footer (Franck 2026-04-20 23:56).
+ *
+ * Why this exists:
+ *   KDust runs in a container and the Docker daemon it talks to is on
+ *   the host (socket bind-mount). When an agent writes
+ *   `docker run -v "$(pwd):/workspace" ...`, $(pwd) is evaluated INSIDE
+ *   KDust and returns /projects/<name> \u2014 a container-local path the
+ *   host daemon cannot see. Mounts silently resolve to empty dirs,
+ *   which is worse than a loud error.
+ *
+ * Fix:
+ *   Inject the *host-side* project root into every agent prompt so the
+ *   agent knows which path to put on the left side of -v. The value
+ *   comes from KDUST_HOST_PROJECTS_ROOT, populated by docker-compose
+ *   from ${PWD}/projects at compose parse time.
+ *
+ * Returns an empty string when the env var is unset (non-Docker
+ * deployments, local `next dev`, \u2026) so the prompt stays clean.
+ */
+function buildDockerHostContext(projectPath: string): string {
+  const hostRoot = process.env.KDUST_HOST_PROJECTS_ROOT;
+  if (!hostRoot) return '';
+  const hostProjectPath = `${hostRoot.replace(/\/+$/, '')}/${projectPath}`;
+  return [
+    '',
+    '---',
+    '[Docker-from-agent context]',
+    'This KDust instance runs in a container that shares the host Docker socket',
+    '(Docker-out-of-Docker). If you invoke `docker run -v <src>:<dst>` the daemon',
+    'resolves <src> against the HOST filesystem, NOT this container. Use the',
+    'path below for your project working tree:',
+    '',
+    `  HOST_PROJECT_PATH=${hostProjectPath}`,
+    '',
+    'Example (PowerShell lint inside a throw-away container):',
+    '  docker run --rm \\\\',
+    `    -v "${hostProjectPath}:/workspace" \\\\`,
+    '    -w /workspace \\\\',
+    '    mcr.microsoft.com/powershell:7.5-ubuntu-24.04 \\\\',
+    '    pwsh -NoProfile -Command \'...your script...\'',
+    '',
+    'Never use $(pwd) on the -v left side \u2014 it would evaluate to /projects/\u2026',
+    'which does not exist on the host and the mount would be empty.',
+  ].join('\n');
+}
+
 function buildAutomationPrompt(
   job: {
     prompt: string;
@@ -258,7 +305,16 @@ export async function runTask(
   // it REPLACES job.prompt entirely. The audit-trail conversation
   // also stores this effective prompt so what we see in /chat
   // matches what the agent actually saw.
-  const effectivePrompt = opts?.promptOverride ?? job.prompt;
+  //
+  // We then append the Docker-host context (only if the feature is
+  // wired via KDUST_HOST_PROJECTS_ROOT) so EVERY agent \u2014 audit or
+  // automation, original prompt or overridden \u2014 gets the host path
+  // info needed to write correct `docker run -v` commands. The footer
+  // is appended once at this level rather than inside each branch to
+  // avoid duplication and to ensure consistency across code paths.
+  const basePrompt = opts?.promptOverride ?? job.prompt;
+  const dockerContext = buildDockerHostContext(job.projectPath);
+  const effectivePrompt = dockerContext ? `${basePrompt}${dockerContext}` : basePrompt;
   const startedAt = Date.now();
   console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${policy.baseBranch} mode=${job.branchMode}`);
 

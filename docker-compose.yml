@@ -11,6 +11,15 @@ services:
       # Si ssh-agent est lancé sur l'hôte et SSH_AUTH_SOCK exporté,
       # l'agent sera utilisé en priorité sur les clés copiées.
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
+      # Chemin HÔTE (résolu par Compose au parse time via ${PWD}) du
+      # répertoire où sont les projets. Nécessaire pour que les agents
+      # puissent construire des `docker run -v <host>:<container>` qui
+      # marchent en DooD: le daemon Docker est sur l'hôte et interprète
+      # les paths du flag -v comme des chemins hôte, pas comme des
+      # chemins dans le container KDust. Sans cette variable, $(pwd)
+      # à l'intérieur de KDust vaut /projects/... et le daemon ne
+      # trouve rien à monter (dossier vide créé silencieusement).
+      - KDUST_HOST_PROJECTS_ROOT=${PWD}/projects
     volumes:
       - ./data:/data
       - ./projects:/projects

@@ -280,8 +280,11 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   `kind` sort key is kept in the backend for URL
                   backward-compat. */}
               <SortableTh col="name"       sort={sort} dir={dir} href={sortHref('name')}>Name</SortableTh>
-              <SortableTh col="agent"      sort={sort} dir={dir} href={sortHref('agent')}>Agent</SortableTh>
+              {/* Column order (Franck 2026-04-20 21:53): Project
+                  comes before Agent so the list reads
+                  "task in <project> by <agent>" left-to-right. */}
               <SortableTh col="project"    sort={sort} dir={dir} href={sortHref('project')}>Project</SortableTh>
+              <SortableTh col="agent"      sort={sort} dir={dir} href={sortHref('agent')}>Agent</SortableTh>
               <SortableTh col="enabled"    sort={sort} dir={dir} href={sortHref('enabled')}>Enabled</SortableTh>
               <th className="py-2">Running</th>
               <SortableTh col="lastStatus" sort={sort} dir={dir} href={sortHref('lastStatus')}>Last status</SortableTh>
@@ -318,8 +321,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       badges removed 2026-04-19 13:48 as duplicates
                       of the left-border color and the task title. */}
                   <td className="py-2 font-medium">{c.name}</td>
-                  <td className="text-xs">{c.agentName ?? c.agentSId}</td>
                   <td className="text-xs">{c.projectPath}</td>
+                  <td className="text-xs">{c.agentName ?? c.agentSId}</td>
                   <td>
                     {c.enabled ? (
                       <span className="inline-block px-1.5 py-0.5 rounded text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400">

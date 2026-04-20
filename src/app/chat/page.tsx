@@ -712,7 +712,18 @@ function ChatPageInner() {
       onPointerUp={onResizeEnd}
       onPointerCancel={onResizeEnd}
     >
-      {/* Sidebar conversations (resizable) */}
+      {/* -----------------------------------------------------------------
+       * Sidebar removed 2026-04-20 (Franck): the conversation list now
+       * lives exclusively on the dedicated /conversations dashboard.
+       * The "New chat" button was re-added inside the main header
+       * (see <section> below). The <aside> block, its drag handle,
+       * and the resize state (sidebarW / onResizeStart / ...) are
+       * preserved as dead code inside a `false && (...)` wrapper so
+       * that reintroducing the sidebar later only requires flipping
+       * the flag \u2014 avoids merge churn on the ~90-line block.
+       * ---------------------------------------------------------------- */}
+      {false && (
+      <>
       <aside
         className="flex flex-col min-h-0 border border-slate-200 dark:border-slate-800 rounded-lg shrink-0"
         style={{ width: sidebarW }}
@@ -808,6 +819,8 @@ function ChatPageInner() {
         <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
         <div className="h-full w-full rounded-full bg-slate-200 dark:bg-slate-800 group-hover:bg-brand-400 transition-colors" />
       </div>
+      </>
+      )}
 
       {/* Main chat pane. min-w-0 lets this flex track actually shrink
           when a message bubble contains unwrappable content (long URL,
@@ -843,33 +856,84 @@ function ChatPageInner() {
             </span>
           )}
 
-          {currentProject && (
-            <span
-              className={`ml-auto flex items-center gap-1 text-xs px-2 py-1 rounded border ${
-                mcpStatus === 'ready'
-                  ? 'border-green-600 text-green-700 dark:text-green-400'
+          {/* Right-aligned cluster: MCP status chip (when a project
+              is bound) + the "New chat" button that used to live in
+              the now-removed sidebar. `ml-auto` on the wrapper keeps
+              both anchored to the right regardless of whether the
+              MCP chip is visible. */}
+          <div className="ml-auto flex items-center gap-2">
+            {currentProject && (
+              <span
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded border ${
+                  mcpStatus === 'ready'
+                    ? 'border-green-600 text-green-700 dark:text-green-400'
+                    : mcpStatus === 'starting'
+                      ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                      : mcpStatus === 'error'
+                        ? 'border-red-500 text-red-600 dark:text-red-400'
+                        : 'border-slate-300 text-slate-500'
+                }`}
+                title={
+                  mcpServerId
+                    ? `MCP fs tools active (serverId=${mcpServerId})`
+                    : 'MCP fs tools inactive'
+                }
+              >
+                <Wrench size={12} />
+                {mcpStatus === 'ready'
+                  ? `fs tools \u00b7 ${currentProject}`
                   : mcpStatus === 'starting'
-                    ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                    ? `starting fs tools\u2026`
                     : mcpStatus === 'error'
-                      ? 'border-red-500 text-red-600 dark:text-red-400'
-                      : 'border-slate-300 text-slate-500'
-              }`}
-              title={
-                mcpServerId
-                  ? `MCP fs tools active (serverId=${mcpServerId})`
-                  : 'MCP fs tools inactive'
-              }
-            >
-              <Wrench size={12} />
-              {mcpStatus === 'ready'
-                ? `fs tools · ${currentProject}`
-                : mcpStatus === 'starting'
-                  ? `starting fs tools…`
-                  : mcpStatus === 'error'
-                    ? 'fs tools error'
-                    : `fs tools idle · ${currentProject}`}
-            </span>
-          )}
+                      ? 'fs tools error'
+                      : `fs tools idle \u00b7 ${currentProject}`}
+              </span>
+            )}
+            {/* Per-conversation actions (Franck 2026-04-20 16:46):
+                pin + delete for the CURRENT conversation, always
+                visible so they are discoverable on touch devices and
+                match the /conversations dashboard behaviour. Same
+                togglePin / removeConv handlers as the sidebar code
+                and the same /api/conversations/:id/pin endpoint as
+                ConversationCard \u2014 pin state is therefore shared
+                across /chat and the dashboard without extra plumbing. */}
+            {currentId && (() => {
+              const currentConv = convs.find((c) => c.id === currentId);
+              const isPinned = !!currentConv?.pinned;
+              return (
+                <div className="flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded px-1 py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => void togglePin(currentId, !isPinned)}
+                    title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
+                    aria-label={isPinned ? 'Unpin conversation' : 'Pin conversation'}
+                    className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                      isPinned
+                        ? 'text-amber-500'
+                        : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeConv(currentId)}
+                    title="Delete conversation"
+                    aria-label="Delete conversation"
+                    className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-950 text-slate-400 hover:text-red-500"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })()}
+            {/* New chat \u2014 moved here from the removed left sidebar
+                (Franck 2026-04-20 16:36). Same handler, unchanged
+                behaviour. */}
+            <Button onClick={newChat} title="Start a new conversation">
+              <Plus size={14} /> New chat
+            </Button>
+          </div>
         </div>
 
         {/*

@@ -85,12 +85,20 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
         </div>
       </OpenConversationLink>
 
-      <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white/90 dark:bg-slate-900/90 backdrop-blur px-1 rounded">
+      {/* Action cluster (pin / delete). Always visible (Franck
+          2026-04-20 16:46) \u2014 the previous hover-only pattern made
+          discoverability poor and was invisible on touch devices.
+          The pin icon goes amber when active so the state is legible
+          at a glance. */}
+      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white/70 dark:bg-slate-900/70 backdrop-blur px-1 rounded">
         <button
           onClick={togglePin}
           disabled={busy}
           title={pinned ? 'Unpin' : 'Pin'}
-          className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500"
+          aria-label={pinned ? 'Unpin conversation' : 'Pin conversation'}
+          className={`p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 ${
+            pinned ? 'text-amber-500' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+          }`}
         >
           {pinned ? <PinOff size={14} /> : <Pin size={14} />}
         </button>
@@ -98,7 +106,8 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
           onClick={del}
           disabled={busy}
           title="Delete"
-          className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-950 text-red-500"
+          aria-label="Delete conversation"
+          className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-950 text-slate-400 hover:text-red-500"
         >
           <Trash2 size={14} />
         </button>

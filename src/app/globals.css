@@ -25,10 +25,14 @@ body { @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text
  * the theme without reaching for !important. This does not affect
  * inline <code> or any other code that is not hljs-processed.
  */
-.kdust-md pre code.hljs,
-.kdust-md pre code.hljs * {
-  color: inherit;
-}
+/* Reset the background the theme sets on <code> so our bg-slate-900
+ * <pre> wrapper shows through uniformly. No `color: inherit` on
+ * children: that would clobber every .hljs-* token rule below
+ * because `pre code.hljs *` beats `.hljs-keyword` on specificity.
+ * Children without a token class will inherit this color naturally;
+ * children WITH a token class get their own colour from the rules
+ * further down. Fixed 2026-04-20 17:37 (Franck reported
+ * comments / keywords rendering as flat slate-100). */
 .kdust-md pre code.hljs {
   background: transparent;
   color: #c9d1d9; /* github-dark default text */

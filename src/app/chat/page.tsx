@@ -142,6 +142,53 @@ function ChatPageInner() {
   // Dust (via /cancel) to stop generating server-side.
   const streamAbortRef = useRef<AbortController | null>(null);
   const [stopping, setStopping] = useState(false);
+
+  // --- Windowing (Franck 2026-04-20 10:15) ---
+  // Long conversations (hundreds of agent messages with code blocks,
+  // tables, syntax highlighting) grind the DOM \u2014 react-markdown
+  // keeps the whole tree mounted on every state change. We only
+  // render the last `visibleCount` messages and expose a "Show
+  // earlier" button at the top. The trimmed messages stay in the
+  // `messages` state (no refetch needed when expanding) but do NOT
+  // cost DOM / markdown-parse cycles.
+  const VISIBLE_STEP = 40;
+  const [visibleCount, setVisibleCount] = useState(VISIBLE_STEP);
+  // Ref to the scrolling container so we can preserve the scroll
+  // position when the user clicks "Show earlier" (see useLayoutEffect).
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  // Heights are captured synchronously before React paints the new
+  // window so we can compensate scrollTop.
+  const pendingScrollAdjust = useRef<{ prevHeight: number; prevTop: number } | null>(null);
+
+  // Reset window when we switch conversation: always start at the
+  // bottom with a fresh 40-message budget.
+  useEffect(() => {
+    setVisibleCount(VISIBLE_STEP);
+  }, [currentId]);
+
+  // After expanding the window, keep the user\u2019s reading anchor
+  // stable: newly inserted content at the top must be above the
+  // current viewport, not push it down.
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    const pending = pendingScrollAdjust.current;
+    if (el && pending) {
+      const delta = el.scrollHeight - pending.prevHeight;
+      el.scrollTop = pending.prevTop + delta;
+      pendingScrollAdjust.current = null;
+    }
+  }, [visibleCount]);
+
+  const showEarlier = () => {
+    const el = scrollerRef.current;
+    if (el) {
+      pendingScrollAdjust.current = {
+        prevHeight: el.scrollHeight,
+        prevTop: el.scrollTop,
+      };
+    }
+    setVisibleCount((v) => v + VISIBLE_STEP);
+  };
   const bottomRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
 
@@ -761,9 +808,36 @@ function ChatPageInner() {
           immediate visual field regardless of scroll position.
         */}
 
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
-          {messages.map((m, i) => {
-            const prev = i > 0 ? messages[i - 1] : null;
+        <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
+          {/* Windowing banner: only visible when the top of the
+              conversation is currently trimmed out. Clicking expands
+              the render window by VISIBLE_STEP messages and keeps the
+              user\u0027s scroll anchor stable via useLayoutEffect. */}
+          {messages.length > visibleCount && (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={showEarlier}
+                className="text-[11px] px-3 py-1 rounded-full border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
+                title={`${messages.length - visibleCount} earlier message(s) hidden for performance`}
+              >
+                \u2191 Show {Math.min(VISIBLE_STEP, messages.length - visibleCount)} earlier message{Math.min(VISIBLE_STEP, messages.length - visibleCount) > 1 ? 's' : ''}
+                <span className="ml-1 text-slate-400">
+                  ({messages.length - visibleCount} hidden)
+                </span>
+              </button>
+            </div>
+          )}
+          {(() => {
+            // Compute the visible slice once per render. `i` in the
+            // inner map is the ABSOLUTE index in `messages`, preserved
+            // so the day-separator logic keeps comparing against the
+            // real previous message (even when it is outside the
+            // window \u2014 correct behaviour: no spurious header).
+            const sliceStart = Math.max(0, messages.length - visibleCount);
+            return messages.slice(sliceStart).map((m, relIdx) => {
+              const i = sliceStart + relIdx;
+              const prev = i > 0 ? messages[i - 1] : null;
             // Day separator when the day changes between consecutive
             // messages (or at the very top). Works for missing
             // createdAt by simply skipping the separator.
@@ -839,7 +913,8 @@ function ChatPageInner() {
                 </div>
               </Fragment>
             );
-          })}
+            });
+          })()}
 
           {toolCalls.length > 0 && (
             <div className="flex flex-col gap-1">

@@ -48,6 +48,22 @@ const NOISE_PATTERNS: RegExp[] = [
   // SSE connection errors surfaced by our own onerror with non-Error payloads;
   // they correspond to heartbeat reconnects and are already absorbed.
   /\[mcp\/fs-server\] transport error project=.*SSE connection error/i,
+  // Dust-side idle-close of MCP SSE streams (~5 min of silence).
+  // Fully expected, the SDK polyfill auto-reconnects within seconds;
+  // keeping them in the log only scares users (Franck 2026-04-20 22:21).
+  //
+  // (a) Raw SDK console.error — CRITICAL: that payload also dumps
+  //     the full Bearer JWT via `headers.Authorization`. Dropping
+  //     it is mandatory per the "no secrets in logs" policy, not
+  //     just cosmetic.
+  /Error in MCP EventSource connection:/i,
+  // (b) Our own warn line immediately following the SDK error.
+  /\[mcp\/fs-server\] SSE idle-close for project=/i,
+  // (c) The "Attempting to reconnect to SSE..." + "MCP SSE
+  //     connection established" pair that the polyfill emits 5 s
+  //     later — also benign churn, paired 1-for-1 with (a).
+  /Attempting to reconnect to SSE\.\.\./i,
+  /^MCP SSE connection established$/i,
 ];
 
 export function isNoise(text: string): boolean {

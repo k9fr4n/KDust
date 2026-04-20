@@ -24,6 +24,29 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+// Extra languages to register on top of highlight.js\u0027s `common`
+// bundle. `common` (the default rehype-highlight ships with) covers
+// ~36 popular languages (js, ts, python, sql, ...), but most of our
+// ops content is yaml / bash / terraform (hcl) / dockerfile / ps1 /
+// ini, which are NOT in common. Missing-language blocks fall back
+// to auto-detection and usually end up rendered as a single flat
+// color. Explicitly registering them gives us proper token
+// colouring and accurate detection.
+//   Franck 2026-04-20 16:23: \"possible d'avoir la coloration
+//   syntaxique sur les bloc code dans /chat/?id=\"
+import hljsBash from 'highlight.js/lib/languages/bash';
+import hljsDiff from 'highlight.js/lib/languages/diff';
+import hljsDockerfile from 'highlight.js/lib/languages/dockerfile';
+// NB: hcl / terraform language bundle is not shipped by
+// highlight.js core (only available via a third-party package).
+// For HCL / Terraform / tfvars we fall back on `ini` + keyword
+// aliasing, which gives a decent first-order colouring (strings,
+// comments, section headers) without adding a dependency.
+import hljsIni from 'highlight.js/lib/languages/ini';
+import hljsNginx from 'highlight.js/lib/languages/nginx';
+import hljsPowershell from 'highlight.js/lib/languages/powershell';
+import hljsProperties from 'highlight.js/lib/languages/properties';
+import hljsYaml from 'highlight.js/lib/languages/yaml';
 import { Check, Copy } from 'lucide-react';
 
 /**
@@ -163,7 +186,40 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
         // export an exact options shape compatible with the generic we
         // get here. `ignoreMissing: true` prevents a hard error when the
         // agent tags a code block with an unknown language.
-        rehypePlugins={[[rehypeHighlight, { ignoreMissing: true, detect: true }]]}
+        rehypePlugins={[
+          [
+            rehypeHighlight,
+            {
+              // Auto-detect for blocks that come without a language
+              // hint (Dust agents often forget the tag).
+              detect: true,
+              // Extra languages on top of the default `common` bundle.
+              languages: {
+                bash: hljsBash,
+                diff: hljsDiff,
+                dockerfile: hljsDockerfile,
+                ini: hljsIni,
+                nginx: hljsNginx,
+                powershell: hljsPowershell,
+                properties: hljsProperties,
+                yaml: hljsYaml,
+              },
+              // Common user-written aliases \u2014 highlight.js is strict
+              // about names, so we normalise the ones agents tend to
+              // emit: ```tf, ```ps1, ```sh, ```docker, ```env, ```yml.
+              // `terraform`/`tf`/`hcl` fall back to `ini` (no native
+              // bundle) \u2014 imperfect but better than flat text.
+              aliases: {
+                bash: ['sh', 'shell', 'zsh'],
+                dockerfile: ['docker'],
+                ini: ['env', 'conf', 'config', 'hcl', 'terraform', 'tf', 'tfvars'],
+                powershell: ['ps', 'ps1', 'pwsh'],
+                properties: ['props'],
+                yaml: ['yml'],
+              },
+            },
+          ],
+        ]}
         components={{
           a: ({ href, children: c, ...rest }) => (
             <a

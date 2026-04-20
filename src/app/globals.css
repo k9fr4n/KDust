@@ -8,3 +8,53 @@ html, body { height: 100%; }
    pages (e.g. /chat) size themselves to the viewport and do their own
    overflow handling; nothing above them should ever scroll sideways. */
 body { @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 overflow-x-hidden; }
+
+/* ---------------------------------------------------------------
+ * Syntax-highlighting guardrails (Franck 2026-04-20 16:23)
+ * ---------------------------------------------------------------
+ * highlight.js\u0027s github-dark theme colours token spans, but the
+ * parent <pre> in <MessageMarkdown> also carries Tailwind colour
+ * utilities (text-slate-100) to keep the block readable when
+ * highlighting fails. Tailwind utilities are loaded AFTER the theme
+ * CSS, so their specificity and order override the theme\u2019s
+ * own `.hljs` rule on the <code> element \u2014 the tokens end up a
+ * flat white.
+ *
+ * We re-assert the theme colours with a slightly more specific
+ * selector (pre code.hljs) so the cascade tips back in favour of
+ * the theme without reaching for !important. This does not affect
+ * inline <code> or any other code that is not hljs-processed.
+ */
+.kdust-md pre code.hljs,
+.kdust-md pre code.hljs * {
+  color: inherit;
+}
+.kdust-md pre code.hljs {
+  background: transparent;
+  color: #c9d1d9; /* github-dark default text */
+}
+/* Re-declare the most common token colours so they win against
+ * Tailwind\u2019s text-slate-* on the parent <pre>. */
+.kdust-md .hljs-keyword,
+.kdust-md .hljs-selector-tag,
+.kdust-md .hljs-literal,
+.kdust-md .hljs-section,
+.kdust-md .hljs-link { color: #ff7b72; }
+.kdust-md .hljs-string,
+.kdust-md .hljs-attr,
+.kdust-md .hljs-template-tag,
+.kdust-md .hljs-template-variable { color: #a5d6ff; }
+.kdust-md .hljs-comment,
+.kdust-md .hljs-quote { color: #8b949e; font-style: italic; }
+.kdust-md .hljs-number,
+.kdust-md .hljs-regexp,
+.kdust-md .hljs-meta { color: #79c0ff; }
+.kdust-md .hljs-title,
+.kdust-md .hljs-name,
+.kdust-md .hljs-type,
+.kdust-md .hljs-built_in,
+.kdust-md .hljs-class .hljs-title { color: #d2a8ff; }
+.kdust-md .hljs-variable,
+.kdust-md .hljs-params { color: #ffa657; }
+.kdust-md .hljs-addition { color: #aff5b4; background: #033a16; }
+.kdust-md .hljs-deletion { color: #ffdcd7; background: #67060c; }

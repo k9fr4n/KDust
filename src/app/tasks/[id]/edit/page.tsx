@@ -23,6 +23,7 @@ export default async function EditCronPage({ params }: { params: Promise<{ id: s
         enabled: cron.enabled,
         kind: (cron.kind === 'audit' ? 'audit' : 'automation'),
         pushEnabled: cron.pushEnabled,
+        taskRunnerEnabled: cron.taskRunnerEnabled,
         baseBranch: cron.baseBranch,
         branchMode: (cron.branchMode === 'stable' ? 'stable' : 'timestamped'),
         branchPrefix: cron.branchPrefix,

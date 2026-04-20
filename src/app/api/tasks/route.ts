@@ -45,6 +45,12 @@ const TaskInput = z.object({
   enabled: z.boolean().default(true),
   // automation-push settings
   pushEnabled: z.boolean().default(true),
+  // Orchestration opt-in (Franck 2026-04-20 22:58). When true, the
+  // runner attaches the task-runner MCP server to this task's agent
+  // so it can invoke other tasks via run_task. Default false: the
+  // vast majority of tasks are plain workers; only a dedicated
+  // "orchestrator" should set this.
+  taskRunnerEnabled: z.boolean().default(false),
   // Phase 1 (2026-04-19): branch fields are optional overrides.
   // NULL / omitted \u2192 inherit from the parent Project row. An
   // empty string on the wire is coerced to null so "clear override"

@@ -2,7 +2,11 @@ import { db } from '../db';
 import { postToTeams, type TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
-import { getFsServerId } from '../mcp/registry';
+import {
+  getFsServerId,
+  getTaskRunnerServerId,
+  releaseTaskRunnerServer,
+} from '../mcp/registry';
 import { parseAuditOutput } from '../audit/parser';
 import { getAuditDefaultByKey } from '../audit/defaults';
 import { resolveBranchPolicy, type ResolvedBranchPolicy } from '../branch-policy';
@@ -110,25 +114,78 @@ function buildAutomationPrompt(
  *   [9]  persist TaskRun + local Conversation for audit trail
  *   [10] Teams report with branch/commit/MR links + diff stats
  */
-export async function runTask(taskId: string): Promise<void> {
+/**
+ * Options for programmatic invocation (Franck 2026-04-20 22:58).
+ *
+ *   parentRunId    When set, this run was spawned by another run via
+ *                  the task-runner MCP tool. Used to (a) stamp the
+ *                  lineage columns (parentRunId / runDepth), and
+ *                  (b) allow bypassing the per-project concurrency
+ *                  lock: ancestors in the chain are already "paused"
+ *                  waiting on their run_task tool call, so letting
+ *                  the child take over the working tree is correct.
+ *
+ *   runDepth       Depth of this run within its chain. Should be
+ *                  parent.runDepth + 1. The caller computes it so
+ *                  we can enforce max-depth before dispatch and
+ *                  avoid an extra DB round-trip here.
+ *
+ *   promptOverride When set, replaces the task's stored prompt for
+ *                  this single invocation. Used by the orchestrator
+ *                  to pass failure context on a retry (e.g. lint
+ *                  errors back into codegen).
+ */
+export interface RunTaskOptions {
+  parentRunId?: string;
+  runDepth?: number;
+  promptOverride?: string;
+}
+
+/**
+ * Walk the parentRunId chain and return the list of ancestor run IDs
+ * (including the starting one). Bounded to avoid infinite loops on
+ * corrupt data. Used by the concurrency-lock bypass.
+ */
+async function getAncestorRunIds(runId: string): Promise<string[]> {
+  const ids: string[] = [];
+  let cur: string | null = runId;
+  for (let i = 0; i < 20 && cur; i++) {
+    ids.push(cur);
+    const r: { parentRunId: string | null } | null = await db.taskRun.findUnique({
+      where: { id: cur },
+      select: { parentRunId: true },
+    });
+    cur = r?.parentRunId ?? null;
+  }
+  return ids;
+}
+
+export async function runTask(
+  taskId: string,
+  opts?: RunTaskOptions,
+): Promise<string> {
   const job = await db.task.findUnique({ where: { id: taskId } });
-  if (!job) return;
+  if (!job) return '';
 
   // [1] Concurrency lock ------------------------------------------------------
-  // The lock is scoped per **project directory**, not per cron job. Two
-  // different jobs that happen to target the same /projects/<path> share
-  // the same filesystem and the same git working tree — running them in
-  // parallel would cause `git reset --hard` / branch checkout races and
-  // produce commits with mixed content. We therefore refuse to start if
-  // ANY cron run is currently active for the same projectPath.
+  // Scoped per **project directory**, not per job, because two jobs sharing
+  // the same /projects/<path> would race on `git reset --hard` / branch
+  // checkout and produce commits with mixed content.
   //
-  // Stale detection still applies: a run older than 1h with no completion
-  // signal is considered crashed and is auto-marked failed so the next
-  // run can proceed.
+  // Stale detection: a run older than 1h with no completion signal is
+  // considered crashed and is auto-marked failed so the next run can proceed.
+  //
+  // Lineage bypass (Franck 2026-04-20 22:58): when this dispatch comes from
+  // the task-runner MCP tool (opts.parentRunId set), the orchestrator run(s)
+  // are "paused" waiting on their tool call \u2014 not actively manipulating
+  // the working tree. We therefore EXCLUDE ancestor run IDs from the
+  // "concurrent" lookup so the child can take over the lock legitimately.
+  const excludeIds = opts?.parentRunId ? await getAncestorRunIds(opts.parentRunId) : [];
   const concurrent = await db.taskRun.findFirst({
     where: {
       status: 'running',
       task: { is: { projectPath: job.projectPath } },
+      ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
     },
     orderBy: { startedAt: 'desc' },
     include: { task: { select: { name: true } } },
@@ -141,15 +198,17 @@ export async function runTask(taskId: string): Promise<void> {
         ? `previous run ${concurrent.id} of this job still running`
         : `run ${concurrent.id} of sibling job "${concurrent.task?.name ?? concurrent.taskId}" still running on project "${job.projectPath}"`;
       console.warn(`[cron] skip job="${job.name}": ${reason} (${Math.round(ageMs / 1000)}s)`);
-      await db.taskRun.create({
+      const skipRow = await db.taskRun.create({
         data: {
           taskId,
           status: 'skipped',
           output: `${reason} since ${concurrent.startedAt.toISOString()}`,
           finishedAt: new Date(),
+          parentRunId: opts?.parentRunId ?? null,
+          runDepth: opts?.runDepth ?? 0,
         },
       });
-      return;
+      return skipRow.id;
     }
     // Stale: mark the ghost run as failed and proceed
     await db.taskRun.update({
@@ -190,8 +249,16 @@ export async function runTask(taskId: string): Promise<void> {
       baseBranch: policy.baseBranch,
       phase: 'queued',
       phaseMessage: 'Starting',
+      parentRunId: opts?.parentRunId ?? null,
+      runDepth: opts?.runDepth ?? 0,
     },
   });
+  // Resolved prompt for this run. When opts.promptOverride is set
+  // (task-runner invocation with retry context, failure info, \u2026),
+  // it REPLACES job.prompt entirely. The audit-trail conversation
+  // also stores this effective prompt so what we see in /chat
+  // matches what the agent actually saw.
+  const effectivePrompt = opts?.promptOverride ?? job.prompt;
   const startedAt = Date.now();
   console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${policy.baseBranch} mode=${job.branchMode}`);
 
@@ -242,10 +309,24 @@ export async function runTask(taskId: string): Promise<void> {
       } catch (e) {
         console.warn(`[cron/audit] MCP register failed: ${(e as Error).message}`);
       }
+      // Task-runner MCP (Franck 2026-04-20 22:58) \u2014 opt-in per task.
+      // Very unusual to enable this on an audit (audits are read-only,
+      // they shouldn't dispatch other tasks) but we wire it symmetrically
+      // with the automation branch for consistency. The user bears
+      // responsibility for the configuration choice.
+      if (job.taskRunnerEnabled) {
+        try {
+          const trId = await getTaskRunnerServerId(run.id, project.name);
+          mcpServerIds = [...(mcpServerIds ?? []), trId];
+          console.log(`[cron/audit] task-runner serverId=${trId}`);
+        } catch (e) {
+          console.warn(`[cron/audit] task-runner register failed: ${(e as Error).message}`);
+        }
+      }
 
       await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
       const convTitle = `[audit:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
-      const conv = await createDustConversation(job.agentSId, job.prompt, convTitle, mcpServerIds, 'cli');
+      const conv = await createDustConversation(job.agentSId, effectivePrompt, convTitle, mcpServerIds, 'cli');
       // BUG-FIX (2026-04-18): the audit branch used to forget to stamp
       // the TaskRun row with the Dust conversation sId - unlike the
       // automation branch below (around line 388). Consequence: /runs
@@ -313,7 +394,7 @@ export async function runTask(taskId: string): Promise<void> {
             projectName: project.name,
             messages: {
               create: [
-                { role: 'user', content: job.prompt },
+                { role: 'user', content: effectivePrompt },
                 {
                   role: 'agent',
                   content: agentText,
@@ -373,7 +454,7 @@ export async function runTask(taskId: string): Promise<void> {
           data: { lastRunAt: new Date(), lastStatus: 'failed' },
         });
         console.warn(`[cron/audit] parse failed job="${job.name}" (${(durationMs / 1000).toFixed(1)}s)`);
-        return;
+        return run.id;
       }
 
       await db.projectAudit.upsert({
@@ -438,7 +519,7 @@ export async function runTask(taskId: string): Promise<void> {
           ],
         });
       }
-      return; // skip the automation-push pipeline below
+      return run.id; // skip the automation-push pipeline below
     }
 
     // [3] Branch setup --------------------------------------------------------
@@ -479,6 +560,21 @@ export async function runTask(taskId: string): Promise<void> {
     } catch (e) {
       console.warn(`[cron] MCP register failed: ${(e as Error).message} — running without fs tools`);
     }
+    // Task-runner MCP (Franck 2026-04-20 22:58). Only attached when
+    // the task opts in via taskRunnerEnabled=true (the "orchestrator"
+    // flag). Grants the agent access to the run_task tool, which can
+    // dispatch sibling tasks in the same project sequentially. Bound
+    // to *this* run's id so run_task calls carry an unambiguous parent
+    // link without trusting the agent to pass it.
+    if (job.taskRunnerEnabled) {
+      try {
+        const trId = await getTaskRunnerServerId(run.id, project.name);
+        mcpServerIds = [...(mcpServerIds ?? []), trId];
+        console.log(`[cron] task-runner serverId=${trId}`);
+      } catch (e) {
+        console.warn(`[cron] task-runner register failed: ${(e as Error).message}`);
+      }
+    }
 
     // [5] Dust agent ---------------------------------------------------------
     await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
@@ -486,7 +582,10 @@ export async function runTask(taskId: string): Promise<void> {
     // Enrich the prompt with the KDust automation-context footer when
     // pushEnabled is true. When false, send the prompt as-is (see
     // buildAutomationPrompt above). Per Franck 2026-04-19 00:36.
-    const agentPrompt = buildAutomationPrompt(job, policy);
+    // Note: buildAutomationPrompt reads `prompt` off the passed object,
+    // so we shadow job.prompt with effectivePrompt for the footer to
+    // wrap the overridden prompt when invoked via task-runner.
+    const agentPrompt = buildAutomationPrompt({ ...job, prompt: effectivePrompt }, policy);
     const conv = await createDustConversation(job.agentSId, agentPrompt, convTitle, mcpServerIds, 'cli');
     // Stamp the TaskRun with the Dust conversation sId ASAP so the
     // /runs page can show a "Chat" link even if the run later fails
@@ -619,7 +718,7 @@ export async function runTask(taskId: string): Promise<void> {
         });
       }
       console.log(`[cron] success (prompt-only) job="${job.name}" duration=${durationMs}ms`);
-      return;
+      return run.id;
     }
 
     // [6] Diff measurement ---------------------------------------------------
@@ -679,7 +778,7 @@ export async function runTask(taskId: string): Promise<void> {
         });
       }
       console.log(`[cron] no-op job="${job.name}" duration=${durationMs}ms`);
-      return;
+      return run.id;
     }
 
     // [7] Guard-rail: diff too large ----------------------------------------
@@ -879,5 +978,13 @@ export async function runTask(taskId: string): Promise<void> {
     // a manual /runs trigger) can proceed. Safe even if the try-block
     // returned early before adding to the set.
     activeTaskIds.delete(taskId);
+    // Release the task-runner MCP server handle if this run had one.
+    // Idempotent when no task-runner was started for this run.
+    // Fire-and-forget on purpose: finally shouldn't block on I/O.
+    void releaseTaskRunnerServer(run.id);
   }
+  // Success / failure / cancel paths all funnel here after the try/catch.
+  // Always returning the runId lets callers (task-runner MCP, API
+  // endpoints, tests) fetch the final TaskRun row.
+  return run.id;
 }

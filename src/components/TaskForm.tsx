@@ -30,6 +30,15 @@ export type CronFormValues = {
    */
   pushEnabled: boolean;
   /**
+   * Task-runner opt-in (Franck 2026-04-20 22:58). When true, the
+   * agent running this task gets access to the `task-runner` MCP
+   * server, exposing the `run_task(task, input?)` tool. Only the
+   * orchestrator task of a project should have this enabled; any
+   * child task invoked via run_task must have this OFF otherwise
+   * the run_task dispatch refuses it (anti-recursion guard).
+   */
+  taskRunnerEnabled: boolean;
+  /**
    * Branch fields are nullable (Phase 1, Franck 2026-04-19).
    * NULL / empty string \u2192 inherit from the parent Project. The
    * server-side API (PATCH/POST) accepts string | null and the
@@ -81,6 +90,7 @@ export function TaskForm({
     enabled: initial?.enabled ?? true,
     kind: initial?.kind ?? 'automation',
     pushEnabled: initial?.pushEnabled ?? true,
+    taskRunnerEnabled: initial?.taskRunnerEnabled ?? false,
     // Phase 1: these now accept null (= inherit from project).
     // Preserve explicit initial values; otherwise start null so
     // the edit form shows the project's value as placeholder.
@@ -227,6 +237,48 @@ export function TaskForm({
         <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
         <span>Enabled</span>
       </label>
+
+      {/* ----- Task orchestration (Franck 2026-04-20 22:58) -----
+          Opt-in toggle that grants this task's agent access to the
+          task-runner MCP server (tool: run_task). Only intended for
+          a dedicated "orchestrator" task per project; sub-tasks
+          (codegen/lint/test) must leave this OFF otherwise the
+          dispatch guard refuses them at call time.
+          We strongly recommend pairing taskRunnerEnabled=true with
+          pushEnabled=false because an orchestrator doesn't edit
+          files itself \u2014 a child's `git reset --hard` would clobber
+          the orchestrator's work branch. The UI surfaces this as a
+          soft warning rather than hard-blocking so edge cases stay
+          possible. */}
+      <fieldset className="border border-indigo-300/60 dark:border-indigo-700/60 rounded-md p-4 space-y-2 bg-indigo-50/40 dark:bg-indigo-950/20">
+        <legend className="px-2 text-sm font-semibold text-indigo-700 dark:text-indigo-300">
+          Task orchestration
+        </legend>
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={form.taskRunnerEnabled}
+            onChange={(e) => setForm({ ...form, taskRunnerEnabled: e.target.checked })}
+          />
+          <span className="text-sm">
+            <span className="font-medium">Orchestrator mode (task-runner MCP)</span>
+            <span className="block text-xs text-slate-500">
+              Grants the agent the <code className="font-mono">run_task</code> tool so it
+              can invoke other tasks of this project sequentially (no parallelism).
+              Only one orchestrator layer is allowed: invoked tasks must have this OFF.
+              Max chain depth <code>10</code> (env <code>KDUST_MAX_RUN_DEPTH</code>).
+            </span>
+          </span>
+        </label>
+        {form.taskRunnerEnabled && form.pushEnabled && form.kind !== 'audit' && (
+          <p className="text-xs text-amber-700 dark:text-amber-400 pl-6">
+            [WARN] orchestrators usually leave <strong>Enable automation push</strong>{' '}
+            OFF \u2014 a child&apos;s <code>git reset --hard</code> would clobber this
+            task&apos;s work branch mid-run.
+          </p>
+        )}
+      </fieldset>
 
       {/* ----- Automation push settings ----- */}
       {/* Hidden for audit tasks (kind='audit'): audit runs never

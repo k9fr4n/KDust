@@ -85,6 +85,22 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   });
   if (!run) return notFound();
 
+  // Lineage (Franck 2026-04-20 22:58): parent + direct children to
+  // materialise the orchestrator tree. We stop at one level of
+  // children; full-tree view would need a recursive CTE and is not
+  // worth the complexity for the POC \u2014 users can click through.
+  const parentRun = run.parentRunId
+    ? await db.taskRun.findUnique({
+        where: { id: run.parentRunId },
+        include: { task: { select: { name: true } } },
+      })
+    : null;
+  const childRuns = await db.taskRun.findMany({
+    where: { parentRunId: run.id },
+    orderBy: { startedAt: 'asc' },
+    include: { task: { select: { name: true } } },
+  });
+
   // Resolve git links (best effort — project may have been deleted).
   const project = run.task?.projectPath
     ? await db.project.findFirst({ where: { name: run.task.projectPath } })
@@ -220,6 +236,65 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           <span className="text-xs text-slate-500">— {run.phaseMessage}</span>
         )}
       </div>
+
+      {/* Task-runner lineage (Franck 2026-04-20 22:58). Only rendered
+          when the run belongs to an orchestrator tree \u2014 either it
+          has a parent, has children, or its own runDepth > 0.
+          Otherwise the whole block is hidden to avoid clutter on
+          regular (top-level) runs. */}
+      {(parentRun || childRuns.length > 0 || run.runDepth > 0) && (
+        <section className="mb-6 rounded-md border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 p-3 text-sm">
+          <h2 className="text-xs uppercase tracking-wide text-indigo-700 dark:text-indigo-300 mb-2">
+            Orchestration lineage
+            <span className="ml-2 text-[10px] text-slate-500 normal-case">
+              depth {run.runDepth}
+              {childRuns.length > 0 && ` · ${childRuns.length} child run${childRuns.length > 1 ? 's' : ''}`}
+            </span>
+          </h2>
+          {parentRun && (
+            <div className="mb-2">
+              <span className="text-slate-500 text-xs">\u25B2 Parent run: </span>
+              <Link
+                href={`/runs/${parentRun.id}`}
+                className="underline font-mono text-xs hover:text-brand-500"
+              >
+                {parentRun.id.slice(0, 8)}
+              </Link>
+              {' '}
+              <span className="text-slate-500">\u2014 task</span>{' '}
+              <span className="font-mono text-xs">{parentRun.task?.name ?? '(deleted)'}</span>
+              {' '}
+              <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${badgeClass(parentRun.status)}`}>
+                {parentRun.status}
+              </span>
+            </div>
+          )}
+          {childRuns.length > 0 && (
+            <div>
+              <div className="text-slate-500 text-xs mb-1">\u25BC Child runs (invoked via run_task, sequential):</div>
+              <ol className="space-y-1 pl-4 border-l border-indigo-300 dark:border-indigo-800">
+                {childRuns.map((c, i) => (
+                  <li key={c.id} className="text-xs flex items-center gap-2">
+                    <span className="text-slate-400 font-mono">#{i + 1}</span>
+                    <Link href={`/runs/${c.id}`} className="underline font-mono hover:text-brand-500">
+                      {c.id.slice(0, 8)}
+                    </Link>
+                    <span className="font-mono">{c.task?.name ?? '(deleted)'}</span>
+                    <span className={`px-1.5 rounded border text-[10px] uppercase ${badgeClass(c.status)}`}>
+                      {c.status}
+                    </span>
+                    {c.finishedAt && (
+                      <span className="text-slate-400">
+                        {((c.finishedAt.getTime() - c.startedAt.getTime()) / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Running: live view */}
       {run.status === 'running' && run.task ? (

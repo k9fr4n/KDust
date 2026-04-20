@@ -199,6 +199,15 @@ model Task {
   // deleted (the DELETE endpoint returns 403).
   mandatory Boolean  @default(false)
 
+  // --- Task orchestration (Franck 2026-04-20 22:58) ---
+  // When true, the agent running this task gets access to the
+  // `task-runner` MCP server, exposing the single tool `run_task`
+  // so it can invoke other tasks of the same project sequentially.
+  // Opt-in per task (not per project) to avoid accidental recursion:
+  // only an explicitly-designated "orchestrator" task should have
+  // this. Children (codegen/lint/test) must leave it false.
+  taskRunnerEnabled Boolean @default(false)
+
   @@map("CronJob")
 }
 
@@ -305,7 +314,30 @@ model TaskRun {
   // auth) \u2014 the branch is pushed, but no PR exists upstream.
   prState       String?
 
+  // --- Task-runner lineage (Franck 2026-04-20 22:58) ---
+  // When this run was spawned by another run via the task-runner
+  // MCP tool, parentRunId points to that parent run. NULL for
+  // top-level runs (manual "Run now" or cron). runDepth = 0 for
+  // top-level, parent.runDepth + 1 for children.
+  //
+  // Used for:
+  //   - arborescence UI (parent \u2192 children timeline)
+  //   - runaway-recursion guard (KDUST_MAX_RUN_DEPTH, default 10)
+  //   - cancel-cascade (aborting a parent aborts its sub-tree)
+  //   - concurrency-lock bypass: when the only "concurrent" run on
+  //     the same projectPath is an ancestor of this run, the
+  //     orchestrator is paused-waiting, so the child can legitimately
+  //     take over the working tree (see runTask concurrency check).
+  //
+  // onDelete: SetNull keeps orphan children visible in the UI if the
+  // parent is manually deleted; we never want a cascade here.
+  parentRunId   String?
+  runDepth      Int      @default(0)
+  parentRun     TaskRun?  @relation("TaskRunTree", fields: [parentRunId], references: [id], onDelete: SetNull)
+  childRuns     TaskRun[] @relation("TaskRunTree")
+
   @@index([taskId])
   @@index([dustConversationSId])
+  @@index([parentRunId])
   @@map("CronRun")
 }

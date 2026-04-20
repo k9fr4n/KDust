@@ -127,23 +127,36 @@ export function RunCard({ run }: { run: RunCardData }) {
             {run.task?.name ?? '(deleted cron)'}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 min-w-0">
+        {/* Meta row redesign (Franck 2026-04-20 18:55):
+              project · kind · time · [diff-stats pushed right]
+            Project no longer shown as a bordered badge — inline
+            folder-icon + brand-colored name, matching ConversationCard.
+            Timestamp sits right after the kind (i.e. the "agent"
+            equivalent for runs), not at the far right. Diff stats
+            (files / added / removed) are kept but pushed to the right
+            margin as they are a secondary numeric metric. */}
+        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 min-w-0">
           {run.task?.projectPath ? (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 font-mono">
-              <FolderGit2 size={10} /> {run.task.projectPath}
+            <span className="shrink-0 inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 font-mono">
+              <FolderGit2 size={11} />
+              {run.task.projectPath}
             </span>
           ) : (
-            <span className="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 italic">
-              no project
-            </span>
+            <span className="shrink-0 text-slate-400 italic">no project</span>
           )}
-          {run.task?.kind && <span className="truncate">{run.task.kind}</span>}
+          {run.task?.kind && (
+            <>
+              <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
+              <span className="truncate">{run.task.kind}</span>
+            </>
+          )}
+          <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
+          <span className="text-slate-400 shrink-0">{fmtRel(run.startedAt)}</span>
           {run.filesChanged !== null && run.filesChanged !== undefined && (
-            <span className="font-mono shrink-0">
-              {run.filesChanged}f +{run.linesAdded ?? 0}/-{run.linesRemoved ?? 0}
+            <span className="font-mono shrink-0 ml-auto text-slate-400">
+              {run.filesChanged}f <span className="text-green-600 dark:text-green-400">+{run.linesAdded ?? 0}</span>/<span className="text-red-600 dark:text-red-400">-{run.linesRemoved ?? 0}</span>
             </span>
           )}
-          <span className="text-slate-400 shrink-0 ml-auto">{fmtRel(run.startedAt)}</span>
         </div>
       </Link>
       {/* Action cluster — always visible, same look as ConversationCard. */}

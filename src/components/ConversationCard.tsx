@@ -84,24 +84,26 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
           {pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
           <span className="text-sm font-medium truncate flex-1">{conv.title}</span>
         </div>
-        {/* Meta row order (Franck 2026-04-20 17:59):
-              project \u2192 agent \u2192 time
-            Project badge no longer carries a white/brand fill \u2014 a
-            transparent background with the brand border is less
-            visually loud and sits better on both light and dark
-            themes. */}
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 min-w-0">
+        {/* Meta row redesign (Franck 2026-04-20 18:55):
+              project · agent · time
+            The bordered "badge" around the project name was too
+            loud — replaced with an inline, same-size item (folder
+            icon + brand-colored name) separated by middle dots.
+            Timestamp now sits right after the agent name instead of
+            being pushed to the far right with ml-auto. */}
+        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 min-w-0">
           {conv.projectName ? (
-            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 font-mono">
-              <FolderGit2 size={10} /> {conv.projectName}
+            <span className="shrink-0 inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 font-mono">
+              <FolderGit2 size={11} />
+              {conv.projectName}
             </span>
           ) : (
-            <span className="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 italic">
-              no project
-            </span>
+            <span className="shrink-0 text-slate-400 italic">no project</span>
           )}
+          <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
           <span className="truncate">{conv.agentName ?? conv.agentSId}</span>
-          <span className="text-slate-400 shrink-0 ml-auto">{fmtRel(conv.updatedAt)}</span>
+          <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
+          <span className="text-slate-400 shrink-0">{fmtRel(conv.updatedAt)}</span>
         </div>
       </OpenConversationLink>
 

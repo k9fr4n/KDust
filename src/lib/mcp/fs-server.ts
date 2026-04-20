@@ -57,13 +57,34 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     }
   };
 
-  // verbose=true ⇒ the SDK logs SSE request/response traffic to console — invaluable
+  // verbose=true \u21d2 the SDK logs SSE request/response traffic to console \u2014 invaluable
   // when diagnosing why Dust says "could not list tools for fs-cli".
-  // heartbeat = 300000ms (5min) so the polyfill doesn't drop the connection between
-  // user actions; default 45s caused windows where Dust requests went into the void.
-  // KDUST_MCP_VERBOSE=0 in env disables it once things are stable.
+  //
+  // heartbeat tuning (Franck 2026-04-20 14:33):
+  // ------------------------------------------
+  // The @dust-tt/client SSE polyfill treats HEARTBEAT_MS as a
+  // "no-activity-from-server" watchdog: if Dust doesn\u0027t push
+  // anything for that duration, the polyfill closes the socket and
+  // emits `error: undefined, readyState: 2`. Dust\u0027s MCP endpoint
+  // happens to stay quiet during idle \u2014 tools are pulled on
+  // demand, no keepalive frames \u2014 so a too-short HEARTBEAT_MS
+  // causes needless 5-min flapping even when the token is still valid.
+  //
+  // Previous value of 5 min matched Dust\u0027s own idle silence
+  // exactly, producing the race observed on 2026-04-20 12:23\u219212:28.
+  // We now default to 50 min, a comfortable margin UNDER the typical
+  // WorkOS access-token TTL (~60 min); the proactive rebuild at
+  // T-10min of token expiry still fires FIRST, so this watchdog is a
+  // belt-and-braces fallback, not a primary mechanism.
+  //
+  // Override via env KDUST_MCP_HEARTBEAT_MS for on-the-fly tuning
+  // without a rebuild. Values < 60s are clamped to 60s to avoid
+  // shooting ourselves in the foot.
   const VERBOSE = process.env.KDUST_MCP_VERBOSE !== '0';
-  const HEARTBEAT_MS = 5 * 60 * 1000;
+  const HEARTBEAT_MS_RAW = Number(process.env.KDUST_MCP_HEARTBEAT_MS ?? 50 * 60 * 1000);
+  const HEARTBEAT_MS = Number.isFinite(HEARTBEAT_MS_RAW) && HEARTBEAT_MS_RAW >= 60_000
+    ? HEARTBEAT_MS_RAW
+    : 50 * 60 * 1000;
 
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
@@ -123,22 +144,46 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       if (!msg || /No activity within \d+ milliseconds/i.test(msg)) {
         return;
       }
-      // "SSE connection error" is the SDK wrapper around an EventSource
-      // failure (new Error(`SSE connection error: ${error}`) drops the
-      // original .status=401 property, so we can't do isAuthFailure detection
-      // on it directly). In practice these errors are caused by:
-      //   a) the bearer token expiring mid-session — the polyfill keeps
-      //      reconnecting every RECONNECT_DELAY_MS with the now-stale token,
-      //      leaking a zombie transport that never recovers
-      //   b) a transient network blip — the polyfill reconnects fine
-      // The cheapest, most robust fix is to invalidate on ANY SSE connection
-      // error. Our invalidate() is idempotent (guarded by `invalidated` flag)
-      // and the next API request re-registers a fresh transport with a
-      // freshly-refreshed token. A lost conversation's serverId is an
-      // acceptable cost vs. letting a zombie loop forever.
+      // "SSE connection error" discrimination (Franck 2026-04-20 14:33):
+      // -------------------------------------------------------------
+      // This wrapper is emitted for THREE very different situations
+      // which used to be treated identically (tear down + re-register):
+      //
+      //   a) Bearer expired mid-session \u2014 the polyfill would loop
+      //      forever with a stale token. Tear-down IS the right move.
+      //      Detected upstream via isAuthFailure already.
+      //   b) Transient network blip \u2014 the polyfill reconnects fine
+      //      if we leave it alone; tearing down costs a re-register
+      //      round-trip for nothing.
+      //   c) Our HEARTBEAT_MS watchdog tripping after Dust-side idle\u2014
+      //      raw EventSource event with `error: undefined, readyState:2`,
+      //      no informative message attached. Same story as (b): the
+      //      polyfill will reconnect; tearing down makes it WORSE by
+      //      invalidating the still-valid serverId upstream.
+      //
+      // We now only tear down when the message carries a meaningful
+      // signal (a real exception, a 5xx response, a URL in the text);
+      // the empty-error case from the idle watchdog is demoted to a
+      // one-line warning. If the underlying polyfill can\u0027t heal
+      // itself, the NEXT user message triggers re-ensure anyway
+      // (chat client defensive path, commit edeca1c), so a truly
+      // dead transport recovers on first use.
       if (/SSE connection error/i.test(msg)) {
+        // Distinguish "empty/benign" errors from real ones. If the
+        // raw event had neither a message nor a useful property, it
+        // is almost certainly the watchdog timeout or a brief blip.
+        const hasSignal =
+          !!err?.message ||
+          typeof err?.status === 'number' ||
+          (typeof msg === 'string' && msg.length > 30 && !/undefined/.test(msg));
+        if (!hasSignal) {
+          console.warn(
+            `[mcp/fs-server] transient SSE close for project="${projectName}" (no signal) \u2014 leaving transport, polyfill will reconnect or next /api/mcp/ensure will re-register`,
+          );
+          return;
+        }
         console.warn(
-          `[mcp/fs-server] SSE connection error for project="${projectName}" — tearing down transport so next request re-registers with a fresh token`,
+          `[mcp/fs-server] SSE connection error for project="${projectName}" \u2014 tearing down transport so next request re-registers with a fresh token`,
         );
         void invalidate();
         return;

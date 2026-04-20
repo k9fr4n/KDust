@@ -490,24 +490,95 @@ function ChatPageInner() {
       { id: `tmp-${Date.now()}`, role: 'user', content },
     ]);
 
-    try {
-      const mcpServerIds = mcpServerId ? [mcpServerId] : undefined;
-      if (!currentId) {
-        const agentName = agents.find((a) => a.sId === agentSId)?.name;
-        const r = await fetch('/api/conversations', {
+    // --- MCP freshness guard (Franck 2026-04-20 14:07) -----------------
+    // A cached mcpServerId in React state can go stale if the server-
+    // side transport was torn down (token expiry, fs invalidation,
+    // cold restart). Re-ensure right before every send: idempotent on
+    // the server (returns the same serverId when the handle is still
+    // healthy) and prevents the "User does not have access to the
+    // client-side MCP servers" 403 that Dust emits for unknown IDs.
+    let effectiveMcpServerId: string | null = mcpServerId;
+    if (currentProject) {
+      try {
+        const rr = await fetch('/api/mcp/ensure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agentSId, agentName, content, mcpServerIds }),
+          body: JSON.stringify({ projectName: currentProject }),
+        });
+        const jj = await rr.json();
+        if (rr.ok && jj.serverId) {
+          effectiveMcpServerId = jj.serverId;
+          if (jj.serverId !== mcpServerId) setMcpServerId(jj.serverId);
+        }
+      } catch {
+        // Non-fatal \u2014 fall through to the send attempt and let the
+        // 403 retry below salvage the call if needed.
+      }
+    }
+
+    // Small helper: detects the misleading 403 Dust sends when a
+    // client-side MCP server ID is unknown (torn down / never
+    // registered). The message is verbatim from Dust; we also treat
+    // generic 403 as a candidate when we do hold an MCP server id.
+    const looksLikeMcpAccessError = (status: number, text: string) =>
+      status === 403 &&
+      /client-side MCP servers|mcp server|access to/i.test(text);
+
+    const postWithRetry = async (
+      url: string,
+      body: Record<string, unknown>,
+    ): Promise<Response> => {
+      const ids = effectiveMcpServerId ? [effectiveMcpServerId] : undefined;
+      const first = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, mcpServerIds: ids }),
+      });
+      if (first.ok) return first;
+      // Peek error text without consuming the body for the happy path.
+      const errText = await first.clone().text().catch(() => '');
+      if (!looksLikeMcpAccessError(first.status, errText) || !currentProject) {
+        return first;
+      }
+      // Retry once with a freshly-ensured serverId.
+      console.warn('[chat] Dust rejected MCP serverId; re-ensuring and retrying once');
+      try {
+        const rr = await fetch('/api/mcp/ensure', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectName: currentProject, force: true }),
+        });
+        const jj = await rr.json();
+        if (rr.ok && jj.serverId) {
+          effectiveMcpServerId = jj.serverId;
+          setMcpServerId(jj.serverId);
+        }
+      } catch {
+        /* swallow \u2014 retry regardless, worst case same error */
+      }
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...body,
+          mcpServerIds: effectiveMcpServerId ? [effectiveMcpServerId] : undefined,
+        }),
+      });
+    };
+
+    try {
+      if (!currentId) {
+        const agentName = agents.find((a) => a.sId === agentSId)?.name;
+        const r = await postWithRetry('/api/conversations', {
+          agentSId, agentName, content,
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
         setCurrentId(j.id);
         await consumeStream(j.id, j.userMessageSId);
       } else {
-        const r = await fetch(`/api/conversations/${currentId}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content, mcpServerIds }),
+        const r = await postWithRetry(`/api/conversations/${currentId}/messages`, {
+          content,
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();

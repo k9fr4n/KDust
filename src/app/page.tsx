@@ -18,6 +18,9 @@ import { db } from '@/lib/db';
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
 import { ConversationCard } from '@/components/ConversationCard';
+// Cross-tab sync listener is mounted once in src/app/layout.tsx,
+// so every route \u2014 including this one \u2014 already refreshes
+// on pin/delete events from other tabs.
 
 
 export const dynamic = 'force-dynamic';

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FolderGit2, Pin, PinOff, Trash2 } from 'lucide-react';
 import { OpenConversationLink } from './OpenConversationLink';
+import { publishConvEvent } from '@/lib/client/conversationsBus';
 
 export type ConvSummary = {
   id: string;
@@ -41,6 +42,8 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
       if (r.ok) {
         setPinned(next);
         router.refresh();
+        // Notify other tabs / pages (Franck 2026-04-20 17:04).
+        publishConvEvent({ type: 'pinned', id: conv.id, pinned: next });
       }
     } finally {
       setBusy(false);
@@ -54,7 +57,10 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
     setBusy(true);
     try {
       const r = await fetch(`/api/conversations/${conv.id}`, { method: 'DELETE' });
-      if (r.ok) router.refresh();
+      if (r.ok) {
+        router.refresh();
+        publishConvEvent({ type: 'deleted', id: conv.id });
+      }
     } finally {
       setBusy(false);
     }

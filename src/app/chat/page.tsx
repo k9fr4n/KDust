@@ -5,6 +5,10 @@ import { Button } from '@/components/Button';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { ChatMessageBubble } from '@/components/ChatMessageBubble';
 import {
+  publishConvEvent,
+  subscribeConvEvents,
+} from '@/lib/client/conversationsBus';
+import {
   MessageSquare,
   Plus,
   Send,
@@ -165,6 +169,24 @@ function ChatPageInner() {
   // bottom with a fresh 40-message budget.
   useEffect(() => {
     setVisibleCount(VISIBLE_STEP);
+  }, [currentId]);
+
+  // Cross-tab / cross-page sync (Franck 2026-04-20 17:04). When
+  // another surface (dashboard, /conversations, a second /chat tab)
+  // pins or deletes a conversation, re-pull the list so our sidebar
+  // state (still used for the header pin/delete chip\u0027s pinned
+  // lookup) and any in-flight state reflect the change. If the
+  // current conversation was deleted, reset to a fresh \"new chat\"
+  // so we do not keep posting to a dead conv.
+  useEffect(() => {
+    const unsub = subscribeConvEvents((ev) => {
+      if (ev.type === 'deleted' && ev.id === currentId) {
+        newChat();
+      }
+      void refreshConvs();
+    });
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId]);
 
   // After expanding the window, keep the user\u2019s reading anchor
@@ -591,9 +613,12 @@ function ChatPageInner() {
 
   const removeConv = async (id: string) => {
     if (!confirm('Delete this conversation?')) return;
-    await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    const r = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
     if (currentId === id) newChat();
     await refreshConvs();
+    // Notify sibling tabs (dashboard / /conversations / other /chat)
+    // so they drop this conv from their listings without a reload.
+    if (r.ok) publishConvEvent({ type: 'deleted', id });
   };
 
   /**
@@ -616,6 +641,9 @@ function ChatPageInner() {
       if (!r.ok) throw new Error('pin failed');
       // Re-sort pinned-first without a full network refresh.
       await refreshConvs();
+      // Notify sibling tabs (dashboard / /conversations / other /chat)
+      // so their view updates without a manual reload.
+      publishConvEvent({ type: 'pinned', id, pinned: next });
     } catch {
       await refreshConvs();
     }

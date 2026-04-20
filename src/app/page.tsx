@@ -456,6 +456,12 @@ function RecentRuns({ items }: { items: Array<any> }) {
       {items.map((r) => {
         const statusCls = STATUS_CLASS[r.status] ?? 'bg-slate-100 text-slate-600';
         return (
+          // Layout aligned on ConversationCard (Franck 2026-04-20 17:59):
+          //   Line 1: [status chip][task name ............................]
+          //   Line 2: [\u25f2 project] agent/kind                 time
+          // Same border-only project badge, same right-aligned relative
+          // timestamp, consistent spacing. No pin/delete yet on runs
+          // (see follow-up question in chat \u2014 adds a schema field).
           <li key={r.id}>
             <Link
               href={`/tasks/${r.taskId}`}
@@ -474,18 +480,27 @@ function RecentRuns({ items }: { items: Array<any> }) {
                 <span className="text-sm font-medium truncate flex-1">
                   {r.task?.name ?? '(deleted cron)'}
                 </span>
-                <span className="text-xs text-slate-400 shrink-0">{fmtRel(r.startedAt)}</span>
               </div>
-              {(r.filesChanged !== null && r.filesChanged !== undefined) || r.task?.projectPath ? (
-                <div className="text-xs text-slate-500 truncate">
-                  {r.task?.projectPath && <span className="font-mono">{r.task.projectPath}</span>}
-                  {r.filesChanged !== null && r.filesChanged !== undefined && (
-                    <span className="ml-2 font-mono">
-                      {r.filesChanged} file(s), +{r.linesAdded ?? 0}/-{r.linesRemoved ?? 0}
-                    </span>
-                  )}
-                </div>
-              ) : null}
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500 min-w-0">
+                {r.task?.projectPath ? (
+                  <span className="shrink-0 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300 font-mono">
+                    <FolderGit2 size={10} /> {r.task.projectPath}
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 italic">
+                    no project
+                  </span>
+                )}
+                {r.task?.kind && (
+                  <span className="truncate">{r.task.kind}</span>
+                )}
+                {r.filesChanged !== null && r.filesChanged !== undefined && (
+                  <span className="font-mono shrink-0">
+                    {r.filesChanged}f +{r.linesAdded ?? 0}/-{r.linesRemoved ?? 0}
+                  </span>
+                )}
+                <span className="text-slate-400 shrink-0 ml-auto">{fmtRel(r.startedAt)}</span>
+              </div>
             </Link>
           </li>
         );

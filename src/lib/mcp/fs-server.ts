@@ -144,48 +144,41 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       if (!msg || /No activity within \d+ milliseconds/i.test(msg)) {
         return;
       }
-      // "SSE connection error" discrimination (Franck 2026-04-20 14:33):
-      // -------------------------------------------------------------
-      // This wrapper is emitted for THREE very different situations
-      // which used to be treated identically (tear down + re-register):
+      // "SSE connection error" handling (Franck 2026-04-20 16:04):
+      // ----------------------------------------------------------
+      // Updated after a second log sample showed the disconnect
+      // happening 5 min after the LAST MCP activity (not after the
+      // connect), regardless of HEARTBEAT_MS. Conclusion: Dust itself
+      // idle-closes MCP SSE streams server-side at ~5 min; nothing
+      // we can do about that from the client.
       //
-      //   a) Bearer expired mid-session \u2014 the polyfill would loop
-      //      forever with a stale token. Tear-down IS the right move.
-      //      Detected upstream via isAuthFailure already.
-      //   b) Transient network blip \u2014 the polyfill reconnects fine
-      //      if we leave it alone; tearing down costs a re-register
-      //      round-trip for nothing.
-      //   c) Our HEARTBEAT_MS watchdog tripping after Dust-side idle\u2014
-      //      raw EventSource event with `error: undefined, readyState:2`,
-      //      no informative message attached. Same story as (b): the
-      //      polyfill will reconnect; tearing down makes it WORSE by
-      //      invalidating the still-valid serverId upstream.
+      // Previous policy (invalidate on any SSE error) actively HURTS:
+      // the @dust-tt/client polyfill has its own auto-reconnect
+      // loop that can re-establish the SSE stream while keeping the
+      // same serverId registered. By calling invalidate() we kill
+      // that serverId upstream, forcing a full /api/mcp/ensure
+      // round-trip on the next user action.
       //
-      // We now only tear down when the message carries a meaningful
-      // signal (a real exception, a 5xx response, a URL in the text);
-      // the empty-error case from the idle watchdog is demoted to a
-      // one-line warning. If the underlying polyfill can\u0027t heal
-      // itself, the NEXT user message triggers re-ensure anyway
-      // (chat client defensive path, commit edeca1c), so a truly
-      // dead transport recovers on first use.
+      // New policy: NEVER invalidate on a generic SSE connection
+      // error. Two safety nets remain:
+      //
+      //   1. Auth failures (401 / expired_oauth_token_error /
+      //      "Failed to send MCP result") are still caught by the
+      //      isAuthFailure branch above \u2014 those DO need a
+      //      re-register with a fresh token.
+      //   2. The chat-client defensive re-ensure (commit edeca1c)
+      //      triggers /api/mcp/ensure on every send, so if the
+      //      polyfill genuinely cannot recover the next user send
+      //      revives things transparently.
+      //
+      // We still log, but at `warn` and with a short message
+      // fingerprint so we can spot unusual patterns in production
+      // without drowning the log stream.
       if (/SSE connection error/i.test(msg)) {
-        // Distinguish "empty/benign" errors from real ones. If the
-        // raw event had neither a message nor a useful property, it
-        // is almost certainly the watchdog timeout or a brief blip.
-        const hasSignal =
-          !!err?.message ||
-          typeof err?.status === 'number' ||
-          (typeof msg === 'string' && msg.length > 30 && !/undefined/.test(msg));
-        if (!hasSignal) {
-          console.warn(
-            `[mcp/fs-server] transient SSE close for project="${projectName}" (no signal) \u2014 leaving transport, polyfill will reconnect or next /api/mcp/ensure will re-register`,
-          );
-          return;
-        }
+        const fingerprint = msg.replace(/\s+/g, ' ').slice(0, 80);
         console.warn(
-          `[mcp/fs-server] SSE connection error for project="${projectName}" \u2014 tearing down transport so next request re-registers with a fresh token`,
+          `[mcp/fs-server] SSE idle-close for project="${projectName}" \u2014 leaving transport, SDK polyfill will reconnect (fingerprint: ${fingerprint})`,
         );
-        void invalidate();
         return;
       }
       console.error(`[mcp/fs-server] transport error project="${projectName}": ${msg}`);

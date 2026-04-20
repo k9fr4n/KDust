@@ -24,16 +24,23 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { common as lowlightCommon } from 'lowlight';
 // Extra languages to register on top of highlight.js\u0027s `common`
-// bundle. `common` (the default rehype-highlight ships with) covers
-// ~36 popular languages (js, ts, python, sql, ...), but most of our
-// ops content is yaml / bash / terraform (hcl) / dockerfile / ps1 /
-// ini, which are NOT in common. Missing-language blocks fall back
-// to auto-detection and usually end up rendered as a single flat
-// color. Explicitly registering them gives us proper token
-// colouring and accurate detection.
+// bundle. `common` covers ~36 popular languages (js, ts, python,
+// sql, ...), but most of our ops content is yaml / bash /
+// powershell / dockerfile / ini / nginx / terraform, which are NOT
+// in common.
+//
+// CAVEAT (Franck 2026-04-20 17:18): rehype-highlight\u0027s `languages`
+// option REPLACES the default `common` bundle entirely; it does
+// not merge. Passing just our extras used to silently drop every
+// common language \u2014 PowerShell was the first to be noticed
+// because Franck writes a lot of .ps1 and it wasn\u0027t colouring.
+// The fix is to spread `common` explicitly and append our extras.
 //   Franck 2026-04-20 16:23: \"possible d'avoir la coloration
 //   syntaxique sur les bloc code dans /chat/?id=\"
+//   Franck 2026-04-20 17:18: \"je fais beaucoup de powershell et
+//   le code n'a pas de couleur\"
 import hljsBash from 'highlight.js/lib/languages/bash';
 import hljsDiff from 'highlight.js/lib/languages/diff';
 import hljsDockerfile from 'highlight.js/lib/languages/dockerfile';
@@ -194,7 +201,11 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
               // hint (Dust agents often forget the tag).
               detect: true,
               // Extra languages on top of the default `common` bundle.
+              // Merge common + extras \u2014 never pass a standalone
+              // map here, it wipes the default bundle (see caveat
+              // above the imports).
               languages: {
+                ...lowlightCommon,
                 bash: hljsBash,
                 diff: hljsDiff,
                 dockerfile: hljsDockerfile,

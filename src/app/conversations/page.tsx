@@ -1,8 +1,11 @@
 import Link from 'next/link';
-import { MessageSquare, Pin } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
-import { OpenConversationLink } from '@/components/OpenConversationLink';
+// OpenConversationLink is still used by ConversationCard under the
+// hood; we render ConversationCard directly now so we inherit the
+// always-visible pin / delete action cluster (Franck 2026-04-20 17:45).
+import { ConversationCard } from '@/components/ConversationCard';
 
 export const dynamic = 'force-dynamic';
 
@@ -118,29 +121,18 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
       ) : (
         <ul className="rounded-lg border border-slate-200 dark:border-slate-800 divide-y divide-slate-200 dark:divide-slate-800">
           {conversations.map((c) => (
-            <li key={c.id}>
-              <OpenConversationLink
-                conversationId={c.id}
-                className="block px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-900"
-              >
-                <div className="flex items-center gap-2">
-                  {c.pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
-                  <span className="font-medium truncate flex-1">{c.title}</span>
-                  <span className="text-xs text-slate-400 shrink-0">
-                    {new Date(c.updatedAt).toLocaleString('fr-FR')}
-                  </span>
-                </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                  <span className="font-mono">
-                    {c.projectName ? c.projectName : <em className="italic">global</em>}
-                  </span>
-                  <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
-                    {c.agentName ?? c.agentSId}
-                  </span>
-                  <span>· {c._count.messages} message(s)</span>
-                </div>
-              </OpenConversationLink>
-            </li>
+            <ConversationCard
+              key={c.id}
+              conv={{
+                id: c.id,
+                title: c.title,
+                agentName: c.agentName,
+                agentSId: c.agentSId,
+                projectName: c.projectName,
+                pinned: c.pinned,
+                updatedAt: c.updatedAt,
+              }}
+            />
           ))}
         </ul>
       )}

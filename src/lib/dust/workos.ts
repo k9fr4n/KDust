@@ -1,6 +1,6 @@
 import { jwtDecode } from 'jwt-decode';
 import { getAppConfig } from '../config';
-import { saveTokens } from './tokens';
+import { clearTokens, saveTokens } from './tokens';
 
 interface DeviceCodeResponse {
   device_code: string;
@@ -102,6 +102,23 @@ export async function refreshTokens(refreshToken: string): Promise<TokenResponse
       refresh_token: refreshToken,
     }),
   });
-  if (!res.ok) throw new Error(`WorkOS refresh failed: ${res.status}`);
+  if (!res.ok) {
+    // Refresh token rejected by WorkOS (revoked, expired, tampered) —
+    // wipe the DustSession so the app stops using a dead token on every
+    // subsequent request and the UI surfaces a fresh "Login with Dust"
+    // flow. Matches the official Dust CLI behavior
+    // (dust-cli/src/utils/authService.ts:55-58, Franck 2026-04-21 18:15).
+    if (res.status === 400 || res.status === 401) {
+      try {
+        await clearTokens();
+        console.warn(
+          `[dust/workos] refresh token rejected (${res.status}) → DustSession cleared, re-auth required`,
+        );
+      } catch (e) {
+        console.error('[dust/workos] failed to clear tokens after refresh rejection', e);
+      }
+    }
+    throw new Error(`WorkOS refresh failed: ${res.status}`);
+  }
   return (await res.json()) as TokenResponse;
 }

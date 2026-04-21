@@ -22,7 +22,7 @@ import { promisify } from 'node:util';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { z } from 'zod';
-import { getDustClient, startTokenRefreshWatchdog } from '../dust/client';
+import { getDustClient } from '../dust/client';
 import { db } from '../db';
 
 const pExecFile = promisify(execFile);
@@ -33,6 +33,11 @@ export interface CommandRunnerHandle {
   serverId: string;
   server: McpServer;
   transport: DustMcpServerTransport;
+  /**
+   * @deprecated Kept as a no-op for backward compat after switching to
+   * `apiKey: async () => ...` in getDustClient(). Do not rely on this
+   * field \u2014 it will be removed after a cooling-off period.
+   */
   stopTokenWatchdog: () => void;
 }
 
@@ -325,10 +330,9 @@ export async function startCommandRunnerServer(
   );
   const VERBOSE = process.env.KDUST_MCP_VERBOSE !== '0';
 
-  const stopTokenWatchdog = startTokenRefreshWatchdog(
-    dust.client,
-    `mcp/command-runner run=${runId}`,
-  );
+  // apiKey rotation handled transparently by the SDK via the async
+  // callable passed in getDustClient() \u2014 no watchdog needed.
+  const stopTokenWatchdog = () => {};
 
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
@@ -380,7 +384,6 @@ export async function startCommandRunnerServer(
     };
     (server as any).__transport = transport;
     server.connect(transport).catch((err) => {
-      stopTokenWatchdog();
       reject(err);
     });
     setTimeout(() => reject(new Error('command-runner registration timed out after 15s')), 15000);

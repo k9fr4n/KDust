@@ -35,7 +35,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { z } from 'zod';
-import { getDustClient, startTokenRefreshWatchdog } from '../dust/client';
+import { getDustClient } from '../dust/client';
 import { db } from '../db';
 
 export interface TaskRunnerHandle {
@@ -44,7 +44,10 @@ export interface TaskRunnerHandle {
   serverId: string;
   server: McpServer;
   transport: DustMcpServerTransport;
-  /** Stops the background apiKey refresh interval (see startTokenRefreshWatchdog). */
+  /**
+   * @deprecated No-op since getDustClient() rotates the apiKey via an
+   * async callable. Kept for ABI stability with existing callers.
+   */
   stopTokenWatchdog: () => void;
 }
 
@@ -247,14 +250,10 @@ export async function startTaskRunnerServer(
   );
   const VERBOSE = process.env.KDUST_MCP_VERBOSE !== '0';
 
-  // Token refresh watchdog (Franck 2026-04-21 01:00). Same rationale
-  // as in fs-server: rotate client._options.apiKey every 30min so
-  // heartbeat/register never send a stale bearer. Stopped by the
-  // handle.dispose() call made from releaseTaskRunnerServer().
-  const stopTokenWatchdog = startTokenRefreshWatchdog(
-    dust.client,
-    `mcp/task-runner run=${orchestratorRunId}`,
-  );
+  // apiKey rotation is now handled transparently by the SDK via the
+  // async callable passed in getDustClient(). No ticking watchdog
+  // needed \u2014 the bearer is resolved on every HTTP call.
+  const stopTokenWatchdog = () => {};
 
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
@@ -313,9 +312,6 @@ export async function startTaskRunnerServer(
     };
     (server as any).__transport = transport;
     server.connect(transport).catch((err) => {
-      // If connect fails, stop the watchdog we just started so we don\u0027t
-      // leak a ticker.
-      stopTokenWatchdog();
       reject(err);
     });
     setTimeout(() => reject(new Error('task-runner registration timed out after 15s')), 15000);

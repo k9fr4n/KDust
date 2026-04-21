@@ -69,51 +69,14 @@ export async function getValidAccessToken(): Promise<string | null> {
   }
 }
 
-/**
- * Keeps the apiKey of a DustAPI instance fresh for the duration of a
- * long-running MCP handle (Franck 2026-04-21 01:00).
- *
- * Problem
- * -------
- * DustAPI captures the bearer token in `_options.apiKey` at construction
- * time. Long-lived handles (fs-cli, task-runner) keep using that cached
- * token for hours \u2014 heartbeats and SDK-internal re-registers start
- * failing with `expired_oauth_token_error` once the WorkOS token ages
- * out (~1h). The invalidate-on-401 path in fs-server catches it AFTER
- * the first failure; this watchdog prevents the failure happening in
- * the first place by rotating `_options.apiKey` in place periodically.
- *
- * Why mutate in place instead of rebuilding the client
- * ----------------------------------------------------
- * DustMcpServerTransport holds a reference to the DustAPI instance.
- * Rebuilding the client would mean rebuilding the transport, which
- * is what the proactive-rebuild path already does at a slower cadence.
- * Here we want the cheapest possible mid-flight refresh: just swap
- * the string property. The SDK reads `_options.apiKey` on every HTTP
- * call, so the new token is picked up on the very next request.
- *
- * Returns a cleanup function that stops the watchdog (call it from the
- * invalidate/release path).
- */
-/**
- * @deprecated No longer needed since getDustClient() now passes the
- * apiKey as an async function (Franck 2026-04-21 18:05). The SDK
- * resolves it on every HTTP call, so the token is always fresh without
- * any external rotation.
- *
- * Kept as a no-op shim so existing call sites (fs-server, task-runner,
- * command-runner) don\u0027t need to change in this commit. Returns an
- * immediate no-op cleanup function. Safe to remove once all callers
- * have been cleaned up.
- */
-export function startTokenRefreshWatchdog(
-  _client: DustAPI,
-  _label: string,
-  _intervalMs: number = 30 * 60 * 1000,
-): () => void {
-  // no-op: apiKey is now a callable, SDK resolves per request.
-  return () => {};
-}
+// Historical note (removed 2026-04-21 18:30, Franck):
+// `startTokenRefreshWatchdog` used to rotate `client._options.apiKey`
+// every 30 min to keep long-lived MCP handles using a fresh bearer.
+// It has been deleted because getDustClient() now passes `apiKey` as
+// an async callable \u2014 the SDK resolves the token on every HTTP call,
+// which is both simpler and race-free. See the docblock on
+// getDustClient() below and the official Dust CLI
+// (dust-cli/src/utils/dustClient.ts) for the same pattern.
 
 export async function getDustClient(): Promise<{
   client: DustAPI;

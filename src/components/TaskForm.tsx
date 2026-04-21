@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
+import { TaskSecretBindings } from '@/components/TaskSecretBindings';
 
 export type CronFormValues = {
   name: string;
@@ -322,6 +323,26 @@ export function TaskForm({
             </span>
           </span>
         </label>
+
+        {/* Secret env bindings (Franck 2026-04-21 22:00).
+            Only meaningful when command-runner is enabled AND the
+            task already exists in DB (a binding has no home without
+            taskId). Keeps the UI honest: we don't invite the user
+            to configure something that can't be persisted yet. */}
+        {isEdit && cronId && form.commandRunnerEnabled && (
+          <TaskSecretBindings taskId={cronId} />
+        )}
+        {isEdit && cronId && !form.commandRunnerEnabled && (
+          <p className="mt-2 text-xs text-slate-400 italic">
+            Enable the command-runner above to unlock secret env
+            bindings for this task.
+          </p>
+        )}
+        {!isEdit && form.commandRunnerEnabled && (
+          <p className="mt-2 text-xs text-slate-400 italic">
+            Save the task first to bind secret env vars.
+          </p>
+        )}
       </fieldset>
 
       {/* ----- Automation push settings ----- */}

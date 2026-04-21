@@ -24,6 +24,8 @@ import { DustMcpServerTransport } from '@dust-tt/client';
 import { z } from 'zod';
 import { getDustClient } from '../dust/client';
 import { db } from '../db';
+import { resolveForRun, type ResolvedSecrets } from '../secrets/repo';
+import { buildRedactor, noopRedactor } from '../secrets/redact';
 
 const pExecFile = promisify(execFile);
 
@@ -133,6 +135,34 @@ export async function startCommandRunnerServer(
 
   const projectRoot = path.join(PROJECTS_ROOT, projectName);
 
+  // Resolve secret bindings for the owning task ONCE per server
+  // lifetime (Franck 2026-04-21 21:30). Keeps the spawn hot-path
+  // DB-free and ensures every run_command in this session gets the
+  // same env contract \u2014 no mid-run rotation surprise. If resolution
+  // fails (e.g. secret was deleted between task config and run), we
+  // throw so the task fails loudly rather than executing without
+  // credentials it was configured to receive.
+  let resolved: ResolvedSecrets;
+  try {
+    resolved = await resolveForRun(runId);
+  } catch (e: any) {
+    throw new Error(`command-runner: secret resolution failed: ${e?.message ?? e}`);
+  }
+  const redact =
+    resolved.redactList.length > 0
+      ? buildRedactor(resolved.redactList, resolved.bindings)
+      : noopRedactor;
+  if (resolved.bindings.length > 0) {
+    // Log NAMES only. Under no circumstances should values be logged
+    // here \u2014 the redactor only protects subprocess stdout/stderr.
+    const names = resolved.bindings
+      .map((b) => `${b.envName}\u2190${b.secretName}`)
+      .join(', ');
+    console.log(
+      `[mcp/command-runner] run=${runId} secrets injected: ${names}`,
+    );
+  }
+
   const server = new McpServer({ name: 'command-runner', version: '0.1.0' });
 
   server.registerTool(
@@ -144,7 +174,12 @@ export async function startCommandRunnerServer(
         `Chrooted to the project working tree. Dangerous argv patterns ` +
         `(--privileged, -v /:, --pid=host, \u2026) are rejected before spawning. ` +
         `Prefer this tool over fs-cli's run_command when you need reliable, ` +
-        `observable execution.`,
+        `observable execution.` +
+        (resolved.bindings.length > 0
+          ? ` Pre-set env vars for this task: ${resolved.bindings
+              .map((b) => b.envName)
+              .join(', ')}. Values are injected server-side; don't echo them and don't pass them via argv.`
+          : ''),
       inputSchema: {
         command: z
           .string()
@@ -249,11 +284,23 @@ export async function startCommandRunnerServer(
       let errorMessage: string | null = null;
 
       try {
+        // Build the child-process env: start from the KDust container
+        // env so binaries find their PATH, HOME, etc., then overlay
+        // the task-bound secrets. Overlay (not prepend) because if a
+        // user deliberately pins GITHUB_TOKEN in a TaskSecret they
+        // mean to override whatever was inherited from the KDust
+        // container \u2014 we trust the user\u0027s explicit config over the
+        // ambient env.
+        const childEnv =
+          Object.keys(resolved.env).length > 0
+            ? { ...process.env, ...resolved.env }
+            : undefined; // keep default inheritance when no secrets
         const child = pExecFile(cmd, argv, {
           cwd,
           timeout: timeoutMs,
           maxBuffer: 50 * 1024 * 1024, // 50MB upper bound before libuv kills the process
           encoding: 'utf8',
+          env: childEnv,
         });
         if (stdin !== undefined && child.child.stdin) {
           child.child.stdin.end(stdin);
@@ -276,8 +323,19 @@ export async function startCommandRunnerServer(
         }
       }
 
-      const trimmedStdout = truncateOutput(stdoutStr);
-      const trimmedStderr = truncateOutput(stderrStr);
+      // Redact BEFORE truncation so a secret that straddles the
+      // truncation boundary still gets scrubbed (truncateOutput
+      // could split it into head/tail halves that individually
+      // don\u0027t match as literal). Redactor is a no-op when no
+      // secrets are bound, so the overhead is zero in that case.
+      const redactedStdout = redact(stdoutStr);
+      const redactedStderr = redact(stderrStr);
+      // errorMessage can legitimately carry the command\u0027s own error
+      // text (Node\u0027s execFile rejection includes the tail of stderr),
+      // so scrub it too before persistence / LLM return.
+      if (errorMessage) errorMessage = redact(errorMessage);
+      const trimmedStdout = truncateOutput(redactedStdout);
+      const trimmedStderr = truncateOutput(redactedStderr);
       const durationMs = Date.now() - start;
 
       await db.command.update({

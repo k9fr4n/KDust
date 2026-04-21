@@ -221,6 +221,17 @@ model Task {
   // Opt-in per task, always safe default (false).
   commandRunnerEnabled Boolean @default(false)
 
+  // --- Secret env bindings (Franck 2026-04-21 21:30) ---
+  // Per-task mapping "env var name -> global secret name". When the
+  // command-runner MCP spawns a child process for this task, it
+  // resolves each binding server-side and injects the decrypted value
+  // into the child env BEFORE exec. The LLM never sees the value and
+  // never references it in its argv \u2014 from the model\u0027s point of
+  // view, `$GITHUB_TOKEN` (or whatever env name was chosen) is just
+  // already set in the shell it calls `gh release create` from.
+  // No auto-propagation to child tasks spawned via task-runner.
+  secretBindings TaskSecret[]
+
   @@map("CronJob")
 }
 
@@ -393,4 +404,68 @@ model Command {
 
   @@index([runId])
   @@index([startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Secret manager (Franck 2026-04-21 21:30)
+// ---------------------------------------------------------------------------
+// Global, scoped-to-KDust secrets referenced by tasks through the
+// TaskSecret binding below. `valueEnc` is AES-256-GCM encrypted using
+// APP_ENCRYPTION_KEY (same KDF as DustSession.refreshTokenEnc) so a
+// DB dump alone is useless without the env var.
+//
+// Design constraints deliberately applied (threat model in
+// docs/secrets.md):
+//   1. No LLM-accessible path returns the plaintext. Only the
+//      command-runner child-process spawn reads it via resolve()
+//      below, server-side, immediately before exec().
+//   2. No versioning / no "rotation" flow. Updates are in-place;
+//      any run in flight keeps its already-resolved env.
+//   3. Plaintext never appears in logs, stdout relayed to the LLM,
+//      or in audit rows — see the redactor in command-runner.
+//
+// The table is voluntarily shallow: a future enhancement could push
+// to Azure Key Vault / Vault via a pluggable backend, but the first
+// version stores encrypted-at-rest locally in SQLite.
+model Secret {
+  id          Int      @id @default(autoincrement())
+  // Lowercase slug identifier, unique. Used by tasks to reference
+  // the secret (`{taskId, envName -> secretName}`). Keeping it
+  // URL-safe and shell-safe is enforced at the API layer.
+  name        String   @unique
+  // AES-256-GCM ciphertext; decoded only by the command-runner at
+  // exec time. Never returned by any read API.
+  valueEnc    String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  // Bumped by command-runner on every successful decrypt-and-inject.
+  // Lets the UI show "never used" vs "used 2h ago" to flag stale
+  // secrets at audit time.
+  lastUsedAt  DateTime?
+
+  bindings    TaskSecret[]
+}
+
+// Per-task env-var -> secret binding. Unique on (taskId, envName)
+// so each env var has a single source of truth within a task, and
+// indexed on secretName to make "which tasks reference this secret?"
+// O(1) when planning a rotation.
+//
+// onDelete behavior:
+//   - Task: Cascade (dropping a task drops its bindings)
+//   - Secret: Restrict — you can't delete a Secret that's still
+//     bound somewhere; the UI must first unbind or the user must
+//     pass ?force=true which drops the bindings first.
+model TaskSecret {
+  id         Int    @id @default(autoincrement())
+  taskId     String
+  envName    String
+  secretName String
+
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  secret Secret @relation(fields: [secretName], references: [name], onDelete: Restrict)
+
+  @@unique([taskId, envName])
+  @@index([secretName])
 }

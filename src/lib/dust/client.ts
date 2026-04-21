@@ -95,29 +95,24 @@ export async function getValidAccessToken(): Promise<string | null> {
  * Returns a cleanup function that stops the watchdog (call it from the
  * invalidate/release path).
  */
+/**
+ * @deprecated No longer needed since getDustClient() now passes the
+ * apiKey as an async function (Franck 2026-04-21 18:05). The SDK
+ * resolves it on every HTTP call, so the token is always fresh without
+ * any external rotation.
+ *
+ * Kept as a no-op shim so existing call sites (fs-server, task-runner,
+ * command-runner) don\u0027t need to change in this commit. Returns an
+ * immediate no-op cleanup function. Safe to remove once all callers
+ * have been cleaned up.
+ */
 export function startTokenRefreshWatchdog(
-  client: DustAPI,
-  label: string,
-  intervalMs: number = 30 * 60 * 1000, // 30 min (< 1h token TTL)
+  _client: DustAPI,
+  _label: string,
+  _intervalMs: number = 30 * 60 * 1000,
 ): () => void {
-  const timer = setInterval(async () => {
-    try {
-      const fresh = await getValidAccessToken();
-      if (!fresh) {
-        console.warn(`[${label}] token refresh watchdog: no token available`);
-        return;
-      }
-      const opts = (client as any)._options;
-      if (opts && opts.apiKey !== fresh) {
-        opts.apiKey = fresh;
-        console.log(`[${label}] token refresh watchdog: apiKey rotated`);
-      }
-    } catch (e: any) {
-      console.warn(`[${label}] token refresh watchdog failed: ${e?.message ?? e}`);
-    }
-  }, intervalMs);
-  (timer as any).unref?.();
-  return () => clearInterval(timer);
+  // no-op: apiKey is now a callable, SDK resolves per request.
+  return () => {};
 }
 
 export async function getDustClient(): Promise<{
@@ -127,19 +122,38 @@ export async function getDustClient(): Promise<{
   const stored = await loadTokens();
   if (!stored || !stored.workspaceId) return null;
 
-  const token = await getValidAccessToken();
-  if (!token) return null;
+  // Early existence check — if no token is available at all, don\u2019t
+  // return a client. The apiKey callable below is only invoked by the
+  // SDK on the first HTTP call, so without this guard we\u0027d return a
+  // useless client that errors late.
+  const probe = await getValidAccessToken();
+  if (!probe) return null;
 
   const url = await resolveDustUrl(stored.region);
   // Legacy 4-arg constructor kept (still supported by the SDK) — the
   // new single-options constructor exposes `extraHeaders` cleanly, but
   // the 4-arg form doesn't, so we pass headers by casting the legacy
   // config block. Both signatures end up writing to `_options`.
+  //
+  // Token rotation (Franck 2026-04-21 18:05)
+  // ----------------------------------------
+  // `apiKey` is passed as an async FUNCTION, not a string. The SDK
+  // (@dust-tt/client client.cjs.development.js:5852-5855) checks
+  // `typeof this._credentials.apiKey === "function"` on every HTTP
+  // call and invokes it to resolve the bearer. This gives us a fresh
+  // token on every request \u2014 including long-running heartbeats and
+  // MCP re-registers \u2014 without a watchdog. Same pattern as the
+  // official Dust CLI (dust-cli/src/utils/dustClient.ts).
+  //
+  // This supersedes the previous approach (string apiKey + periodic
+  // mutation of _options.apiKey via startTokenRefreshWatchdog). The
+  // watchdog is kept as a compatibility shim returning a no-op cleanup
+  // function \u2014 call sites that still invoke it don\u0027t need to change.
   const client = new DustAPI(
     { url },
     {
       workspaceId: stored.workspaceId,
-      apiKey: token,
+      apiKey: async () => (await getValidAccessToken()) ?? '',
       // Impersonate the official Dust CLI so `origin: "cli"` is
       // accepted and the conversation lands in the human usage
       // bucket. See docblock at the top of the file.

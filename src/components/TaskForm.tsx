@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { TaskSecretBindings } from '@/components/TaskSecretBindings';
@@ -168,6 +168,24 @@ export function TaskForm({
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
   const optCls = 'bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100';
 
+  // Auto-grow the prompt textarea so long prompts (which is the
+  // common case for KDust tasks) are visible without inner scroll
+  // (Franck 2026-04-21 22:40). We reset to 'auto' before reading
+  // scrollHeight to let the element shrink when content is removed;
+  // without that, height only ever grows. Capped by max-h on the
+  // element itself so very large prompts don\u0027t push the sticky
+  // footer off the viewport.
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    // + a couple of px so the caret on the last line doesn\u0027t scroll
+    // the element internally; browsers compute scrollHeight without
+    // border, inline padding is already included.
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [form.prompt]);
+
   // Shared fieldset chrome \u2014 pulled out for consistency across the
   // reorganized layout (Franck 2026-04-21 22:05). Sections become
   // easier to scan when their visual framing is identical.
@@ -296,7 +314,12 @@ export function TaskForm({
       <fieldset className={sectionCls}>
         <legend className={legendCls}>Prompt</legend>
         <textarea
-          className={`${field} min-h-48 font-mono text-sm`}
+          ref={promptRef}
+          // resize:none disables the manual drag handle because the
+          // effect above already sizes the field to its content. We
+          // also cap max-h to 75vh so extreme prompts scroll internally
+          // instead of pushing the rest of the form off-screen.
+          className={`${field} min-h-48 max-h-[75vh] resize-none font-mono text-sm overflow-y-auto`}
           value={form.prompt}
           onChange={(e) => setForm({ ...form, prompt: e.target.value })}
           required

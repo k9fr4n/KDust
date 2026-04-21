@@ -1,18 +1,22 @@
 import { startFsServer, type FsServerHandle } from './fs-server';
 import { startTaskRunnerServer, type TaskRunnerHandle } from './task-runner-server';
+import { startCommandRunnerServer, type CommandRunnerHandle } from './command-runner-server';
 
 // Module-level singleton (survives across requests in a given node process)
 const g = globalThis as unknown as {
   __kdustMcp?: Map<string, Promise<FsServerHandle>>;
   __kdustTaskRunnerMcp?: Map<string, Promise<TaskRunnerHandle>>;
+  __kdustCommandRunnerMcp?: Map<string, Promise<CommandRunnerHandle>>;
   __kdustMcpLastUsed?: Map<string, number>;
   __kdustFsSweeper?: NodeJS.Timeout;
 };
 if (!g.__kdustMcp) g.__kdustMcp = new Map();
 if (!g.__kdustTaskRunnerMcp) g.__kdustTaskRunnerMcp = new Map();
+if (!g.__kdustCommandRunnerMcp) g.__kdustCommandRunnerMcp = new Map();
 if (!g.__kdustMcpLastUsed) g.__kdustMcpLastUsed = new Map();
 const cache = g.__kdustMcp!;
 const taskRunnerCache = g.__kdustTaskRunnerMcp!;
+const commandRunnerCache = g.__kdustCommandRunnerMcp!;
 const lastUsedByProject = g.__kdustMcpLastUsed!;
 
 // ---------------------------------------------------------------------------
@@ -157,6 +161,52 @@ export async function releaseTaskRunnerServer(orchestratorRunId: string): Promis
     const handle = await entry;
     // Stop the apiKey refresh interval FIRST so it doesn\u0027t fire
     // after the transport is closed (would mutate a dead client).
+    try { handle.stopTokenWatchdog?.(); } catch { /* ignore */ }
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  command-runner MCP server registry (Franck 2026-04-21 13:39)              */
+/*                                                                            */
+/*  Same shape as task-runner: keyed per run, not per project. Each run with  */
+/*  `commandRunnerEnabled=true` gets its own handle so the `run_command` tool */
+/*  can persist invocations against the correct runId. Released by the cron   */
+/*  runner\u0027s finally block.                                                  */
+/* -------------------------------------------------------------------------- */
+
+export async function getCommandRunnerServerId(
+  runId: string,
+  projectName: string,
+): Promise<string> {
+  const existing = commandRunnerCache.get(runId);
+  if (existing) {
+    try {
+      const handle = await existing;
+      if (handle.serverId) return handle.serverId;
+    } catch {
+      commandRunnerCache.delete(runId);
+    }
+  }
+  const p = startCommandRunnerServer(runId, projectName);
+  commandRunnerCache.set(runId, p);
+  try {
+    const handle = await p;
+    return handle.serverId;
+  } catch (e) {
+    commandRunnerCache.delete(runId);
+    throw e;
+  }
+}
+
+export async function releaseCommandRunnerServer(runId: string): Promise<void> {
+  const entry = commandRunnerCache.get(runId);
+  commandRunnerCache.delete(runId);
+  if (!entry) return;
+  try {
+    const handle = await entry;
     try { handle.stopTokenWatchdog?.(); } catch { /* ignore */ }
     await handle.transport.close().catch(() => {});
   } catch {

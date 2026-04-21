@@ -51,6 +51,12 @@ const TaskInput = z.object({
   // vast majority of tasks are plain workers; only a dedicated
   // "orchestrator" should set this.
   taskRunnerEnabled: z.boolean().default(false),
+  // Command-runner opt-in (Franck 2026-04-21 13:39). When true, the
+  // runner attaches the command-runner MCP server, giving the agent
+  // `run_command` (KDust-side, persisted in Command table, denylist
+  // enforced). Orthogonal to taskRunnerEnabled \u2014 a task can have
+  // either, both, or neither.
+  commandRunnerEnabled: z.boolean().default(false),
   // Phase 1 (2026-04-19): branch fields are optional overrides.
   // NULL / omitted \u2192 inherit from the parent Project row. An
   // empty string on the wire is coerced to null so "clear override"

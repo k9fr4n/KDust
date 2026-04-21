@@ -39,6 +39,18 @@ export type CronFormValues = {
    */
   taskRunnerEnabled: boolean;
   /**
+   * Opt-in for the command-runner MCP server (Franck 2026-04-21).
+   * When true, the agent gets `run_command` (KDust-side) with:
+   *   - every invocation persisted in the Command table
+   *   - denylist of dangerous argv fragments (--privileged, -v /:, \u2026)
+   *   - chroot to the project working tree
+   * Orthogonal to taskRunnerEnabled: a task can enable both, either
+   * or neither. For most agents that need shell execution (lint,
+   * test, codegen build steps) this should be preferred over fs-cli\u0027s
+   * bundled run_command because it\u0027s reliable and auditable.
+   */
+  commandRunnerEnabled: boolean;
+  /**
    * Branch fields are nullable (Phase 1, Franck 2026-04-19).
    * NULL / empty string \u2192 inherit from the parent Project. The
    * server-side API (PATCH/POST) accepts string | null and the
@@ -91,6 +103,7 @@ export function TaskForm({
     kind: initial?.kind ?? 'automation',
     pushEnabled: initial?.pushEnabled ?? true,
     taskRunnerEnabled: initial?.taskRunnerEnabled ?? false,
+    commandRunnerEnabled: initial?.commandRunnerEnabled ?? false,
     // Phase 1: these now accept null (= inherit from project).
     // Preserve explicit initial values; otherwise start null so
     // the edit form shows the project's value as placeholder.
@@ -278,6 +291,37 @@ export function TaskForm({
             task&apos;s work branch mid-run.
           </p>
         )}
+
+        {/* ----- Command runner toggle (Franck 2026-04-21 13:39) -----
+            Opt-in to the KDust-side command-runner MCP server. Attaches
+            the `run_command` tool whose every invocation is persisted
+            in the Command table (visible on /runs/[id]). Safer than
+            fs-cli\u0027s bundled run_command because:
+              - the transport is owned by KDust (no mid-run SDK
+                re-inits)
+              - a denylist of dangerous argv fragments is enforced
+              - full audit trail for debugging, replay, forensics
+            Orthogonal to orchestrator mode: a task can have either,
+            both, or neither. */}
+        <label className="flex items-start gap-2 pt-2 border-t border-indigo-200/40 dark:border-indigo-800/40 mt-2">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={form.commandRunnerEnabled}
+            onChange={(e) => setForm({ ...form, commandRunnerEnabled: e.target.checked })}
+          />
+          <span className="text-sm">
+            <span className="font-medium">Command runner (run_command, audited)</span>
+            <span className="block text-xs text-slate-500">
+              Grants <code className="font-mono">command_runner__run_command</code>: execute
+              shell commands inside the project workspace. Every invocation is logged in
+              KDust (DB-backed, replayable in the run page). A denylist blocks dangerous
+              patterns (<code>--privileged</code>, <code>-v /:/</code>, <code>--pid=host</code>,
+              ...). Prefer this over fs-cli&apos;s run_command when the task executes
+              docker, npm, tests, lint, etc.
+            </span>
+          </span>
+        </label>
       </fieldset>
 
       {/* ----- Automation push settings ----- */}

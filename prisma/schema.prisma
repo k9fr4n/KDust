@@ -208,6 +208,19 @@ model Task {
   // this. Children (codegen/lint/test) must leave it false.
   taskRunnerEnabled Boolean @default(false)
 
+  // --- Command runner (Franck 2026-04-21 13:39) ---
+  // When true, the agent running this task gets access to the
+  // `command-runner` MCP server exposing `run_command`. Unlike the
+  // fs-cli's own run_command (Dust-hosted, which is unreliable and
+  // unobservable), our server-side implementation:
+  //   - logs every invocation in the `Command` table below
+  //     (forensic trail, replayable in the UI)
+  //   - enforces a configurable denylist of dangerous args
+  //   - runs with a chroot to the project working tree
+  //   - has its transport owned by KDust, no Dust-side re-init noise
+  // Opt-in per task, always safe default (false).
+  commandRunnerEnabled Boolean @default(false)
+
   @@map("CronJob")
 }
 
@@ -340,4 +353,44 @@ model TaskRun {
   @@index([dustConversationSId])
   @@index([parentRunId])
   @@map("CronRun")
+
+  commands Command[]
+}
+
+// One row per `run_command` invocation executed through the KDust-side
+// command-runner MCP server (Franck 2026-04-21 13:39). Backs the
+// "Commands executed" section of /runs/[id], the audit log, and the
+// (future) replay/retry flows.
+//
+// stdout/stderr are stored inline with a hard cap (truncMarker + tail
+// when oversized) so a single rogue command can't blow the DB up.
+// If we ever need full output for large builds, we'll migrate to
+// filesystem refs (stdoutRef/stderrRef pointing to /data/logs/...)
+// at that point \u2014 the schema leaves room for that evolution since
+// both columns are nullable.
+model Command {
+  id           String    @id @default(cuid())
+  runId        String
+  command      String     // "docker", "npm", "git", \u2026
+  args         String     // JSON array of string args
+  cwd          String?
+  exitCode     Int?       // null while running or if the process crashed before exiting
+  stdout       String?    // capped; truncated tail when very long
+  stderr       String?    // capped; truncated tail when very long
+  stdoutBytes  Int?       // true pre-truncation size (for UI "cut off at X")
+  stderrBytes  Int?
+  durationMs   Int?
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  // 'running' | 'success' | 'failed' | 'timeout' | 'killed' | 'denied'
+  //   - denied: rejected by the args denylist before spawning
+  //   - killed: KDust aborted the process (cancel cascade, TTL)
+  //   - timeout: exceeded the per-call timeoutMs
+  status       String    @default("running")
+  errorMessage String?
+
+  run TaskRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([startedAt])
 }

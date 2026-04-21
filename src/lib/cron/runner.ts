@@ -380,6 +380,19 @@ export async function runTask(
         }
       }
 
+      // command-runner opt-in (Franck 2026-04-21 13:39). Same pattern as
+      // task-runner above. Released in the finally block at end of file.
+      if (job.commandRunnerEnabled) {
+        try {
+          const { getCommandRunnerServerId } = await import('../mcp/registry');
+          const crId = await getCommandRunnerServerId(run.id, project.name);
+          mcpServerIds = [...(mcpServerIds ?? []), crId];
+          console.log(`[cron/audit] command-runner serverId=${crId}`);
+        } catch (e) {
+          console.warn(`[cron/audit] command-runner register failed: ${(e as Error).message}`);
+        }
+      }
+
       await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is analysing…`);
       const convTitle = `[audit:${job.category}] ${project.name} @ ${new Date().toISOString()}`;
       const conv = await createDustConversation(job.agentSId, effectivePrompt, convTitle, mcpServerIds, 'cli');
@@ -629,6 +642,21 @@ export async function runTask(
         console.log(`[cron] task-runner serverId=${trId}`);
       } catch (e) {
         console.warn(`[cron] task-runner register failed: ${(e as Error).message}`);
+      }
+    }
+
+    // Command-runner MCP (Franck 2026-04-21 13:39). Opt-in per task
+    // via commandRunnerEnabled. Provides the `run_command` tool whose
+    // invocations are persisted in the `Command` table (audit trail,
+    // forensic, replayable in the UI). Released by the finally block.
+    if (job.commandRunnerEnabled) {
+      try {
+        const { getCommandRunnerServerId } = await import('../mcp/registry');
+        const crId = await getCommandRunnerServerId(run.id, project.name);
+        mcpServerIds = [...(mcpServerIds ?? []), crId];
+        console.log(`[cron] command-runner serverId=${crId}`);
+      } catch (e) {
+        console.warn(`[cron] command-runner register failed: ${(e as Error).message}`);
       }
     }
 
@@ -1042,6 +1070,14 @@ export async function runTask(
     // Idempotent when no task-runner was started for this run.
     // Fire-and-forget on purpose: finally shouldn't block on I/O.
     void releaseTaskRunnerServer(run.id);
+    // Same treatment for command-runner (Franck 2026-04-21 13:39):
+    // always released at end of run, whether or not it was attached.
+    void (async () => {
+      try {
+        const { releaseCommandRunnerServer } = await import('../mcp/registry');
+        await releaseCommandRunnerServer(run.id);
+      } catch { /* ignore */ }
+    })();
   }
   // Success / failure / cancel paths all funnel here after the try/catch.
   // Always returning the runId lets callers (task-runner MCP, API

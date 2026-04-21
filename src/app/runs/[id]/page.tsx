@@ -101,6 +101,15 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
     include: { task: { select: { name: true } } },
   });
 
+  // Commands executed through the command-runner MCP server
+  // (Franck 2026-04-21 13:39). Ordered by start-time so the UI
+  // renders them as an execution log. Empty for tasks that didn\u0027t
+  // have commandRunnerEnabled.
+  const commands = await db.command.findMany({
+    where: { runId: run.id },
+    orderBy: { startedAt: 'asc' },
+  });
+
   // Resolve git links (best effort — project may have been deleted).
   const project = run.task?.projectPath
     ? await db.project.findFirst({ where: { name: run.task.projectPath } })
@@ -414,6 +423,85 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           )}
 
           {/* Agent output */}
+          {/* Commands executed via command-runner MCP (Franck 2026-04-21 13:39).
+              Collapsed by default to avoid bloat; each command expandable
+              via native <details>. Shows status, exit code, duration and
+              head of stdout/stderr (full content in DB, already truncated
+              to KDUST_CMD_OUTPUT_MAX_BYTES at write-time). */}
+          {commands.length > 0 && (
+            <section className="mb-6">
+              <h2 className="font-semibold mb-2 text-sm">
+                Commands ({commands.length})
+              </h2>
+              <div className="space-y-2">
+                {commands.map((c) => {
+                  const argv = (() => {
+                    try { return JSON.parse(c.args) as string[]; } catch { return []; }
+                  })();
+                  const argvStr = argv.map((a) => /[\s"']/.test(a) ? JSON.stringify(a) : a).join(' ');
+                  const ok = c.status === 'success';
+                  const deniedOrTimeout = c.status === 'denied' || c.status === 'timeout' || c.status === 'killed';
+                  const badgeClass = ok
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                    : deniedOrTimeout
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                    : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300';
+                  return (
+                    <details key={c.id} className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30">
+                      <summary className="cursor-pointer px-3 py-2 text-xs font-mono flex items-center gap-2 select-none">
+                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold ${badgeClass}`}>
+                          {c.status}
+                        </span>
+                        <span className="flex-1 truncate">
+                          <span className="font-semibold">{c.command}</span>
+                          {argvStr ? ` ${argvStr}` : ''}
+                        </span>
+                        <span className="text-slate-500 text-[10px] whitespace-nowrap">
+                          {c.exitCode !== null ? `exit=${c.exitCode}` : ''}
+                          {c.durationMs !== null && c.durationMs !== undefined ? ` · ${c.durationMs}ms` : ''}
+                        </span>
+                      </summary>
+                      <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+                        {c.cwd && (
+                          <div className="text-slate-500">
+                            <span className="font-semibold">cwd:</span> <code className="font-mono">{c.cwd}</code>
+                          </div>
+                        )}
+                        {c.errorMessage && (
+                          <div className="text-red-600 dark:text-red-400">
+                            <span className="font-semibold">error:</span> {c.errorMessage}
+                          </div>
+                        )}
+                        {c.stdout && (
+                          <div>
+                            <div className="text-slate-500 font-semibold mb-1">
+                              stdout ({(c.stdoutBytes ?? c.stdout.length).toLocaleString('fr-FR')} bytes
+                              {c.stdoutBytes && c.stdoutBytes > c.stdout.length ? ' · truncated' : ''})
+                            </div>
+                            <pre className="whitespace-pre-wrap rounded bg-slate-100 dark:bg-slate-950 p-2 max-h-60 overflow-auto">
+                              {c.stdout}
+                            </pre>
+                          </div>
+                        )}
+                        {c.stderr && (
+                          <div>
+                            <div className="text-slate-500 font-semibold mb-1">
+                              stderr ({(c.stderrBytes ?? c.stderr.length).toLocaleString('fr-FR')} bytes
+                              {c.stderrBytes && c.stderrBytes > c.stderr.length ? ' · truncated' : ''})
+                            </div>
+                            <pre className="whitespace-pre-wrap rounded bg-slate-100 dark:bg-slate-950 p-2 max-h-60 overflow-auto">
+                              {c.stderr}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </details>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           {run.output && (
             <section className="mb-6">
               <h2 className="font-semibold mb-2 text-sm">

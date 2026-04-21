@@ -634,7 +634,11 @@ export async function runTask(
 
     // [5] Dust agent ---------------------------------------------------------
     await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
-    const convTitle = `[cron] ${job.name} @ ${new Date().toISOString()}`;
+    // Conversation title shown in the Dust UI. No "[cron]" prefix
+    // (Franck 2026-04-21 11:44): the marker was redundant \u2014 KDust
+    // conversations are already filterable by their origin=cli tag
+    // and the noise polluted the Dust conversation list.
+    const convTitle = `${job.name} @ ${new Date().toISOString()}`;
     // Enrich the prompt with the KDust automation-context footer when
     // pushEnabled is true. When false, send the prompt as-is (see
     // buildAutomationPrompt above). Per Franck 2026-04-19 00:36.

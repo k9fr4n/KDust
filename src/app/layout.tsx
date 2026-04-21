@@ -6,6 +6,7 @@ import './globals.css';
 import 'highlight.js/styles/github-dark.css';
 import type { Metadata } from 'next';
 import { Nav } from '@/components/Nav';
+import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
 
 export const metadata: Metadata = {
@@ -18,6 +19,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="fr">
       <body>
         <Nav />
+        {/* Session health banner (Franck 2026-04-21 18:30): if the
+            DustSession row is missing or expired (e.g. after the
+            workos refresh grant returned 400/401 and we wiped the
+            row \u2014 see src/lib/dust/workos.ts), surface an amber
+            banner with a one\u2011click Re\u2011auth CTA so users don\u0027t
+            waste time wondering why agents silently fail. Server\u2011
+            rendered; null when the session is healthy. */}
+        <DustAuthBanner />
         {/* Cross-tab sync (Franck 2026-04-20 17:04): any tab that
             mutates a conversation (pin / delete) broadcasts an event
             over BroadcastChannel (fallback: localStorage). Every

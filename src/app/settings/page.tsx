@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FolderGit2,
   Bot,
+  KeyRound,
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -50,6 +51,18 @@ export default function SettingsIndex() {
         'Register / unregister projects tracked by KDust: git URL, default branch, manual sync trigger.',
       icon: <FolderGit2 size={18} />,
       accent: 'text-teal-600 dark:text-teal-400',
+    },
+    {
+      // Secrets manager (Franck 2026-04-21 21:45): global store of
+      // credentials a task can inject as env vars into its command-
+      // runner child processes. Never exposed to the LLM. See
+      // /settings/secrets for the editor.
+      href: '/settings/secrets',
+      title: 'Secrets',
+      description:
+        'Encrypted credentials injected as environment variables into command-runner tasks (GitHub tokens, cloud creds, ...). Values never reach the LLM.',
+      icon: <KeyRound size={18} />,
+      accent: 'text-rose-600 dark:text-rose-400',
     },
     {
       href: '/settings/audits',

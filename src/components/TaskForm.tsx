@@ -168,18 +168,100 @@ export function TaskForm({
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
   const optCls = 'bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100';
 
+  // Shared fieldset chrome \u2014 pulled out for consistency across the
+  // reorganized layout (Franck 2026-04-21 22:05). Sections become
+  // easier to scan when their visual framing is identical.
+  const sectionCls =
+    'border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3 bg-white/60 dark:bg-slate-900/30';
+  const legendCls =
+    'px-2 text-sm font-semibold text-slate-700 dark:text-slate-300';
+
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-4">
+    <form onSubmit={submit} className="max-w-6xl mx-auto space-y-4">
       <h1 className="text-2xl font-bold">{isEdit ? 'Edit task' : 'New task'}</h1>
 
-      {/* Scheduler section \u2014 reinstated 2026-04-19 (Franck).
-          `manual` is a pseudo-schedule meaning "never auto-fire";
-          any other value must be a valid 5-field cron expression
-          (validated server-side). The helper text lists a few
-          ready-to-paste recipes. */}
-      <fieldset className="border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3">
-        <legend className="px-2 text-sm font-semibold text-slate-700 dark:text-slate-300">Schedule</legend>
-        <div className="grid grid-cols-2 gap-3">
+      {/* ---------------------------------------------------------
+          Row 1 \u2014 Identity (2/3) + Schedule (1/3)
+          ---------------------------------------------------------
+          Wide-screen layout: the two sections sit side-by-side so
+          the user gets the full configuration picture at a glance.
+          Stacks single-column below `lg` for tablets / phones.
+          (Franck 2026-04-21 22:05 UI refresh.) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <fieldset className={`${sectionCls} lg:col-span-2`}>
+          <legend className={legendCls}>Identity</legend>
+          <label className="block">
+            <span className="text-sm">Name</span>
+            <input
+              className={field}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+            />
+          </label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-sm">Agent</span>
+              <select
+                className={field}
+                value={form.agentSId}
+                onChange={(e) => setForm({ ...form, agentSId: e.target.value })}
+                required
+              >
+                <option value="" className={optCls}>\u2014 select an agent \u2014</option>
+                {agents.map((a) => (
+                  <option key={a.sId} value={a.sId} className={optCls}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm">Project</span>
+              <select
+                className={field}
+                value={form.projectPath}
+                onChange={(e) => setForm({ ...form, projectPath: e.target.value })}
+                required
+              >
+                <option value="" className={optCls}>\u2014 select a project \u2014</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.name} className={optCls}>
+                    {p.name} ({p.branch})
+                  </option>
+                ))}
+              </select>
+              {projects.length === 0 && (
+                <span className="text-xs text-amber-600 dark:text-amber-400">
+                  No project declared. Add one in the{' '}
+                  <a href="/settings/projects" className="underline">
+                    Projects
+                  </a>{' '}
+                  tab.
+                </span>
+              )}
+            </label>
+          </div>
+          <label className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+            />
+            <span className="text-sm">Enabled</span>
+            <span className="text-xs text-slate-500">
+              Disabled tasks are skipped by the scheduler and can\u0027t be
+              triggered via \u201cRun now\u201d.
+            </span>
+          </label>
+        </fieldset>
+
+        {/* Scheduler \u2014 reinstated 2026-04-19 (Franck).
+            `manual` is a pseudo-schedule meaning \u201cnever auto-fire\u201d;
+            any other value must be a valid 5-field cron expression
+            (validated server-side). */}
+        <fieldset className={sectionCls}>
+          <legend className={legendCls}>Schedule</legend>
           <label className="block">
             <span className="text-sm">Cron expression</span>
             <input
@@ -190,8 +272,9 @@ export function TaskForm({
               required
             />
             <span className="text-xs text-slate-500">
-              <code>manual</code> = trigger only via Run now. Otherwise 5-field cron
-              (e.g. <code>0 3 * * 1</code> Mondays 3am, <code>*/15 * * * *</code> every 15 min).
+              <code>manual</code> = trigger only via Run now. Otherwise
+              5-field cron (e.g. <code>0 3 * * 1</code> Mondays 3am,{' '}
+              <code>*/15 * * * *</code> every 15 min).
             </span>
           </label>
           <label className="block">
@@ -204,53 +287,26 @@ export function TaskForm({
               required
             />
           </label>
-        </div>
+        </fieldset>
+      </div>
+
+      {/* ---------------------------------------------------------
+          Row 2 \u2014 Prompt (full width, big textarea)
+          --------------------------------------------------------- */}
+      <fieldset className={sectionCls}>
+        <legend className={legendCls}>Prompt</legend>
+        <textarea
+          className={`${field} min-h-48 font-mono text-sm`}
+          value={form.prompt}
+          onChange={(e) => setForm({ ...form, prompt: e.target.value })}
+          required
+        />
+        <p className="text-xs text-slate-500">
+          Sent as-is to the agent. When <em>Automation push</em> is on,
+          KDust appends a context footer summarizing branch, task id,
+          and safety constraints.
+        </p>
       </fieldset>
-
-      <label className="block">
-        <span className="text-sm">Name</span>
-        <input className={field} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-      </label>
-
-      <label className="block">
-        <span className="text-sm">Agent</span>
-        <select className={field} value={form.agentSId} onChange={(e) => setForm({ ...form, agentSId: e.target.value })} required>
-          <option value="" className={optCls}>— select an agent —</option>
-          {agents.map((a) => (
-            <option key={a.sId} value={a.sId} className={optCls}>{a.name}</option>
-          ))}
-        </select>
-      </label>
-
-      <label className="block">
-        <span className="text-sm">Project</span>
-        <select className={field} value={form.projectPath} onChange={(e) => setForm({ ...form, projectPath: e.target.value })} required>
-          <option value="" className={optCls}>— select a project —</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.name} className={optCls}>{p.name} ({p.branch})</option>
-          ))}
-        </select>
-        {projects.length === 0 && (
-          <span className="text-xs text-amber-600 dark:text-amber-400">
-            No project declared. Add one in the <a href="/settings/projects" className="underline">Projects</a> tab.
-          </span>
-        )}
-      </label>
-
-      <label className="block">
-        <span className="text-sm">Prompt</span>
-        <textarea className={`${field} min-h-32 font-mono text-sm`} value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} required />
-      </label>
-
-      <label className="block">
-        <span className="text-sm">Teams webhook (override, otherwise global)</span>
-        <input className={field} type="url" value={form.teamsWebhook} onChange={(e) => setForm({ ...form, teamsWebhook: e.target.value })} placeholder="https://..." />
-      </label>
-
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-        <span>Enabled</span>
-      </label>
 
       {/* ----- Task orchestration (Franck 2026-04-20 22:58) -----
           Opt-in toggle that grants this task's agent access to the
@@ -473,11 +529,40 @@ export function TaskForm({
         </div>
       )}
 
+      {/* ---------------------------------------------------------
+          Row N-1 \u2014 Notifications
+          ---------------------------------------------------------
+          Moved to the bottom on 2026-04-21 22:05: it\u0027s the least
+          frequently touched setting and most operators just inherit
+          the global webhook. Keeping it at the top crowded the
+          Identity row without adding value. */}
+      <fieldset className={sectionCls}>
+        <legend className={legendCls}>Notifications</legend>
+        <label className="block">
+          <span className="text-sm">Teams webhook (override, otherwise global)</span>
+          <input
+            className={field}
+            type="url"
+            value={form.teamsWebhook}
+            onChange={(e) => setForm({ ...form, teamsWebhook: e.target.value })}
+            placeholder="https://..."
+          />
+          <span className="text-xs text-slate-500">
+            Empty \u2192 inherit the global webhook configured in{' '}
+            <a href="/settings/global" className="underline">
+              App Settings
+            </a>
+            . Set here to redirect notifications of this specific task
+            to a different channel.
+          </span>
+        </label>
+      </fieldset>
+
       {err && <p className="text-red-500 text-sm">{err}</p>}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 sticky bottom-0 bg-white/90 dark:bg-slate-950/90 backdrop-blur py-3 border-t border-slate-200 dark:border-slate-800 -mx-4 px-4">
         <Button type="submit" disabled={loading}>
-          {loading ? (isEdit ? 'Saving…' : 'Creating…') : isEdit ? 'Save' : 'Create'}
+          {loading ? (isEdit ? 'Saving\u2026' : 'Creating\u2026') : isEdit ? 'Save' : 'Create'}
         </Button>
         {isEdit && (
           <button

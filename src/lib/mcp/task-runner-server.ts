@@ -44,11 +44,6 @@ export interface TaskRunnerHandle {
   serverId: string;
   server: McpServer;
   transport: DustMcpServerTransport;
-  /**
-   * @deprecated No-op since getDustClient() rotates the apiKey via an
-   * async callable. Kept for ABI stability with existing callers.
-   */
-  stopTokenWatchdog: () => void;
 }
 
 const MAX_DEPTH = Math.max(
@@ -253,7 +248,6 @@ export async function startTaskRunnerServer(
   // apiKey rotation is now handled transparently by the SDK via the
   // async callable passed in getDustClient(). No ticking watchdog
   // needed \u2014 the bearer is resolved on every HTTP call.
-  const stopTokenWatchdog = () => {};
 
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
@@ -325,6 +319,5 @@ export async function startTaskRunnerServer(
     serverId,
     server,
     transport,
-    stopTokenWatchdog,
   };
 }

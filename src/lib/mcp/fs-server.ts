@@ -3,7 +3,6 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { getDustClient } from '../dust/client';
-import { loadTokens } from '../dust/tokens';
 import { allFsTools } from './fs-tools';
 import { PROJECTS_ROOT } from '../projects';
 
@@ -245,39 +244,15 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
   const id = await ready;
   const transport = (server as any).__transport as DustMcpServerTransport;
 
-  // --- Proactive rebuild before token expiry (Franck 2026-04-20 14:07) --
-  // DustMcpServerTransport bakes the current Bearer into its SDK
-  // client when constructed; it has no way to refresh it mid-session.
-  // When the WorkOS access token ages out (~1h) the SSE heartbeat and
-  // any MCP result POST start returning 401 expired_oauth_token_error,
-  // then the re-register attempt does too because the cached transport
-  // is still using the stale token. To avoid that failure window we
-  // invalidate the handle ~10 min BEFORE the token actually expires,
-  // forcing the next call to startFsServer() to build a transport with
-  // a freshly-refreshed token. Falls back to a 45-min periodic rebuild
-  // when the DB has no expiry stored (e.g. API-key sessions).
-  try {
-    const stored = await loadTokens();
-    const REBUILD_BEFORE_MS = 10 * 60 * 1000;
-    const FALLBACK_PERIOD_MS = 45 * 60 * 1000;
-    const ttlMs = stored?.expiresAt
-      ? stored.expiresAt.getTime() - Date.now() - REBUILD_BEFORE_MS
-      : FALLBACK_PERIOD_MS;
-    // Guard against past dates / very-short TTLs: don\u0027t schedule
-    // an immediate tear-down (minimum 2 min grace).
-    const delay = Math.max(2 * 60 * 1000, ttlMs);
-    const t = setTimeout(() => {
-      console.log(
-        `[mcp/fs-server] proactive rebuild for project="${projectName}" ` +
-          `(token expires at ${stored?.expiresAt?.toISOString() ?? 'unknown'})`,
-      );
-      void invalidate();
-    }, delay);
-    // unref so the timer doesn\u0027t keep the process alive in tests.
-    (t as any).unref?.();
-  } catch (e) {
-    console.warn(`[mcp/fs-server] could not schedule proactive rebuild: ${(e as any)?.message}`);
-  }
+  // Historical note (Franck 2026-04-21 18:35):
+  // A scheduled "proactive rebuild" used to tear the transport down
+  // ~10 min before the WorkOS access-token expiry to avoid mid-flight
+  // 401s on heartbeats. Removed along with startTokenRefreshWatchdog
+  // now that getDustClient() resolves the apiKey via an async callable
+  // on every HTTP call \u2014 the SDK never sees a stale bearer anymore,
+  // and the SDK\u0027s own auto-re-register-on-heartbeat-failure handles
+  // the edge case where Dust-side expires a serverId independently.
+  // See commits 466070c, 71ad1ee and 1516f04 for full context.
 
   return { projectName, root, serverId: id, server, transport };
 }

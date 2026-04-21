@@ -159,9 +159,6 @@ export async function releaseTaskRunnerServer(orchestratorRunId: string): Promis
   if (!entry) return;
   try {
     const handle = await entry;
-    // Stop the apiKey refresh interval FIRST so it doesn\u0027t fire
-    // after the transport is closed (would mutate a dead client).
-    try { handle.stopTokenWatchdog?.(); } catch { /* ignore */ }
     await handle.transport.close().catch(() => {});
   } catch {
     /* ignore */
@@ -207,7 +204,6 @@ export async function releaseCommandRunnerServer(runId: string): Promise<void> {
   if (!entry) return;
   try {
     const handle = await entry;
-    try { handle.stopTokenWatchdog?.(); } catch { /* ignore */ }
     await handle.transport.close().catch(() => {});
   } catch {
     /* ignore */

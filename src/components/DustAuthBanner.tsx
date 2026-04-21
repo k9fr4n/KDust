@@ -1,6 +1,13 @@
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { AlertTriangle } from 'lucide-react';
 import { loadTokens } from '@/lib/dust/tokens';
+
+// Routes where the banner would be noise: the user is already on a
+// page whose sole purpose is to fix the very thing the banner is
+// nagging about. Keep this list short \u2014 the whole point of the
+// banner is to be visible everywhere else.
+const SUPPRESS_ON = ['/login', '/dust/connect'];
 
 /**
  * Surfaces a dismissible‑looking (but non‑dismissible) banner when the
@@ -14,6 +21,16 @@ import { loadTokens } from '@/lib/dust/tokens';
  * amplify a failure loop.
  */
 export async function DustAuthBanner() {
+  // Pathname is injected by src/middleware.ts on every server-handled
+  // request. If the header is absent (e.g. static optimization or a
+  // route the middleware doesn\u0027t cover) we fall back to rendering
+  // the banner when needed \u2014 safe default.
+  const h = await headers();
+  const pathname = h.get('x-pathname') ?? '';
+  if (SUPPRESS_ON.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
+    return null;
+  }
+
   let needsLogin = false;
   let reason: 'no-session' | 'expired' | null = null;
 

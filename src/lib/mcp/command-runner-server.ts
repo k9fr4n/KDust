@@ -33,12 +33,6 @@ export interface CommandRunnerHandle {
   serverId: string;
   server: McpServer;
   transport: DustMcpServerTransport;
-  /**
-   * @deprecated Kept as a no-op for backward compat after switching to
-   * `apiKey: async () => ...` in getDustClient(). Do not rely on this
-   * field \u2014 it will be removed after a cooling-off period.
-   */
-  stopTokenWatchdog: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +326,6 @@ export async function startCommandRunnerServer(
 
   // apiKey rotation handled transparently by the SDK via the async
   // callable passed in getDustClient() \u2014 no watchdog needed.
-  const stopTokenWatchdog = () => {};
 
   const ready = new Promise<string>((resolve, reject) => {
     const transport = new DustMcpServerTransport(
@@ -397,6 +390,5 @@ export async function startCommandRunnerServer(
     serverId,
     server,
     transport,
-    stopTokenWatchdog,
   };
 }

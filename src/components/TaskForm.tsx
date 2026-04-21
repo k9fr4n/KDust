@@ -275,12 +275,12 @@ export function TaskForm({
             onChange={(e) => setForm({ ...form, taskRunnerEnabled: e.target.checked })}
           />
           <span className="text-sm">
-            <span className="font-medium">Orchestrator mode (task-runner MCP)</span>
+            <span className="font-medium">Orchestration (task-runner MCP)</span>
             <span className="block text-xs text-slate-500">
-              Grants the agent the <code className="font-mono">run_task</code> tool so it
-              can invoke other tasks of this project sequentially (no parallelism).
-              Only one orchestrator layer is allowed: invoked tasks must have this OFF.
-              Max chain depth <code>10</code> (env <code>KDUST_MAX_RUN_DEPTH</code>).
+              Tool: <code className="font-mono">run_task</code>. Invoke other tasks of
+              this project sequentially (no parallelism). Only one orchestrator layer
+              is allowed: invoked tasks must have this OFF. Max chain depth{' '}
+              <code>10</code> (env <code>KDUST_MAX_RUN_DEPTH</code>).
             </span>
           </span>
         </label>
@@ -311,14 +311,14 @@ export function TaskForm({
             onChange={(e) => setForm({ ...form, commandRunnerEnabled: e.target.checked })}
           />
           <span className="text-sm">
-            <span className="font-medium">Command runner (run_command, audited)</span>
+            <span className="font-medium">Shell execution (command-runner MCP)</span>
             <span className="block text-xs text-slate-500">
-              Grants <code className="font-mono">command_runner__run_command</code>: execute
-              shell commands inside the project workspace. Every invocation is logged in
-              KDust (DB-backed, replayable in the run page). A denylist blocks dangerous
-              patterns (<code>--privileged</code>, <code>-v /:/</code>, <code>--pid=host</code>,
-              ...). Prefer this over fs-cli&apos;s run_command when the task executes
-              docker, npm, tests, lint, etc.
+              Tool: <code className="font-mono">run_command</code>. Audited shell
+              commands inside the project workspace; every invocation is logged in
+              KDust (DB-backed, replayable from the run page). A denylist blocks
+              dangerous patterns (<code>--privileged</code>, <code>-v /:/</code>,{' '}
+              <code>--pid=host</code>, ...). Prefer this over fs-cli&apos;s bundled
+              run_command when the task executes docker, npm, tests, lint, etc.
             </span>
           </span>
         </label>

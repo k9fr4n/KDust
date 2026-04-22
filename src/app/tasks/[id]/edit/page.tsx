@@ -32,6 +32,7 @@ export default async function EditCronPage({ params }: { params: Promise<{ id: s
         dryRun: cron.dryRun,
         maxDiffLines: cron.maxDiffLines,
         protectedBranches: cron.protectedBranches,
+        maxRuntimeMs: cron.maxRuntimeMs,
       }}
     />
   );

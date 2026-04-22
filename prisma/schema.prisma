@@ -213,6 +213,21 @@ model Task {
   // this. Children (codegen/lint/test) must leave it false.
   taskRunnerEnabled Boolean @default(false)
 
+  // --- Wall-clock runtime cap (Franck 2026-04-23 00:23) ---
+  // Per-task override for the runner's hard kill-timer. When null,
+  // the runner falls back to env defaults:
+  //   - KDUST_ORCHESTRATOR_TIMEOUT_MS (default 3_600_000 = 1h)
+  //     used when taskRunnerEnabled=true
+  //   - KDUST_RUN_TIMEOUT_MS          (default 1_800_000 = 30min)
+  //     used for leaf tasks
+  // The legacy hardcoded 10-minute cap is gone; orchestrators that
+  // fan out to long-running children would hit it prematurely.
+  //
+  // Set this only when a task needs a tighter OR looser bound than
+  // the project-wide default. Measured in milliseconds; safety
+  // clamp applied in runner.ts: values <30s or >6h are ignored.
+  maxRuntimeMs Int?
+
   // --- Command runner (Franck 2026-04-21 13:39) ---
   // When true, the agent running this task gets access to the
   // `command-runner` MCP server exposing `run_command`. Unlike the

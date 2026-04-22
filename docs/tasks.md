@@ -89,6 +89,37 @@ Scheduler tick frequency: 30s (see `src/lib/cron/scheduler.ts`).
 | `taskRunnerEnabled`    | bool | exposes `run_task` / `dispatch_task` / `wait_for_run` — see [`docs/task-runner.md`](task-runner.md) |
 | `commandRunnerEnabled` | bool | exposes `run_command` (chroot + denylist + Command audit log) |
 | `secretBindings`       | TaskSecret[] | per-task env injection for `commandRunnerEnabled` children |
+| `maxRuntimeMs`         | int? | wall-clock cap in ms. Null = env default. See "Runtime cap" below |
+
+### Runtime cap (wall-clock timeout)
+
+Every run has a hard kill-timer. When it fires, the run is aborted
+with `{kind:'timeout', ms:N}` and any descendants are cascade-
+cancelled (see [`docs/task-runner.md`](task-runner.md#cascade-cancellation-parent-dies-children-die)).
+
+Resolution order at dispatch:
+
+1. `Task.maxRuntimeMs` if set and in `[30s, 6h]`
+2. env `KDUST_ORCHESTRATOR_TIMEOUT_MS` if `taskRunnerEnabled=true`
+3. env `KDUST_RUN_TIMEOUT_MS` for leaf tasks
+4. hard default: **30 min** leaf, **60 min** orchestrator
+
+Both env vars accept a value in milliseconds, subject to the same
+`[30s, 6h]` clamp. Out-of-range values silently fall back to the
+hard default.
+
+UI: the task form accepts the value in **minutes** (clamped 1-360)
+for ergonomics. Stored as ms in DB.
+
+Set it when:
+
+- An orchestrator fans out to many children whose aggregate time
+  exceeds 60 min (bump the task's cap, not the global env var).
+- A leaf task must finish in &lt; 30 min by policy (tighter
+  accountability, e.g. a cheap health-check).
+
+Don't disable the cap. It's the only protection against an agent
+stuck in an infinite tool-call loop.
 
 ---
 

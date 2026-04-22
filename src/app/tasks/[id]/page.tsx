@@ -208,6 +208,19 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
                 )}
               </div>
               <div><span className="text-slate-500">Max diff lines:</span> <span className="font-mono">{cron.maxDiffLines.toLocaleString('fr-FR')}</span></div>
+              <div>
+                <span className="text-slate-500">Max runtime:</span>{' '}
+                <span className="font-mono">
+                  {cron.maxRuntimeMs != null
+                    ? `${Math.round(cron.maxRuntimeMs / 60000)} min`
+                    : `default (${cron.taskRunnerEnabled ? '60' : '30'} min)`}
+                </span>
+                {cron.maxRuntimeMs == null && (
+                  <span className="ml-1 text-[10px] text-slate-400" title="Inherited from env default">
+                    (env)
+                  </span>
+                )}
+              </div>
               <div className="col-span-full">
                 <span className="text-slate-500">Protected branches:</span>{' '}
                 <span className="font-mono text-xs break-all">{policy?.protectedBranches ?? cron.protectedBranches ?? '\u2014'}</span>

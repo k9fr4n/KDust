@@ -62,6 +62,13 @@ export type CronFormValues = {
   dryRun: boolean;
   maxDiffLines: number;
   protectedBranches: string | null;
+  /**
+   * Wall-clock runtime cap in ms (Franck 2026-04-23 00:23). Null =
+   * inherit from env defaults (see docs/tasks.md). Set only when a
+   * task needs a tighter or looser bound than the project-wide
+   * default. Clamp [30000, 21600000] applied in runner.ts.
+   */
+  maxRuntimeMs: number | null;
 };
 
 type Agent = { sId: string; name: string; description?: string };
@@ -112,6 +119,7 @@ export function TaskForm({
     dryRun: initial?.dryRun ?? false,
     maxDiffLines: initial?.maxDiffLines ?? 2000,
     protectedBranches: initial?.protectedBranches ?? null,
+    maxRuntimeMs: initial?.maxRuntimeMs ?? null,
   });
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -638,6 +646,39 @@ export function TaskForm({
                   <input type="number" min={1} className={field} value={form.maxDiffLines} onChange={(e) => setForm({ ...form, maxDiffLines: parseInt(e.target.value, 10) || 2000 })} required />
                 </label>
               </div>
+
+              {/* Wall-clock runtime cap. Empty input = null = inherit
+                  env defaults (30min leaf, 1h orchestrator). Users
+                  typically only need this on long orchestrators. */}
+              <label className="block">
+                <span className="text-sm">
+                  Max runtime <span className="text-slate-400 text-xs">(minutes, override; empty = inherit default: {form.taskRunnerEnabled ? '60min orchestrator' : '30min leaf'})</span>
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={360}
+                  className={field}
+                  value={form.maxRuntimeMs == null ? '' : Math.round(form.maxRuntimeMs / 60000)}
+                  placeholder={form.taskRunnerEnabled ? '60' : '30'}
+                  onChange={(e) => {
+                    const v = e.target.value.trim();
+                    if (!v) {
+                      setForm({ ...form, maxRuntimeMs: null });
+                      return;
+                    }
+                    const minutes = parseInt(v, 10);
+                    if (!Number.isFinite(minutes) || minutes <= 0) {
+                      setForm({ ...form, maxRuntimeMs: null });
+                      return;
+                    }
+                    setForm({ ...form, maxRuntimeMs: minutes * 60000 });
+                  }}
+                />
+                <span className="block mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Clamp 1-360 min. The runner aborts the task (and cascades to children) when reached.
+                </span>
+              </label>
 
               <label className="block">
                 <span className="text-sm">Protected branches <span className="text-slate-400 text-xs">(override, comma-separated)</span></span>

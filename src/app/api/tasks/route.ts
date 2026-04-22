@@ -59,6 +59,17 @@ const TaskInput = z.object({
   // vast majority of tasks are plain workers; only a dedicated
   // "orchestrator" should set this.
   taskRunnerEnabled: z.boolean().default(false),
+  // Per-task wall-clock runtime cap in ms. Null = inherit env
+  // defaults (KDUST_ORCHESTRATOR_TIMEOUT_MS or KDUST_RUN_TIMEOUT_MS).
+  // Clamp to [30s, 6h] applied in runner.ts — out-of-range values
+  // here are accepted but silently ignored at dispatch time.
+  maxRuntimeMs: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .optional()
+    .transform((v) => (v == null ? null : v)),
   // Command-runner opt-in (Franck 2026-04-21 13:39). When true, the
   // runner attaches the command-runner MCP server, giving the agent
   // `run_command` (KDust-side, persisted in Command table, denylist

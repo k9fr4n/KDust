@@ -678,7 +678,41 @@ export async function runTask(
     const ac = new AbortController();
     // Register so the HTTP cancel endpoint can abort from outside this scope.
     activeRuns.set(run.id, ac);
-    const KILL_TIMER_MS = 10 * 60 * 1000;
+    // Wall-clock runtime cap (Franck 2026-04-23 00:23). Resolution:
+    //   1. Task.maxRuntimeMs if set (explicit per-task override)
+    //   2. KDUST_ORCHESTRATOR_TIMEOUT_MS if taskRunnerEnabled
+    //   3. KDUST_RUN_TIMEOUT_MS otherwise
+    //   4. Hard default: 30min for leaves, 1h for orchestrators
+    // Safety clamp: [30s, 6h]. Values outside the range fall back
+    // to the env default — avoids footgun of setting 0 or -1.
+    const DEFAULT_LEAF_MS = 30 * 60 * 1000;
+    const DEFAULT_ORCH_MS = 60 * 60 * 1000;
+    const CLAMP_MIN_MS = 30 * 1000;
+    const CLAMP_MAX_MS = 6 * 60 * 60 * 1000;
+    const resolveTimeout = (): number => {
+      const taskVal = (job as { maxRuntimeMs?: number | null }).maxRuntimeMs;
+      if (
+        typeof taskVal === 'number' &&
+        taskVal >= CLAMP_MIN_MS &&
+        taskVal <= CLAMP_MAX_MS
+      ) {
+        return taskVal;
+      }
+      const envKey = job.taskRunnerEnabled
+        ? 'KDUST_ORCHESTRATOR_TIMEOUT_MS'
+        : 'KDUST_RUN_TIMEOUT_MS';
+      const envRaw = process.env[envKey];
+      const envVal = envRaw ? Number.parseInt(envRaw, 10) : NaN;
+      if (
+        Number.isFinite(envVal) &&
+        envVal >= CLAMP_MIN_MS &&
+        envVal <= CLAMP_MAX_MS
+      ) {
+        return envVal;
+      }
+      return job.taskRunnerEnabled ? DEFAULT_ORCH_MS : DEFAULT_LEAF_MS;
+    };
+    const KILL_TIMER_MS = resolveTimeout();
     const killTimer = setTimeout(
       () => ac.abort({ kind: 'timeout', ms: KILL_TIMER_MS } satisfies AbortReason),
       KILL_TIMER_MS,

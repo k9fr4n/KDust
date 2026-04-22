@@ -19,32 +19,31 @@ export async function register() {
       console.error(`[instrumentation] scheduler boot failed: ${(e as Error).message}`);
     }
 
-    // One-shot cleanup (Franck 2026-04-22): the audit auto-provisioning
-    // subsystem was removed. Wipe any leftover auto-provisioned
-    // mandatory audit tasks (and their runs) on boot. Idempotent: on
-    // subsequent boots the queries match zero rows and are cheap.
-    // We keep the cleanup here rather than in a migration SQL because
-    // the deployed entrypoint uses `prisma db push` (no migrate
-    // deploy), so migration files that carry data changes would
-    // never execute in production.
+    // One-shot cleanup (Franck 2026-04-22 full audit nuke). At this
+    // point Task.kind/category are still on disk on legacy DBs but
+    // the Prisma Client no longer exposes them. Use raw SQL so we
+    // don't depend on the removed columns. `db push` will drop the
+    // columns + tables on the next boot, so this cleanup is only
+    // meaningful on the very first boot after upgrade. Idempotent.
     try {
       const { db } = await import('./lib/db');
-      const victims = await db.task.findMany({
-        where: { mandatory: true, kind: 'audit' },
-        select: { id: true },
-      });
-      if (victims.length > 0) {
-        const ids = victims.map((t) => t.id);
-        const runs = await db.taskRun.deleteMany({ where: { taskId: { in: ids } } });
-        const tasks = await db.task.deleteMany({ where: { id: { in: ids } } });
+      // Delete mandatory audit tasks (auto-provisioned leftovers) +
+      // their runs, using raw SQL so this compiles even after the
+      // kind column is dropped. Wrapped in a try/catch because on a
+      // fresh DB the column already doesn't exist.
+      const runs = await db.$executeRawUnsafe(
+        `DELETE FROM TaskRun WHERE taskId IN (SELECT id FROM CronJob WHERE mandatory = 1 AND kind = 'audit')`,
+      );
+      const tasks = await db.$executeRawUnsafe(
+        `DELETE FROM CronJob WHERE mandatory = 1 AND kind = 'audit'`,
+      );
+      if (tasks > 0 || runs > 0) {
         console.log(
-          `[instrumentation] removed ${tasks.count} legacy mandatory audit task(s) and ${runs.count} dependent run(s)`,
+          `[instrumentation] removed ${tasks} legacy mandatory audit task(s) and ${runs} dependent run(s)`,
         );
       }
-    } catch (e) {
-      console.error(
-        `[instrumentation] legacy audit task cleanup failed: ${(e as Error).message}`,
-      );
+    } catch {
+      /* column already dropped or never existed: nothing to do. */
     }
   }
 }

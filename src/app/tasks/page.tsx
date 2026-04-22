@@ -92,12 +92,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   // filter works even from within a project context.
   if (cookieProject && kind !== 'generic') where.projectPath = cookieProject;
   if (q) where.name = { contains: q };
-  // The 'kind' filter conflates two dimensions (see UiKind doc):
-  //   automation/audit → Task.kind column
-  //   generic/project  → Task.projectPath nullability
-  if (kind === 'automation' || kind === 'audit') {
-    where.kind = kind;
-  } else if (kind === 'generic') {
+  // The 'kind' filter drives Task.projectPath nullability.
+  if (kind === 'generic') {
     where.projectPath = null;
   } else if (kind === 'project' && !where.projectPath) {
     // Only add the "any project" constraint when no cookie-project
@@ -137,7 +133,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     let r = 0;
     switch (sort) {
       case 'name': r = a.name.localeCompare(b.name); break;
-      case 'kind': r = a.kind.localeCompare(b.kind); break;
       case 'agent':
         r = (a.agentName ?? a.agentSId).localeCompare(b.agentName ?? b.agentSId);
         break;
@@ -267,12 +262,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
         <FilterLabel>Kind:</FilterLabel>
         <Link href={buildHref({ kind: 'all' })} className={pillCls(kind === 'all')}>all</Link>
-        <Link href={buildHref({ kind: 'automation' })} className={pillCls(kind === 'automation')}>automation</Link>
-        <Link href={buildHref({ kind: 'audit' })} className={pillCls(kind === 'audit')}>audit</Link>
-        {/* Project / Generic dimension (Franck 2026-04-22). Orthogonal
-            to automation/audit but merged in the same filter row for
-            UX compactness \u2014 single-pick. `project` = any bound task,
-            `generic` = template tasks (projectPath=null). */}
         <Link href={buildHref({ kind: 'project' })} className={pillCls(kind === 'project')}>project</Link>
         <Link href={buildHref({ kind: 'generic' })} className={pillCls(kind === 'generic')}>generic</Link>
 
@@ -322,7 +311,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             {paged.map((c) => {
               const isRunning = runningIds.has(c.id);
               const last = c.runs[0];
-              const isAudit = c.kind === 'audit';
               const isGeneric = c.projectPath === null;
               // Next run: null when the task is manual (no cron), or
               // when the cron expression fails to parse. We show
@@ -335,15 +323,12 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               const isManual = c.schedule === 'manual' || !c.schedule;
               // Kind-colored left border so the row's kind is
               // visible at a glance without a dedicated column
-              // (Franck 2026-04-19 13:39). Precedence:
-              //   generic (violet) > audit (amber) > automation (sky).
-              // Generic wins because it's the dispatch-model signal
-              // (template vs bound) which is more structurally
-              // distinctive than automation/audit at a glance.
+              // Violet border marks generic (template) tasks; all
+              // project-bound tasks get sky. The historical amber
+              // audit colour was retired when the audit pipeline
+              // was removed (Franck 2026-04-22).
               const kindBorder = isGeneric
                 ? 'border-l-4 border-l-violet-400 dark:border-l-violet-500'
-                : isAudit
-                ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
                 : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
               return (
                 <ClickableTaskRow key={c.id} taskId={c.id} className={kindBorder}>

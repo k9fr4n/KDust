@@ -229,7 +229,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       orderBy: [{ pinned: 'desc' }, { startedAt: 'desc' }],
       take: 8,
       include: {
-        task: { select: { id: true, name: true, kind: true, projectPath: true } },
+        task: { select: { id: true, name: true, projectPath: true } },
       },
     }),
   ]);
@@ -475,7 +475,6 @@ function RecentRuns({ items }: { items: Array<any> }) {
               ? {
                   id: r.taskId,
                   name: r.task.name,
-                  kind: r.task.kind ?? null,
                   projectPath: r.task.projectPath ?? null,
                 }
               : null,

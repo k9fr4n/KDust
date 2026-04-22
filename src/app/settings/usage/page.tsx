@@ -86,14 +86,12 @@ export default async function UsagePage({
     recentMsgs,
     recentRuns,
     runsByStatus,
-    tasksByKind,
     convsByAgent,
     convsByProject,
     runsByTask,
     biggestConvs,
     lastRuns,
     lastConvs,
-    adviceRows,
     // Daily series for sparklines
     msgDailyRaw,
     runDailyRaw,
@@ -116,7 +114,6 @@ export default async function UsagePage({
     db.message.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
     db.taskRun.count({ where: { startedAt: { gte: thirtyDaysAgo } } }),
     db.taskRun.groupBy({ by: ['status'], _count: { _all: true } }),
-    db.task.groupBy({ by: ['kind'], _count: { _all: true } }),
     db.conversation.groupBy({
       by: ['agentSId', 'agentName'],
       _count: { _all: true },
@@ -160,16 +157,6 @@ export default async function UsagePage({
         projectName: true,
         createdAt: true,
         _count: { select: { messages: true } },
-      },
-    }),
-    db.projectAudit.findMany({
-      orderBy: { generatedAt: 'desc' },
-      select: {
-        projectName: true,
-        category: true,
-        score: true,
-        generatedAt: true,
-        points: true,
       },
     }),
     // Use raw SQL for date bucketing — SQLite strftime. Safe: no user input.
@@ -305,7 +292,7 @@ export default async function UsagePage({
   const runTaskMeta = runTaskIds.length
     ? await db.task.findMany({
         where: { id: { in: runTaskIds } },
-        select: { id: true, name: true, projectPath: true, kind: true },
+        select: { id: true, name: true, projectPath: true },
       })
     : [];
   const runTaskById = new Map(runTaskMeta.map((t) => [t.id, t]));
@@ -463,31 +450,6 @@ export default async function UsagePage({
   const runStatus = Object.fromEntries(
     runsByStatus.map((r) => [r.status, r._count._all]),
   );
-  const kindCount = Object.fromEntries(
-    tasksByKind.map((r) => [r.kind, r._count._all]),
-  );
-  const adviceByProject = new Map<
-    string,
-    { score: number | null; generatedAt: Date; pointsCount: number }
-  >();
-  for (const a of adviceRows) {
-    const prev = adviceByProject.get(a.projectName);
-    if (!prev || a.generatedAt > prev.generatedAt) {
-      let pointsCount = 0;
-      try {
-        const parsed = JSON.parse(a.points);
-        if (Array.isArray(parsed)) pointsCount = parsed.length;
-      } catch {
-        /* ignore malformed JSON */
-      }
-      adviceByProject.set(a.projectName, {
-        score: a.score,
-        generatedAt: a.generatedAt,
-        pointsCount,
-      });
-    }
-  }
-
   // Sparkline helper: inline div bars, max-height scaled by series max.
   const Sparkline = ({
     series,
@@ -941,11 +903,6 @@ export default async function UsagePage({
         <Card title="Task breakdown" icon={<Activity size={14} />}>
           <div className="text-sm space-y-2">
             <p className="text-xs text-slate-500">
-              By kind:{' '}
-              <b>{kindCount.automation ?? 0}</b> automation ·{' '}
-              <b>{kindCount.audit ?? 0}</b> audit
-            </p>
-            <p className="text-xs text-slate-500">
               Enabled:{' '}
               <b className="text-green-700 dark:text-green-300">{enabledTasks}</b> /
               disabled:{' '}
@@ -998,74 +955,6 @@ export default async function UsagePage({
           />
         </Card>
       </section>
-
-      {/* Audit health */}
-      {adviceByProject.size > 0 && (
-        <Card
-          title="Audit health per project"
-          icon={<Activity size={14} />}
-          right={<Link href="/audits" className="text-xs text-brand-500 hover:underline">view all →</Link>}
-        >
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-slate-500">
-              <tr>
-                <th className="py-1">Project</th>
-                <th className="py-1 text-right">Score</th>
-                <th className="py-1 text-right">Points</th>
-                <th className="py-1 text-right">Last update</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from(adviceByProject.entries())
-                .sort(
-                  ([, a], [, b]) =>
-                    (a.score ?? 101) - (b.score ?? 101),
-                )
-                .slice(0, 15)
-                .map(([project, a]) => (
-                  <tr
-                    key={project}
-                    className="border-t border-slate-200 dark:border-slate-800"
-                  >
-                    <td className="py-1">
-                      {/* Was linking to /projects/[id]#audits \u2014 the
-                          per-project dashboard was removed on 2026-04-19.
-                          Target /audits (global scope) instead. */}
-                      <Link
-                        href="/audits"
-                        className="hover:underline"
-                        title={project}
-                      >
-                        {project}
-                      </Link>
-                    </td>
-                    <td className="py-1 text-right font-mono">
-                      {a.score !== null ? (
-                        <span
-                          className={
-                            a.score < 50
-                              ? 'text-red-600'
-                              : a.score < 70
-                              ? 'text-amber-600'
-                              : 'text-green-600'
-                          }
-                        >
-                          {a.score}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-                    <td className="py-1 text-right font-mono">{a.pointsCount}</td>
-                    <td className="py-1 text-right text-xs text-slate-500">
-                      {a.generatedAt.toLocaleDateString('fr-FR')}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
 
       {/* Biggest conversations */}
       <Card

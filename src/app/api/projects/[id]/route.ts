@@ -214,11 +214,10 @@ export async function DELETE(
 
   // --- DB cascade in a single transaction ---------------------------------
   // deleteMany is idempotent: if there are no matches, counts come back as 0.
-  // Keeping all four writes in one transaction ensures we don't end up with
-  // orphaned tasks/conversations/audits if the Project.delete step fails.
-  const [convs, advices, tasks] = await db.$transaction([
+  // Keeping the writes in one transaction ensures we don't end up with
+  // orphaned tasks or conversations if the Project.delete step fails.
+  const [convs, tasks] = await db.$transaction([
     db.conversation.deleteMany({ where: { projectName: p.name } }),
-    db.projectAudit.deleteMany({ where: { projectName: p.name } }),
     db.task.deleteMany({ where: { projectPath: p.name } }),
     // Project row deleted last; result is ignored but still part of the tx
     // so a failure here rolls back the deleteManys above.
@@ -269,7 +268,6 @@ export async function DELETE(
     ok: true,
     deleted: {
       conversations: convs.count,
-      advices: advices.count,
       tasks: tasks.count,
       filesDeleted,
     },

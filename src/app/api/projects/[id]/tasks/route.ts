@@ -16,14 +16,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const tasks = await db.task.findMany({
     where: { projectPath: project.name },
-    orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+    orderBy: [{ name: 'asc' }],
     select: {
       id: true,
       name: true,
       schedule: true,
       timezone: true,
-      kind: true,
-      category: true,
       mandatory: true,
       enabled: true,
       lastRunAt: true,

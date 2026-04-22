@@ -81,7 +81,6 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       <section className="mb-6 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm rounded-md border border-slate-200 dark:border-slate-800 p-4 bg-slate-50/50 dark:bg-slate-900/30">
         {/* Identity */}
         <div><span className="text-slate-500">ID:</span> <span className="font-mono text-xs break-all">{cron.id}</span></div>
-        <div><span className="text-slate-500">Kind:</span> <span className="font-mono">{cron.kind ?? 'automation'}</span></div>
         <div>
           <span className="text-slate-500">Enabled:</span>{' '}
           <span className={`font-mono ${cron.enabled ? 'text-green-600 dark:text-green-400' : 'text-slate-400'}`}>{cron.enabled ? 'yes' : 'no'}</span>
@@ -117,9 +116,7 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
             </span>
           )}
         </div>
-        {cron.kind === 'audit' && (
-          <div><span className="text-slate-500">Category:</span> <span className="font-mono">{cron.category ?? '\u2014'}</span></div>
-        )}
+
 
         {/* Push pipeline \u2014 always rendered so state is visible */}
         <div className="col-span-full mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -129,7 +126,7 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
               {cron.pushEnabled ? 'yes' : 'no'}
             </span>
           </div>
-          {cron.kind !== 'audit' ? (
+          {true ? (
             <>
               <div><span className="text-slate-500">Dry-run:</span> <span className="font-mono">{cron.dryRun ? 'yes' : 'no'}</span></div>
               <div>

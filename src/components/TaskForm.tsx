@@ -20,14 +20,6 @@ export type CronFormValues = {
   projectPath: string | null;
   teamsWebhook: string;
   enabled: boolean;
-  /**
-   * Task kind. 'automation' (default) shows the full Automation
-   * push fieldset; 'audit' hides it entirely because audit runs
-   * are analysis-only (runner short-circuits before git writes).
-   * Read-only in the form \u2014 kind is set at creation time by
-   * the audit provisioner / automation creation flow.
-   */
-  kind: 'automation' | 'audit';
   // automation-push
   /**
    * Master switch for the git pipeline + prompt enrichment. See
@@ -108,7 +100,6 @@ export function TaskForm({
     projectPath: initial?.projectPath === null ? null : (initial?.projectPath ?? ''),
     teamsWebhook: initial?.teamsWebhook ?? '',
     enabled: initial?.enabled ?? true,
-    kind: initial?.kind ?? 'automation',
     pushEnabled: initial?.pushEnabled ?? true,
     taskRunnerEnabled: initial?.taskRunnerEnabled ?? false,
     commandRunnerEnabled: initial?.commandRunnerEnabled ?? false,
@@ -429,7 +420,7 @@ export function TaskForm({
             </span>
           </span>
         </label>
-        {form.taskRunnerEnabled && form.pushEnabled && form.kind !== 'audit' && (
+        {form.taskRunnerEnabled && form.pushEnabled && (
           <p className="text-xs text-amber-700 dark:text-amber-400 pl-6">
             [WARN] orchestrators usually leave <strong>Enable automation push</strong>{' '}
             OFF \u2014 a child&apos;s <code>git reset --hard</code> would clobber this
@@ -490,14 +481,14 @@ export function TaskForm({
       </fieldset>
 
       {/* ----- Automation push settings ----- */}
-      {/* Hidden for audit tasks (kind='audit'): audit runs never
+      {/* Hidden when push is off: push runs never
           touch git (runner short-circuits at step [2b]) so exposing
           these knobs would be misleading. For automation tasks the
           section is gated by pushEnabled; when off the inputs are
           visually dimmed and semantically ignored by the runner.
           Fields stay editable so users can tweak settings they'll
           re-enable later without losing anything. */}
-      {form.kind !== 'audit' && (
+      {true && (
       <fieldset
         className={
           'border border-slate-300 dark:border-slate-700 rounded-md p-4 space-y-3 ' +
@@ -603,18 +594,6 @@ export function TaskForm({
           <span>Dry-run (commit locally, no push)</span>
         </label>
       </fieldset>
-      )}
-
-      {/* Audit tasks get a lightweight notice instead of the push
-          fieldset so the user understands why it's gone. */}
-      {form.kind === 'audit' && (
-        <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-700 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
-          ℹ️ Audit task — analysis only. KDust never creates a
-          branch, commit or push for this kind of task; the agent&apos;s
-          reply is parsed as a JSON report and stored in
-          ProjectAudit. The Automation push settings are therefore
-          hidden.
-        </div>
       )}
 
       {/* ---------------------------------------------------------

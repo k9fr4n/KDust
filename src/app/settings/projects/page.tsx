@@ -169,8 +169,7 @@ export default function ProjectsPage() {
         `Delete project "${name}"?\n\n` +
           `This will permanently remove:\n` +
           `  • all conversations and messages linked to this project\n` +
-          `  • all cron jobs (audit + automation) and their run history\n` +
-          `  • all stored audit points\n\n` +
+          `  • all tasks and their run history\n\n` +
           `This cannot be undone.`,
       )
     )
@@ -190,7 +189,7 @@ export default function ProjectsPage() {
         kind: 'ok',
         text:
           `Deleted "${name}": ${d.conversations ?? 0} conversation(s), ` +
-          `${d.tasks ?? 0} cron(s), ${d.advices ?? 0} audit row(s)` +
+          `${d.tasks ?? 0} task(s)` +
           (d.filesDeleted ? ', files removed from disk.' : ', files kept on disk.'),
       });
       await refresh();

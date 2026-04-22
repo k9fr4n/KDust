@@ -340,7 +340,6 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <Stat label="Output size" value={run.output ? `${run.output.length.toLocaleString('fr-FR')} ch` : null} mono />
             <Stat label="Phase reached" value={run.phase} mono />
             <Stat label="Base branch" value={run.baseBranch ?? run.task?.baseBranch ?? null} mono />
-            <Stat label="Task kind" value={run.task?.kind ?? null} mono />
             <Stat label="Agent" value={run.task?.agentName ?? run.task?.agentSId ?? null} mono />
             <Stat label="Messages" value={conv ? conv.messages.length : null} hint="in conv" />
             <Stat label="Conv sId" value={run.dustConversationSId ? run.dustConversationSId.slice(0, 10) : null} mono />

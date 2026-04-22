@@ -81,9 +81,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  // Mandatory tasks (auto-provisioned audit tasks on project creation)
-  // cannot be deleted. User can disable them or tweak their schedule /
-  // prompt instead. See src/lib/audit/provision.ts.
+  // The `mandatory` flag used to protect auto-provisioned audit tasks
+  // (subsystem removed 2026-04-22). The column stays as a generic
+  // "please-do-not-delete" marker available for future use. Nothing
+  // currently sets it, so this branch is effectively unreachable.
   const task = await db.task.findUnique({ where: { id }, select: { mandatory: true } });
   if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   if (task.mandatory) {

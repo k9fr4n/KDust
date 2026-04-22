@@ -23,7 +23,6 @@ export default async function EditCronPage({ params }: { params: Promise<{ id: s
         projectPath: cron.projectPath,
         teamsWebhook: cron.teamsWebhook ?? '',
         enabled: cron.enabled,
-        kind: (cron.kind === 'audit' ? 'audit' : 'automation'),
         pushEnabled: cron.pushEnabled,
         taskRunnerEnabled: cron.taskRunnerEnabled,
         commandRunnerEnabled: cron.commandRunnerEnabled,

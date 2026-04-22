@@ -19,7 +19,18 @@ export const dynamic = 'force-dynamic';
 
 export default async function CronDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const cron = await db.task.findUnique({ where: { id } });
+  const cron = await db.task.findUnique({
+    where: { id },
+    include: {
+      // Secret bindings (envName -> secretName). We only need the
+      // mapping to display a compact preview; the value itself never
+      // leaves the server and is out of scope for this page.
+      secretBindings: {
+        select: { envName: true, secretName: true },
+        orderBy: { envName: 'asc' },
+      },
+    },
+  });
   if (!cron) return notFound();
 
   // Cheap count for the History chip: avoids loading run rows just
@@ -140,6 +151,28 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
               {cron.commandRunnerEnabled ? 'enabled' : 'disabled'}
             </span>
           </div>
+          {/* Secret env bindings preview. Shown whenever the command
+              runner is enabled (off-runner bindings are irrelevant).
+              We intentionally display envName -> secretName only; the
+              value stays in /settings/secrets and never leaves the
+              server. */}
+          {cron.commandRunnerEnabled && (
+            <div className="col-span-full">
+              <span className="text-slate-500">Secret bindings:</span>{' '}
+              {cron.secretBindings.length === 0 ? (
+                <span className="text-slate-400 italic text-xs">none</span>
+              ) : (
+                <span className="font-mono text-xs">
+                  {cron.secretBindings
+                    .map((b) => `${b.envName}=${b.secretName}`)
+                    .join(', ')}{' '}
+                  <span className="text-slate-400">
+                    ({cron.secretBindings.length})
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Push pipeline \u2014 always rendered so state is visible */}
@@ -150,8 +183,10 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
               {cron.pushEnabled ? 'yes' : 'no'}
             </span>
           </div>
-          {true ? (
-            <>
+          {/* Push pipeline details (post-audit-nuke: always rendered
+              when pushEnabled, but we keep the fields visible even
+              when off so the reader sees the full stored state). */}
+          <>
               <div><span className="text-slate-500">Dry-run:</span> <span className="font-mono">{cron.dryRun ? 'yes' : 'no'}</span></div>
               <div>
                 <span className="text-slate-500">Base branch:</span>{' '}
@@ -177,11 +212,6 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
                 )}
               </div>
             </>
-          ) : (
-            <div className="col-span-full md:col-span-2 text-xs text-slate-500 italic">
-              Audit task — analysis only, no git writes.
-            </div>
-          )}
         </div>
 
         {/* Notifications */}
@@ -214,7 +244,13 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       </section>
 
       <section className="mb-6">
-        <h2 className="font-semibold mb-2">Prompt</h2>
+        <div className="flex items-baseline justify-between mb-2">
+          <h2 className="font-semibold">Prompt</h2>
+          <span className="text-xs text-slate-400 font-mono">
+            {cron.prompt.length.toLocaleString('fr-FR')} chars ·{' '}
+            {cron.prompt.split(/\r?\n/).length.toLocaleString('fr-FR')} lines
+          </span>
+        </div>
         <pre className="whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">{cron.prompt}</pre>
       </section>
     </div>

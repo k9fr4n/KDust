@@ -262,7 +262,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           </h2>
           {parentRun && (
             <div className="mb-2">
-              <span className="text-slate-500 text-xs">\u25B2 Parent run: </span>
+              <span className="text-slate-500 text-xs">▲ Parent run: </span>
               <Link
                 href={`/runs/${parentRun.id}`}
                 className="underline font-mono text-xs hover:text-brand-500"
@@ -270,7 +270,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                 {parentRun.id.slice(0, 8)}
               </Link>
               {' '}
-              <span className="text-slate-500">\u2014 task</span>{' '}
+              <span className="text-slate-500">— task</span>{' '}
               <span className="font-mono text-xs">{parentRun.task?.name ?? '(deleted)'}</span>
               {' '}
               <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${badgeClass(parentRun.status)}`}>
@@ -280,7 +280,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           )}
           {childRuns.length > 0 && (
             <div>
-              <div className="text-slate-500 text-xs mb-1">\u25BC Child runs (invoked via run_task, sequential):</div>
+              <div className="text-slate-500 text-xs mb-1">▼ Child runs (invoked via run_task, sequential):</div>
               <ol className="space-y-1 pl-4 border-l border-indigo-300 dark:border-indigo-800">
                 {childRuns.map((c, i) => (
                   <li key={c.id} className="text-xs flex items-center gap-2">
@@ -379,7 +379,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                     precedence over the generic compare-link. */}
                 {run.prUrl && (
                   <span>
-                    <span className="text-slate-500">\u2705 PR: </span>
+                    <span className="text-slate-500">✅ PR: </span>
                     <a href={run.prUrl} target="_blank" rel="noreferrer" className="underline hover:text-brand-500 font-mono">
                       #{run.prNumber ?? '?'}
                     </a>
@@ -397,7 +397,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                   </span>
                 )}
                 {!run.prUrl && run.prState === 'failed' && (
-                  <span className="text-amber-600 text-xs">[WARN] auto-PR failed \u2014 check logs</span>
+                  <span className="text-amber-600 text-xs">[WARN] auto-PR failed — check logs</span>
                 )}
                 {!run.prUrl && links?.newMr && run.status === 'success' && !run.dryRun && (
                   <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">

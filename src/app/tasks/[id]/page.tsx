@@ -143,7 +143,7 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
             </>
           ) : (
             <div className="col-span-full md:col-span-2 text-xs text-slate-500 italic">
-              Audit task \u2014 analysis only, no git writes.
+              Audit task — analysis only, no git writes.
             </div>
           )}
         </div>

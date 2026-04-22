@@ -389,7 +389,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       </span>
                     ) : (
                       <span className="text-slate-400" title="cron expression did not parse">
-                        \u2014
+                        —
                       </span>
                     )}
                   </td>

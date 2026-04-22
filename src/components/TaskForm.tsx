@@ -226,7 +226,7 @@ export function TaskForm({
                 onChange={(e) => setForm({ ...form, agentSId: e.target.value })}
                 required
               >
-                <option value="" className={optCls}>\u2014 select an agent \u2014</option>
+                <option value="" className={optCls}>— select an agent —</option>
                 {agents.map((a) => (
                   <option key={a.sId} value={a.sId} className={optCls}>
                     {a.name}
@@ -242,7 +242,7 @@ export function TaskForm({
                 onChange={(e) => setForm({ ...form, projectPath: e.target.value })}
                 required
               >
-                <option value="" className={optCls}>\u2014 select a project \u2014</option>
+                <option value="" className={optCls}>— select a project —</option>
                 {projects.map((p) => (
                   <option key={p.id} value={p.name} className={optCls}>
                     {p.name} ({p.branch})
@@ -268,8 +268,8 @@ export function TaskForm({
             />
             <span className="text-sm">Enabled</span>
             <span className="text-xs text-slate-500">
-              Disabled tasks are skipped by the scheduler and can\u0027t be
-              triggered via \u201cRun now\u201d.
+              Disabled tasks are skipped by the scheduler and can&apos;t be
+              triggered via &ldquo;Run now&rdquo;.
             </span>
           </label>
         </fieldset>
@@ -477,7 +477,7 @@ export function TaskForm({
           const projProtected = proj?.protectedBranches ?? 'main,master,develop,production,prod';
           const inheritHint = (from: string) => (
             <span className="text-[10px] text-slate-400 mt-0.5 block">
-              Empty \u2192 inherit from project (<span className="font-mono">{from}</span>)
+              Empty → inherit from project (<span className="font-mono">{from}</span>)
             </span>
           );
           return (
@@ -571,7 +571,7 @@ export function TaskForm({
             placeholder="https://..."
           />
           <span className="text-xs text-slate-500">
-            Empty \u2192 inherit the global webhook configured in{' '}
+            Empty → inherit the global webhook configured in{' '}
             <a href="/settings/global" className="underline">
               App Settings
             </a>

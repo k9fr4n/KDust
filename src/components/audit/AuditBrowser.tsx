@@ -715,7 +715,7 @@ function AuditListRow(props: {
                 >
                   <Folder size={10} /> {item.projectName}
                 </Link>
-                <span>\u00b7</span>
+                <span>·</span>
               </>
             )}
             <span>

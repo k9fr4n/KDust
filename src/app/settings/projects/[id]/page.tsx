@@ -482,7 +482,7 @@ export default function ProjectSettingsPage({
           without failing the whole run. */}
       <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-xs uppercase tracking-wide text-slate-500">Git platform \u00b7 Auto-PR</h2>
+          <h2 className="text-xs uppercase tracking-wide text-slate-500">Git platform · Auto-PR</h2>
           <span className="text-[11px] text-slate-400">Opens a draft PR/MR after each successful push</span>
         </div>
 
@@ -512,7 +512,7 @@ export default function ProjectSettingsPage({
             >
               <option value="auto">auto-detect from git URL</option>
               <option value="github">github</option>
-              <option value="gitlab">gitlab (Phase 3 \u2014 not yet implemented)</option>
+              <option value="gitlab">gitlab (Phase 3 — not yet implemented)</option>
               <option value="none">none (disable)</option>
             </select>
           </label>
@@ -585,7 +585,7 @@ export default function ProjectSettingsPage({
         </label>
 
         <p className="text-[11px] text-slate-500 pt-1 border-t border-slate-200 dark:border-slate-800">
-          [INFO] PRs are always opened as <strong>draft</strong>. Mark them ready-for-review manually once you\u0027ve audited the diff.
+          [INFO] PRs are always opened as <strong>draft</strong>. Mark them ready-for-review manually once you&apos;ve audited the diff.
         </p>
       </section>
 

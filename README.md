@@ -5,9 +5,14 @@ qui fait éditer des projets locaux par des agents Dust et poste un rapport Team
 
 ## Documentation
 
+- [`docs/tasks.md`](docs/tasks.md) — Task model reference: fields,
+  flavours (bound vs generic), scheduling, creation, invariants.
+- [`docs/push-pipeline.md`](docs/push-pipeline.md) — automation push:
+  10-stage pipeline, branch policy, guard-rails, PR/MR auto-opener,
+  dry-run.
 - [`docs/task-runner.md`](docs/task-runner.md) — task-runner MCP server
   (`run_task`, `dispatch_task`, `wait_for_run`), prompt patterns,
-  invariants, troubleshooting, ADR.
+  passing data between tasks, invariants, troubleshooting, ADR.
 
 ## Features
 

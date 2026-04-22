@@ -27,10 +27,13 @@
  *    is forbidden — it would need a second fs-cli server on a
  *    different project root and hit the multi-session limitation.
  *
- * 4. Anti-recursion. Refuses to invoke a task that itself has
- *    taskRunnerEnabled=true (only one orchestrator layer is allowed),
- *    and enforces a max chain depth via KDUST_MAX_RUN_DEPTH
- *    (default 10) by walking the parentRunId chain.
+ * 4. Anti-recursion. Multi-level orchestration is allowed (a child
+ *    with taskRunnerEnabled=true can itself dispatch further tasks);
+ *    the only guard is a max chain depth via KDUST_MAX_RUN_DEPTH
+ *    (default 10) computed by walking the parentRunId chain. Before
+ *    Franck 2026-04-22 19:41 any nested orchestrator was refused
+ *    outright, which blocked legitimate multi-level pipelines
+ *    (e.g. "test" → "Audit" → sub-tasks).
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
@@ -228,21 +231,19 @@ export async function startTaskRunnerServer(
           isError: true,
         };
       }
+      // Nested orchestrators are allowed (Franck 2026-04-22 19:41).
+      // The original policy refused any child with taskRunnerEnabled
+      // to prevent recursion, but MAX_DEPTH (default 10, env
+      // KDUST_MAX_RUN_DEPTH) is already the real safety net and the
+      // refusal blocks legitimate multi-level pipelines (e.g. a
+      // top-level "test" orchestrator dispatching an "Audit"
+      // orchestrator that itself dispatches sub-tasks). We just emit
+      // an info log so multi-level chains are easy to spot in logs.
       if (child.taskRunnerEnabled) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                status: 'failure',
-                error:
-                  `refused: task "${child.name}" also has task-runner enabled; ` +
-                  `nested orchestrators are not allowed (would recurse).`,
-              }),
-            },
-          ],
-          isError: true,
-        };
+        console.log(
+          `[mcp/task-runner] dispatching nested orchestrator "${child.name}" ` +
+            `(child has taskRunnerEnabled=true; depth is bounded by MAX_DEPTH=${MAX_DEPTH})`,
+        );
       }
 
       // Enforce the project-arg contract based on child kind.

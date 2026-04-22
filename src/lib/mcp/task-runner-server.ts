@@ -121,6 +121,71 @@ export async function startTaskRunnerServer(
 
   const server = new McpServer({ name: 'task-runner', version: '0.1.0' });
 
+  // Shared result formatter — projects a finished TaskRun row into
+  // the structured JSON payload used by both run_task (sync path)
+  // and wait_for_run. Kept DRY so the two tools stay in lockstep on
+  // schema changes (e.g. new columns like lines_added).
+  //
+  // runIdOrFetched: either the run id to fetch, or the already-
+  //   fetched row. Accepting the id too means the sync path can skip
+  //   one extra fetch when it already has the value.
+  // startedAtFallbackMs: used only to compute duration_ms when the
+  //   row has no startedAt (should not happen but belt-and-suspenders).
+  // taskHint: optional {id,name} to embed in the payload when the
+  //   caller already has it — saves a second DB lookup against Task.
+  async function formatRunResult(
+    runIdOrFetched: string,
+    startedAtFallbackMs: number,
+    taskHint?: { id: string; name: string },
+  ) {
+    const row = await db.taskRun.findUnique({ where: { id: runIdOrFetched } });
+    if (!row) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              status: 'failure',
+              error: 'run row not found after dispatch',
+              duration_ms: Date.now() - startedAtFallbackMs,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+    const task =
+      taskHint ??
+      (await db.task
+        .findUnique({ where: { id: row.taskId }, select: { id: true, name: true } })
+        .catch(() => null)) ??
+      { id: row.taskId, name: '<unknown>' };
+    const payload = {
+      run_id: row.id,
+      task,
+      status: row.status,
+      output: (row.output ?? '').slice(0, 4000),
+      error: row.error ?? undefined,
+      files_changed: row.filesChanged ?? undefined,
+      lines_added: row.linesAdded ?? undefined,
+      lines_removed: row.linesRemoved ?? undefined,
+      branch: row.branch ?? undefined,
+      commit_sha: row.commitSha ?? undefined,
+      duration_ms:
+        row.finishedAt && row.startedAt
+          ? row.finishedAt.getTime() - row.startedAt.getTime()
+          : Date.now() - startedAtFallbackMs,
+    };
+    return {
+      content: [
+        { type: 'text' as const, text: JSON.stringify(payload, null, 2) },
+      ],
+      // Surface non-success terminal statuses as MCP tool errors
+      // so the agent's framework can branch on the tool outcome.
+      isError: row.status !== 'success' && row.status !== 'no-op',
+    };
+  }
+
   server.registerTool(
     'run_task',
     {
@@ -166,6 +231,20 @@ export async function startTaskRunnerServer(
               'MUST be omitted when the child task is project-bound: passing ' +
               'it for a bound task is rejected to prevent accidental ' +
               'cross-project execution. Must be a project name known to KDust.',
+          ),
+        max_wait_ms: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            'Soft upper bound (ms) on how long this call will block waiting ' +
+              'for the child run. Clamped server-side to [5000, 55000] so it ' +
+              'stays safely under Dust\'s 60s MCP client timeout. Default: ' +
+              '45000. If the child does not finish within the budget the call ' +
+              'returns {status: "pending", run_id, hint} instead of an error ' +
+              '— the child keeps running in the background and can be awaited ' +
+              'by calling wait_for_run({ run_id }).',
           ),
       },
     },
@@ -324,25 +403,54 @@ export async function startTaskRunnerServer(
         };
       }
 
+      // Async dispatch (Franck 2026-04-22 20:26).
+      // We race the child run against a budget (max_wait_ms, capped
+      // at 55s to stay safely under Dust's 60s MCP client timeout).
+      // If the child finishes in time, we return the full structured
+      // payload synchronously (previous behaviour). If the budget
+      // expires first, we return { status: "pending", run_id, ... }
+      // while the child keeps running in the background — the
+      // orchestrator agent is expected to call wait_for_run(run_id)
+      // to await (or re-poll) the final result.
+      //
+      // The SDK's runTask returns the runId only at the very end;
+      // to surface it early on timeout we piggy-back on the new
+      // `onRunCreated` callback exposed by runner.ts.
+      const rawMaxWaitMs = (args.max_wait_ms as number | undefined) ?? 45_000;
+      const maxWaitMs = Math.min(Math.max(5_000, Math.floor(rawMaxWaitMs)), 55_000);
+
       const startedAt = Date.now();
-      let childRunId: string | null = null;
+      let earlyRunId: string | null = null;
       startHeartbeat(`child task "${child.name}" running`);
-      try {
-        childRunId = await runTask(child.id, {
-          parentRunId: orchestratorRunId,
-          runDepth: nextDepth,
-          promptOverride,
-          projectOverride,
-        });
-      } catch (e: any) {
-        stopHeartbeat();
+
+      const childFinished = runTask(child.id, {
+        parentRunId: orchestratorRunId,
+        runDepth: nextDepth,
+        promptOverride,
+        projectOverride,
+        onRunCreated: (id) => {
+          earlyRunId = id;
+        },
+      }).then(
+        (id) => ({ kind: 'done' as const, id }),
+        (e: any) => ({ kind: 'error' as const, error: e }),
+      );
+
+      const timeoutBudget = new Promise<{ kind: 'timeout' }>((resolve) => {
+        setTimeout(() => resolve({ kind: 'timeout' }), maxWaitMs);
+      });
+
+      const outcome = await Promise.race([childFinished, timeoutBudget]);
+      stopHeartbeat();
+
+      if (outcome.kind === 'error') {
         return {
           content: [
             {
               type: 'text' as const,
               text: JSON.stringify({
                 status: 'failure',
-                error: `dispatch error: ${e?.message ?? String(e)}`,
+                error: `dispatch error: ${outcome.error?.message ?? String(outcome.error)}`,
                 duration_ms: Date.now() - startedAt,
               }),
             },
@@ -351,46 +459,207 @@ export async function startTaskRunnerServer(
         };
       }
 
-      // runTask returns only after the child finishes (success / failure /
-      // no-op / aborted / skipped). Read the final row and project it
-      // into a structured JSON payload the orchestrator agent can parse.
-      stopHeartbeat();
+      if (outcome.kind === 'timeout') {
+        // Child is still running in the background; hand back the
+        // run id so the agent can await via wait_for_run().
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  status: 'pending',
+                  run_id: earlyRunId,
+                  task: { id: child.id, name: child.name },
+                  waited_ms: maxWaitMs,
+                  hint:
+                    earlyRunId === null
+                      ? `Child run row was not created within ${maxWaitMs}ms; ` +
+                        `it may be held on a concurrency lock. Retry the same ` +
+                        `run_task call or inspect /runs in the UI.`
+                      : `Child run is still running. Call ` +
+                        `wait_for_run({ run_id: "${earlyRunId}" }) ` +
+                        `to block up to 55s and get the final result. ` +
+                        `Repeat the wait_for_run call as needed.`,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
 
-      const row = childRunId
-        ? await db.taskRun.findUnique({ where: { id: childRunId } })
-        : null;
-      const payload = row
-        ? {
-            run_id: row.id,
-            task: { id: child.id, name: child.name },
-            status: row.status,
-            output: (row.output ?? '').slice(0, 4000),
-            error: row.error ?? undefined,
-            files_changed: row.filesChanged ?? undefined,
-            lines_added: row.linesAdded ?? undefined,
-            lines_removed: row.linesRemoved ?? undefined,
-            branch: row.branch ?? undefined,
-            commit_sha: row.commitSha ?? undefined,
-            duration_ms:
-              row.finishedAt && row.startedAt
-                ? row.finishedAt.getTime() - row.startedAt.getTime()
-                : Date.now() - startedAt,
+      // Synchronous completion path — child finished within budget.
+      return formatRunResult(outcome.id, startedAt, { id: child.id, name: child.name });
+    },
+  );
+
+  // ---- NEW TOOL: wait_for_run ------------------------------------
+  // Async counterpart of `run_task`. Re-awaits a pending run by id,
+  // polling its DB row every ~1.5s until either the run finishes
+  // (status is no longer 'running') or max_wait_ms expires. In the
+  // latter case the tool returns another {status: "pending"} payload
+  // so the agent can loop. This is the "timeout = knob" the user
+  // asked for, except it lives in the agent's polling cadence, not
+  // in Dust's MCP client: every wait_for_run call is a fresh MCP
+  // request, each bounded under Dust's 60s budget.
+  server.registerTool(
+    'wait_for_run',
+    {
+      description:
+        `Await completion of a previously dispatched task run. ` +
+        `Returns the same structured payload as run_task when the run ` +
+        `reaches a terminal state (success / no-op / failed / aborted / ` +
+        `skipped). If the run is still running when max_wait_ms expires, ` +
+        `returns {status: "pending", run_id} so you can call this tool ` +
+        `again to keep waiting. Call this after run_task returned ` +
+        `{status: "pending", run_id} to get the final result.`,
+      inputSchema: {
+        run_id: z
+          .string()
+          .min(1)
+          .describe('The run_id returned by a previous run_task or wait_for_run call.'),
+        max_wait_ms: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            'How long (ms) to block waiting for the run. Clamped to the ' +
+              'range [5000, 55000] server-side so Dust\'s 60s MCP timeout ' +
+              'is never tripped. Default: 45000.',
+          ),
+      },
+    },
+    async (args, extra) => {
+      const runId = String(args.run_id);
+      const rawMaxWaitMs = (args.max_wait_ms as number | undefined) ?? 45_000;
+      const maxWaitMs = Math.min(Math.max(5_000, Math.floor(rawMaxWaitMs)), 55_000);
+      const deadline = Date.now() + maxWaitMs;
+      const pollIntervalMs = 1_500;
+
+      // Sanity: run_id must belong to a run whose root orchestrator
+      // is this server's orchestratorRunId. Prevents an agent from
+      // peeking at arbitrary runs by guessing IDs.
+      const initial = await db.taskRun.findUnique({
+        where: { id: runId },
+        select: { id: true, status: true, parentRunId: true, startedAt: true },
+      });
+      if (!initial) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                status: 'failure',
+                error: `run_id "${runId}" not found`,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+      // Walk ancestors: the caller's orchestrator must be on the
+      // chain, otherwise refuse.
+      {
+        let cur: string | null = initial.parentRunId;
+        let reached = initial.id === orchestratorRunId;
+        for (let i = 0; i < 20 && cur && !reached; i++) {
+          if (cur === orchestratorRunId) {
+            reached = true;
+            break;
           }
-        : {
-            status: 'failure' as const,
-            error: 'child run row not found after dispatch',
-            duration_ms: Date.now() - startedAt,
+          const p: { parentRunId: string | null } | null =
+            await db.taskRun.findUnique({
+              where: { id: cur },
+              select: { parentRunId: true },
+            });
+          cur = p?.parentRunId ?? null;
+        }
+        if (!reached) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  status: 'failure',
+                  error: `run_id "${runId}" is not a descendant of this orchestrator run; refusing to wait on an unrelated run`,
+                }),
+              },
+            ],
+            isError: true,
           };
+        }
+      }
 
-      return {
-        content: [
-          { type: 'text' as const, text: JSON.stringify(payload, null, 2) },
-        ],
-        // Surface failures as MCP tool-error so the agent's framework
-        // can react differently than to a successful result, while the
-        // structured JSON is still parseable in `text`.
-        isError: row?.status !== 'success' && row?.status !== 'no-op',
-      };
+      // Progress heartbeat for this tool too — same rationale as
+      // run_task. Different phase label for observability.
+      const progressToken = (extra?._meta as any)?.progressToken;
+      let hbId: NodeJS.Timeout | null = null;
+      if (progressToken) {
+        let t = 0;
+        hbId = setInterval(() => {
+          t += 1;
+          extra
+            ?.sendNotification?.({
+              method: 'notifications/progress',
+              params: {
+                progressToken,
+                progress: t,
+                message: `awaiting run ${runId} (${t * 15}s elapsed)`,
+              },
+            })
+            .catch(() => {});
+        }, 15_000);
+      }
+
+      try {
+        while (Date.now() < deadline) {
+          const row = await db.taskRun.findUnique({ where: { id: runId } });
+          if (!row) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({
+                    status: 'failure',
+                    error: `run_id "${runId}" disappeared mid-wait`,
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          if (row.status !== 'running') {
+            // Terminal.
+            return formatRunResult(runId, row.startedAt?.getTime() ?? Date.now());
+          }
+          await new Promise((r) => setTimeout(r, pollIntervalMs));
+        }
+        // Budget expired, still running.
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  status: 'pending',
+                  run_id: runId,
+                  waited_ms: maxWaitMs,
+                  hint:
+                    `Still running. Call wait_for_run({ run_id: "${runId}" }) ` +
+                    `again to keep waiting.`,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      } finally {
+        if (hbId) clearInterval(hbId);
+      }
     },
   );
 

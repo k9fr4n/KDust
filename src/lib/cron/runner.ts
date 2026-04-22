@@ -195,6 +195,21 @@ export interface RunTaskOptions {
   runDepth?: number;
   promptOverride?: string;
   projectOverride?: string;
+  /**
+   * Optional callback invoked synchronously-ish with the TaskRun id
+   * as soon as the row exists in the database (i.e. right after the
+   * concurrency-lock check succeeds and before the agent stream
+   * begins). Used by the async-dispatch path in
+   * src/lib/mcp/task-runner-server.ts to hand back `run_id` to the
+   * orchestrator when the child exceeds `max_wait_ms`, without
+   * waiting for the full run to complete.
+   *
+   * Important: the callback may fire for any of the terminal early
+   * paths too (refused, skipped) so the id returned is always a
+   * real row. Errors from the callback are swallowed: the run
+   * continues regardless.
+   */
+  onRunCreated?: (runId: string) => void;
 }
 
 /**
@@ -251,6 +266,7 @@ export async function runTask(
         runDepth: opts?.runDepth ?? 0,
       },
     });
+    try { opts?.onRunCreated?.(errRow.id); } catch { /* ignore */ }
     return errRow.id;
   }
 
@@ -295,6 +311,7 @@ export async function runTask(
           runDepth: opts?.runDepth ?? 0,
         },
       });
+      try { opts?.onRunCreated?.(skipRow.id); } catch { /* ignore */ }
       return skipRow.id;
     }
     // Stale: mark the ghost run as failed and proceed
@@ -338,6 +355,10 @@ export async function runTask(
       runDepth: opts?.runDepth ?? 0,
     },
   });
+  // Notify the caller that a run row now exists. Used by the
+  // async-dispatch path to hand back `run_id` to the orchestrator
+  // if max_wait_ms expires before the agent stream completes.
+  try { opts?.onRunCreated?.(run.id); } catch { /* ignore */ }
   // Resolved prompt for this run. When opts.promptOverride is set
   // (task-runner invocation with retry context, failure info, \u2026),
   // it REPLACES job.prompt entirely. The audit-trail conversation

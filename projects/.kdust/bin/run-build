@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# run-build <project>
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+PROJECT="${1:?Usage: run-build <project>}"
+kdust::require_project "$PROJECT"
+SRC_DIR=$(kdust::project_path "$PROJECT")
+TOOL=$(kdust::lookup "$PROJECT" '.build.tool')
+[ -z "$TOOL" ] && { kdust::critical "No build.tool for $PROJECT"; exit 2; }
+export PROJECT SRC_DIR
+D="$(dirname "$(readlink -f "$0")")/../lib/drivers"
+case "$TOOL" in
+  docker)           exec "$D/docker-build.sh" ;;
+  dotnet)           exec "$D/dotnet-build.sh" ;;
+  npm)              exec "$D/npm-build.sh" ;;
+  'go build'|go-build)       exec "$D/go-build.sh" ;;
+  terraform-plan)   exec "$D/terraform-plan.sh" ;;
+  *) kdust::critical "Unknown build.tool: $TOOL"; exit 3 ;;
+esac

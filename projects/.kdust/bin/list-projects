@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# list-projects -- prints the registry in a compact table
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+kdust::require yq
+yq -r '
+  .projects | to_entries[] |
+  [.key,
+   (.value.type // "-"),
+   (.value.test.framework // "-"),
+   (.value.test.runner // "-"),
+   (.value.lint.tool // "-"),
+   (.value.audit.secrets // false),
+   (.value.audit.deps // false),
+   (.value.audit.iac // false)] | @tsv
+' "$KDUST_REGISTRY" | column -t -s $'\t' -N 'PROJECT,TYPE,TEST-FW,TEST-RUN,LINT,SEC,DEPS,IAC'

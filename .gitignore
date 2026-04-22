@@ -12,7 +12,8 @@ prisma/migrations/dev.db*
 # Clones effectués par le runtime (volumes montés en prod).
 # Attention: le slash initial est indispensable pour ne pas masquer
 # accidentellement src/app/api/projects/ ni src/app/projects/.
-/projects/
+/projects/*
+!/projects/.kdust/
 /data/
 tsconfig.tsbuildinfo
 prisma/dev.db

@@ -1,0 +1,101 @@
+# =============================================================================
+# KDust project registry
+# -----------------------------------------------------------------------------
+# Every project supervised by KDust declares itself here. Generic tasks
+# (bin/run-tests, bin/audit-secrets, ...) resolve a project NAME to the
+# metadata below to pick the right driver and options.
+#
+# Schema (per project entry):
+#   path           : absolute path inside the container (usually /projects/<name>)
+#   type           : free-form tag describing project nature
+#                    (powershell-module | terraform | nextjs | go | python | ...)
+#   remote         : (optional) git remote URL (https or ssh)
+#   branch_default : (optional) default branch for operations that push
+#   test:
+#     framework    : pester | pytest | go-test | terratest | jest | ...
+#     runner       : local | github-actions-windows | github-actions-linux
+#     suites_default: (optional) string passed to the test driver when user
+#                     does not override (e.g. 'all', 'Public/utils')
+#     remote_repo  : (optional) override registry.remote for test runners
+#                     that push to an ephemeral branch (e.g. WindowsRunner)
+#   lint:
+#     tool         : psscriptanalyzer | tflint | pylint | shellcheck | eslint
+#   format:
+#     tool         : prettier | black | 'terraform fmt' | psscriptanalyzer-fix
+#   audit:
+#     secrets      : true|false (gitleaks)
+#     deps         : true|false (trivy fs)
+#     iac          : true|false (checkov)
+#   build:
+#     tool         : docker | dotnet | npm | terraform-plan | 'go build'
+# =============================================================================
+
+version: 1
+
+projects:
+
+  PSWinOps:
+    path: /projects/PSWinOps
+    type: powershell-module
+    remote: https://github.com/k9fr4n/WindowsRunner.git
+    branch_default: main
+    test:
+      framework: pester
+      runner: github-actions-windows
+      suites_default: all
+      remote_repo: k9fr4n/WindowsRunner
+      pwsh_version: '7'
+    lint:
+      tool: psscriptanalyzer
+    format:
+      tool: psscriptanalyzer-fix
+    audit:
+      secrets: true
+      deps: false
+      iac: false
+
+  EUDONET_Terraform:
+    path: /projects/EUDONET_Terraform
+    type: terraform
+    lint:
+      tool: tflint
+    format:
+      tool: terraform fmt
+    audit:
+      secrets: true
+      deps: false
+      iac: true
+    build:
+      tool: terraform-plan
+
+  terraform-provider-windows:
+    path: /projects/terraform-provider-windows
+    type: go
+    test:
+      framework: go-test
+      runner: local
+    lint:
+      tool: golangci-lint
+    audit:
+      secrets: true
+      deps: true
+    build:
+      tool: go build
+
+  Pacman:
+    path: /projects/Pacman
+    type: misc
+    audit:
+      secrets: true
+
+  RexGame:
+    path: /projects/RexGame
+    type: misc
+    audit:
+      secrets: true
+
+  Interne:
+    path: /projects/Interne
+    type: misc
+    audit:
+      secrets: true

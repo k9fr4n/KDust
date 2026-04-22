@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# =============================================================================
+# run-tests <project> [suites]
+# Dispatches to the right test driver based on registry (test.framework + test.runner).
+# =============================================================================
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+PROJECT="${1:?Usage: run-tests <project> [suites]}"
+SUITES_ARG="${2:-}"
+
+kdust::require_project "$PROJECT"
+
+FRAMEWORK=$(kdust::lookup "$PROJECT" '.test.framework')
+RUNNER=$(kdust::lookup "$PROJECT" '.test.runner')
+SRC_DIR=$(kdust::project_path "$PROJECT")
+SUITES_DEFAULT=$(kdust::lookup "$PROJECT" '.test.suites_default')
+SUITES="${SUITES_ARG:-${SUITES_DEFAULT:-all}}"
+
+[ -z "$FRAMEWORK" ] && { kdust::critical "No test.framework for $PROJECT"; exit 2; }
+[ -z "$RUNNER" ]    && { kdust::critical "No test.runner for $PROJECT";    exit 2; }
+
+export PROJECT SRC_DIR SUITES
+
+DRIVERS_DIR="$(dirname "$(readlink -f "$0")")/../lib/drivers"
+
+case "$FRAMEWORK/$RUNNER" in
+  pester/github-actions-windows)
+    REMOTE_REPO=$(kdust::lookup "$PROJECT" '.test.remote_repo')
+    PWSH_VERSION=$(kdust::lookup "$PROJECT" '.test.pwsh_version')
+    [ -z "$REMOTE_REPO" ] && { kdust::critical "test.remote_repo required for pester/github-actions-windows"; exit 2; }
+    export REMOTE_REPO PWSH_VERSION
+    exec "$DRIVERS_DIR/pester-gha-windows.sh"
+    ;;
+  pester/local)
+    exec "$DRIVERS_DIR/psscriptanalyzer.sh"  # placeholder: local pester TBD
+    ;;
+  pytest/local)    exec "$DRIVERS_DIR/pytest.sh" ;;
+  go-test/local)   exec "$DRIVERS_DIR/go-test.sh" ;;
+  *)
+    kdust::critical "Unsupported framework/runner combination: $FRAMEWORK/$RUNNER"
+    exit 3 ;;
+esac

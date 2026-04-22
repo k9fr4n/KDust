@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# audit-deps <project>
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+PROJECT="${1:?Usage: audit-deps <project>}"
+kdust::require_project "$PROJECT"
+SRC_DIR=$(kdust::project_path "$PROJECT")
+ENABLED=$(kdust::lookup "$PROJECT" '.audit.deps')
+[ "$ENABLED" != "true" ] && { kdust::warn "audit.deps disabled for $PROJECT"; exit 0; }
+export PROJECT SRC_DIR
+exec "$(dirname "$(readlink -f "$0")")/../lib/drivers/trivy-fs.sh"

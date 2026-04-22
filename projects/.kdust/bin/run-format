@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# =============================================================================
+# run-format <project> [--check]
+# =============================================================================
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/../lib/common.sh"
+
+PROJECT="${1:?Usage: run-format <project> [--check]}"
+MODE="${2:-}"
+kdust::require_project "$PROJECT"
+
+TOOL=$(kdust::lookup "$PROJECT" '.format.tool')
+SRC_DIR=$(kdust::project_path "$PROJECT")
+[ -z "$TOOL" ] && { kdust::critical "No format.tool for $PROJECT"; exit 2; }
+
+FIX=1
+[ "$MODE" = "--check" ] && FIX=0
+export PROJECT SRC_DIR FIX
+
+DRIVERS_DIR="$(dirname "$(readlink -f "$0")")/../lib/drivers"
+
+case "$TOOL" in
+  psscriptanalyzer-fix) exec "$DRIVERS_DIR/psscriptanalyzer.sh" ;;
+  'terraform fmt'|terraform-fmt) exec "$DRIVERS_DIR/terraform-fmt.sh" ;;
+  prettier)  exec "$DRIVERS_DIR/prettier.sh" ;;
+  black)     exec "$DRIVERS_DIR/black.sh" ;;
+  *) kdust::critical "Unknown format.tool: $TOOL"; exit 3 ;;
+esac

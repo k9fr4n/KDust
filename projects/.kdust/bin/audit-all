@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# audit-all <project>  -- runs every enabled audit in sequence
+set -euo pipefail
+HERE="$(dirname "$(readlink -f "$0")")"
+PROJECT="${1:?Usage: audit-all <project>}"
+RC=0
+"$HERE/audit-secrets" "$PROJECT" || RC=$((RC|1))
+"$HERE/audit-deps"    "$PROJECT" || RC=$((RC|2))
+"$HERE/audit-iac"     "$PROJECT" || RC=$((RC|4))
+exit $RC

@@ -211,6 +211,123 @@ while mig.status == "pending":
 
 ---
 
+## Passing data between tasks
+
+A very common pattern is "analyse → format", "collect → synthesise",
+etc. The task-runner does not have a dedicated data channel — every
+child run is a fresh Dust agent session with its own prompt. Two
+knobs tie parent and child together:
+
+- **`input` arg on `run_task` / `dispatch_task`**: replaces the
+  child's stored prompt for this invocation. Use it to inject data
+  or redirect the agent's intent.
+- **`output` field in the returned payload**: the child's final
+  assistant message, truncated to 4000 characters.
+
+### `input` semantics — replace, not append
+
+`input` is a full **override** of the child's stored prompt, not an
+addendum. The child agent receives exactly the string you pass, as
+if the user typed it. If you want a stable instruction template
+plus variable data, build the full string in the parent and pass
+it as `input`:
+
+```
+analysis = run_task({ task: "analyze-iam" })
+
+formatted = run_task({
+  task: "iam-report",
+  input:
+    "You are a report formatter. Structure: exec summary, findings " +
+    "by severity, recommendations. Use THIS data:\n\n" + analysis.output
+})
+```
+
+The stored prompt of `iam-report` is ignored for this call. (If
+you need the stored prompt to always apply, keep instructions in
+the prompt and pass only the *data* in `input` prefixed with a
+clear marker like `DATA:\n\n...`. The child agent will see both
+through its system-message + user-message pair once it parses
+the combined text.)
+
+### Size limits — output is truncated at 4k
+
+The `output` field in the structured response is **capped at 4000
+characters** (`formatRunResult` in `task-runner-server.ts`). If
+the child's final message is larger, the excess is silently
+dropped from the return payload. The full output is preserved on
+the child's `TaskRun.output` column and visible on `/runs/<id>`.
+
+For pipelines that shuttle large artefacts between tasks, don't
+rely on `output` \u2014 use the filesystem.
+
+### Pattern — large artefacts via files
+
+The child writes to a path inside `/projects/<name>/`; the parent
+passes the **path** (not the contents) to the next stage:
+
+```
+# Parent orchestrator prompt (excerpt):
+1. Call run_task({
+     task: "collect-aws-inventory"
+   })
+   The child writes /projects/psops/reports/inventory-2026-04-22.json
+   and returns that path in its output.
+
+2. Call run_task({
+     task: "inventory-diff",
+     input:
+       "Compare the current inventory at " +
+       "/projects/psops/reports/inventory-2026-04-22.json " +
+       "against the previous one at " +
+       "/projects/psops/reports/inventory-2026-04-15.json " +
+       "and produce a markdown diff report."
+   })
+```
+
+Benefits:
+
+- No 4k-char cliff.
+- The artefact survives after the run, usable for audit / re-runs /
+  manual inspection.
+- Re-running the formatter without re-running the collector is a
+  single prompt change.
+
+Caveat: files persist in the project tree. Either clean up in a
+final task step, store them in a sub-directory your git policy
+ignores, or rely on `dryRun=true` on the parent (which resets the
+working tree after the run).
+
+### Pattern — structured data in JSON blocks
+
+For medium-sized structured outputs that *do* fit under 4k chars
+(typical: ~50 findings, summary stats), have the child end its
+message with a fenced `json` block so the parent can parse it
+cleanly:
+
+Child's prompt ends with:
+```
+Return a brief human summary, then append a final fenced code block:
+
+```json
+{ "findings": [...], "severity_counts": {...} }
+```
+```
+
+Parent extracts the block from `result.output` and uses the
+structured data directly — far more reliable than asking the
+parent LLM to re-parse free-form prose.
+
+### `input` is not persisted
+
+The value of `input` is passed to the runner and ends up in the
+child's agent conversation, but it is **not** stored on the child
+`TaskRun` row. For debugging, inspect the child's Dust
+conversation (linked from `/runs/<id>` via the chat icon) — the
+effective user message is visible there.
+
+---
+
 ## Constraints & invariants
 
 ### Project scope and project-arg contract

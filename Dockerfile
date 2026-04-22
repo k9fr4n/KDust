@@ -35,13 +35,24 @@ WORKDIR /app
 # --privileged, etc.). Assum\u00e9 en connaissance de cause : les agents
 # Dust \u00e9crivent d\u00e9j\u00e0 du code ex\u00e9cut\u00e9 dans ce container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl ca-certificates tini git openssh-client gosu curl gnupg \
+    openssl ca-certificates tini git openssh-client gosu curl gnupg rsync jq \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
   && chmod a+r /etc/apt/keyrings/docker.asc \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+  # GitHub CLI (gh) — repo officiel cli.github.com, m\u00eame pattern que Docker CLI ci-dessus.
+  # N\u00e9cessaire pour les tasks KDust qui d\u00e9clenchent des workflows GitHub Actions
+  # (workflow_dispatch, run watch, run download).
+  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin \
+  && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin gh \
+  # yq (Mike Farah's Go version) — YAML parser used by .kdust generic tasks/drivers.
+  # Installed via static binary (no apt repo needed). Pinned version for reproducibility.
+  && YQ_VERSION=v4.44.3 \
+  && curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq \
+  && chmod 0755 /usr/local/bin/yq \
   && apt-get purge -y curl gnupg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \

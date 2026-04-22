@@ -19,31 +19,14 @@ export async function register() {
       console.error(`[instrumentation] scheduler boot failed: ${(e as Error).message}`);
     }
 
-    // One-shot cleanup (Franck 2026-04-22 full audit nuke). At this
-    // point Task.kind/category are still on disk on legacy DBs but
-    // the Prisma Client no longer exposes them. Use raw SQL so we
-    // don't depend on the removed columns. `db push` will drop the
-    // columns + tables on the next boot, so this cleanup is only
-    // meaningful on the very first boot after upgrade. Idempotent.
-    try {
-      const { db } = await import('./lib/db');
-      // Delete mandatory audit tasks (auto-provisioned leftovers) +
-      // their runs, using raw SQL so this compiles even after the
-      // kind column is dropped. Wrapped in a try/catch because on a
-      // fresh DB the column already doesn't exist.
-      const runs = await db.$executeRawUnsafe(
-        `DELETE FROM TaskRun WHERE taskId IN (SELECT id FROM CronJob WHERE mandatory = 1 AND kind = 'audit')`,
-      );
-      const tasks = await db.$executeRawUnsafe(
-        `DELETE FROM CronJob WHERE mandatory = 1 AND kind = 'audit'`,
-      );
-      if (tasks > 0 || runs > 0) {
-        console.log(
-          `[instrumentation] removed ${tasks} legacy mandatory audit task(s) and ${runs} dependent run(s)`,
-        );
-      }
-    } catch {
-      /* column already dropped or never existed: nothing to do. */
-    }
+    // Note: a one-shot cleanup of legacy mandatory audit tasks used
+    // to live here (Franck 2026-04-22 audit nuke). It was removed the
+    // same day because `prisma db push --accept-data-loss` in
+    // docker/entrypoint.sh already drops the Task.kind column BEFORE
+    // this hook runs, so any SQL probing that column would fail
+    // immediately. Leftover mandatory-audit task rows (if any) are
+    // carried over as ordinary tasks with no kind/category — harmless
+    // and visible in /tasks if the operator wants to clean them up
+    // manually.
   }
 }

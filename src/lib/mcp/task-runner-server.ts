@@ -166,10 +166,48 @@ export async function startTaskRunnerServer(
           ),
       },
     },
-    async (args) => {
+    async (args, extra) => {
       const taskRef = args.task as string;
       const promptOverride = (args.input as string | undefined) ?? undefined;
       const projectArg = (args.project as string | undefined)?.trim() || undefined;
+
+      // MCP progress heartbeat (Franck 2026-04-22 19:25).
+      // Dust's MCP client has a 60s DEFAULT_REQUEST_TIMEOUT_MSEC; long
+      // child tasks (Audit, big test suites, …) trip it and fail with
+      // "-32001 Request timed out" even though the server is still
+      // working. We emit a `notifications/progress` every 20s while
+      // runTask is pending, which — when the caller opted into
+      // `resetTimeoutOnProgress` (MCP SDK option) — resets the idle
+      // timer on each heartbeat. If the caller didn't opt in, the
+      // notifications are silently ignored. Either way, zero harm.
+      const progressToken = (extra?._meta as any)?.progressToken;
+      let heartbeatId: NodeJS.Timeout | null = null;
+      const startHeartbeat = (phase: string) => {
+        if (!progressToken || heartbeatId) return;
+        let ticks = 0;
+        heartbeatId = setInterval(() => {
+          ticks += 1;
+          extra
+            ?.sendNotification?.({
+              method: 'notifications/progress',
+              params: {
+                progressToken,
+                progress: ticks,
+                // `total` omitted on purpose — we don't know upfront.
+                message: `${phase} (${ticks * 20}s elapsed)`,
+              },
+            })
+            .catch(() => {
+              /* ignore: non-fatal if caller disconnected */
+            });
+        }, 20_000);
+      };
+      const stopHeartbeat = () => {
+        if (heartbeatId) {
+          clearInterval(heartbeatId);
+          heartbeatId = null;
+        }
+      };
 
       // Lazy import to avoid a module cycle (runner → registry → this file).
       const { runTask } = await import('../cron/runner');
@@ -287,6 +325,7 @@ export async function startTaskRunnerServer(
 
       const startedAt = Date.now();
       let childRunId: string | null = null;
+      startHeartbeat(`child task "${child.name}" running`);
       try {
         childRunId = await runTask(child.id, {
           parentRunId: orchestratorRunId,
@@ -295,6 +334,7 @@ export async function startTaskRunnerServer(
           projectOverride,
         });
       } catch (e: any) {
+        stopHeartbeat();
         return {
           content: [
             {
@@ -313,6 +353,8 @@ export async function startTaskRunnerServer(
       // runTask returns only after the child finishes (success / failure /
       // no-op / aborted / skipped). Read the final row and project it
       // into a structured JSON payload the orchestrator agent can parse.
+      stopHeartbeat();
+
       const row = childRunId
         ? await db.taskRun.findUnique({ where: { id: childRunId } })
         : null;

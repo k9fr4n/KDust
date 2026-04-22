@@ -73,14 +73,23 @@ fi
 
 if [ -n "${DATABASE_URL:-}" ]; then
   echo "[entrypoint] prisma db push ..."
+  # --accept-data-loss (Franck 2026-04-22): schema evolutions on this
+  # single-user app routinely drop tables/columns when features are
+  # retired (e.g. audit subsystem nuke 2026-04-22 drops ProjectAdvice,
+  # AdviceCategoryDefault and CronJob.kind/category). Without the
+  # flag `db push` stops the container with exit 1 on any
+  # potentially-lossy migration and kdust boot-loops. Since this app
+  # is mono-user and the schema is source-of-truth, we opt-in
+  # unconditionally. Operators who want to inspect before losing data
+  # should do so on a staging clone before deploying the new image.
   if [ "$(id -u)" = "0" ]; then
     # See note on gosu user-vs-user:group below. Using bare `node` here
     # so the Prisma one-shot runs with the same groups as the main
     # process; no practical impact for db push, but keeps behaviour
     # symmetrical and avoids surprises if the CLI ever shells out.
-    gosu node node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma
+    gosu node node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma --accept-data-loss
   else
-    node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma
+    node /app/node_modules/prisma/build/index.js db push --schema=/app/prisma/schema.prisma --accept-data-loss
   fi
 fi
 

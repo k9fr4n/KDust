@@ -118,6 +118,30 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         </div>
 
 
+        {/* Task orchestration (Franck 2026-04-22 19:09).
+            Two independent MCP servers the agent can use during a
+            run. Orthogonal to the push pipeline below; a task can
+            enable either, both, or neither. Rendered first so the
+            reader sees "what the agent can talk to" before "what
+            it pushes". */}
+        <div className="col-span-full mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="col-span-full text-xs uppercase tracking-wide text-slate-400">
+            Task orchestration
+          </div>
+          <div>
+            <span className="text-slate-500">Task runner:</span>{' '}
+            <span className={`font-mono ${cron.taskRunnerEnabled ? 'text-green-600 dark:text-green-400' : 'text-slate-400'}`}>
+              {cron.taskRunnerEnabled ? 'enabled' : 'disabled'}
+            </span>
+          </div>
+          <div>
+            <span className="text-slate-500">Command runner:</span>{' '}
+            <span className={`font-mono ${cron.commandRunnerEnabled ? 'text-green-600 dark:text-green-400' : 'text-slate-400'}`}>
+              {cron.commandRunnerEnabled ? 'enabled' : 'disabled'}
+            </span>
+          </div>
+        </div>
+
         {/* Push pipeline \u2014 always rendered so state is visible */}
         <div className="col-span-full mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-3">
           <div>

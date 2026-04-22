@@ -196,6 +196,21 @@ export interface RunTaskOptions {
   promptOverride?: string;
   projectOverride?: string;
   /**
+   * Provenance of this run (see TaskRun.trigger in schema.prisma).
+   * When omitted, defaults to 'manual' — the safer value since
+   * manual is the only path without a clearly identifiable caller.
+   * Cron and MCP paths must set this explicitly (the scheduler and
+   * task-runner both do).
+   */
+  trigger?: 'cron' | 'manual' | 'mcp';
+  /**
+   * Optional human-readable actor tag associated with `trigger`:
+   *   - 'manual' → user email / session id (best effort)
+   *   - 'mcp'    → parent task name (for quick display in /runs)
+   *   - 'cron'   → left null (the schedule string is already on Task)
+   */
+  triggeredBy?: string | null;
+  /**
    * Optional callback invoked synchronously-ish with the TaskRun id
    * as soon as the row exists in the database (i.e. right after the
    * concurrency-lock check succeeds and before the agent stream
@@ -264,6 +279,8 @@ export async function runTask(
         finishedAt: new Date(),
         parentRunId: opts?.parentRunId ?? null,
         runDepth: opts?.runDepth ?? 0,
+        trigger: opts?.trigger ?? 'manual',
+        triggeredBy: opts?.triggeredBy ?? null,
       },
     });
     try { opts?.onRunCreated?.(errRow.id); } catch { /* ignore */ }
@@ -309,6 +326,8 @@ export async function runTask(
           finishedAt: new Date(),
           parentRunId: opts?.parentRunId ?? null,
           runDepth: opts?.runDepth ?? 0,
+          trigger: opts?.trigger ?? 'manual',
+          triggeredBy: opts?.triggeredBy ?? null,
         },
       });
       try { opts?.onRunCreated?.(skipRow.id); } catch { /* ignore */ }
@@ -353,6 +372,8 @@ export async function runTask(
       phaseMessage: 'Starting',
       parentRunId: opts?.parentRunId ?? null,
       runDepth: opts?.runDepth ?? 0,
+      trigger: opts?.trigger ?? 'manual',
+      triggeredBy: opts?.triggeredBy ?? null,
     },
   });
   // Notify the caller that a run row now exists. Used by the

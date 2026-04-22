@@ -289,6 +289,25 @@ model TaskRun {
   // auth) \u2014 the branch is pushed, but no PR exists upstream.
   prState       String?
 
+  // --- Provenance (Franck 2026-04-22 20:34) ---
+  // Who/what triggered this run. A small enum-as-string rather than
+  // a Prisma enum so adding new triggers (webhook, API, …) is a
+  // pure data change.
+  //
+  //   'cron'    : fired by the internal scheduler at schedule match
+  //   'manual'  : a human clicked Run in the UI or POSTed
+  //               /api/tasks/:id/run; triggeredBy holds the actor
+  //               identity when available (email / session user id)
+  //   'mcp'     : spawned by another run via the task-runner MCP
+  //               tool (run_task / wait_for_run); triggeredBy holds
+  //               the parent task name for quick display, and the
+  //               full chain remains walkable via parentRunId.
+  //
+  // NULL trigger is only possible on rows predating this column
+  // (pre-nuke legacy) — the UI falls back to "unknown".
+  trigger       String?
+  triggeredBy   String?
+
   // --- Task-runner lineage (Franck 2026-04-20 22:58) ---
   // When this run was spawned by another run via the task-runner
   // MCP tool, parentRunId points to that parent run. NULL for

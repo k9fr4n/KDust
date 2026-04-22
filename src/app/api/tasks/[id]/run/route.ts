@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runTask } from '@/lib/cron/runner';
 import { db } from '@/lib/db';
+import { getCurrentUserEmail } from '@/lib/dust/current-user';
 export const runtime = 'nodejs';
 
 /**
@@ -61,7 +62,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     );
   }
 
-  // fire-and-forget pour ne pas bloquer l'API
-  void runTask(id, projectArg ? { projectOverride: projectArg } : undefined);
+  // fire-and-forget pour ne pas bloquer l'API.
+  // Provenance: always 'manual' for this endpoint (the only way to
+  // reach it is a human clicking "Run" in the UI or curl-ing it on
+  // purpose). We try to surface an actor identity from the OIDC
+  // session email when available so the /runs page can show "by
+  // <email>"; fall back to 'ui' for pre-OIDC flows or CLI curl
+  // calls. Best effort — never blocks the dispatch on a lookup.
+  let triggeredBy: string | null = 'ui';
+  try {
+    const email = await getCurrentUserEmail();
+    if (email) triggeredBy = email;
+  } catch {
+    /* ignore */
+  }
+  void runTask(id, {
+    ...(projectArg ? { projectOverride: projectArg } : {}),
+    trigger: 'manual',
+    triggeredBy,
+  });
   return NextResponse.json({ ok: true, triggered: id, project: projectArg ?? task.projectPath });
 }

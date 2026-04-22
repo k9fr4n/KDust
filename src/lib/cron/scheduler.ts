@@ -77,7 +77,7 @@ export async function reloadScheduler(): Promise<void> {
           }
           console.log(`[scheduler] firing task ${t.id} ("${t.name}") per cron "${t.schedule}"`);
           try {
-            await runTask(t.id);
+            await runTask(t.id, { trigger: 'cron' });
           } catch (e) {
             console.error(`[scheduler] task ${t.id} run failed: ${(e as Error).message}`);
           }

@@ -1,7 +1,17 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
-import { Clock, MessageCircle, ChevronUp, ChevronDown } from 'lucide-react';
+import {
+  Clock,
+  MessageCircle,
+  ChevronUp,
+  ChevronDown,
+  Bot,
+  User,
+  CalendarClock,
+  List,
+  Network,
+} from 'lucide-react';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { ClickableRunRow } from '@/components/ClickableRunRow';
 import type { Prisma } from '@prisma/client';
@@ -33,6 +43,8 @@ const STATUS_CLASS: Record<string, string> = {
   skipped: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400',
 };
 
+type ViewMode = 'flat' | 'tree';
+
 type SearchProps = {
   searchParams?: Promise<{
     status?: string;
@@ -41,8 +53,68 @@ type SearchProps = {
     limit?: string;
     sort?: string;
     dir?: SortDir;
+    view?: string;
   }>;
 };
+
+/**
+ * Small badge showing the run's provenance (who/what launched it).
+ * Three canonical triggers live on TaskRun.trigger (schema.prisma):
+ *   - 'cron'   : fired by the internal scheduler
+ *   - 'manual' : human clicked "Run" in the UI (triggeredBy = email)
+ *   - 'mcp'    : dispatched by another run via task-runner MCP tool
+ *                (triggeredBy = parent task name)
+ * Null / unknown → neutral grey pill.
+ */
+function TriggerBadge({
+  trigger,
+  triggeredBy,
+}: {
+  trigger: string | null | undefined;
+  triggeredBy: string | null | undefined;
+}) {
+  const common =
+    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium';
+  const label = triggeredBy ? triggeredBy : trigger ?? 'unknown';
+  if (trigger === 'cron') {
+    return (
+      <span
+        className={`${common} bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-400`}
+        title="Fired by the internal scheduler"
+      >
+        <CalendarClock size={10} /> cron
+      </span>
+    );
+  }
+  if (trigger === 'manual') {
+    return (
+      <span
+        className={`${common} bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-400`}
+        title={`Manually triggered${triggeredBy ? ` by ${triggeredBy}` : ''}`}
+      >
+        <User size={10} /> {triggeredBy && triggeredBy !== 'ui' ? triggeredBy : 'manual'}
+      </span>
+    );
+  }
+  if (trigger === 'mcp') {
+    return (
+      <span
+        className={`${common} bg-fuchsia-50 dark:bg-fuchsia-950/30 text-fuchsia-700 dark:text-fuchsia-400`}
+        title={`Dispatched via task-runner MCP${triggeredBy ? ` by parent "${triggeredBy}"` : ''}`}
+      >
+        <Bot size={10} /> {triggeredBy ?? 'mcp'}
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`${common} bg-slate-100 dark:bg-slate-800 text-slate-500`}
+      title="Unknown trigger (pre-2026-04-22 20:34 row)"
+    >
+      {label}
+    </span>
+  );
+}
 
 export default async function RunsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
@@ -52,6 +124,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
+  const view: ViewMode = sp.view === 'tree' ? 'tree' : 'flat';
   const currentProject = await getCurrentProjectName();
 
   // Free-text search across the fields users most commonly want to find
@@ -116,6 +189,35 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     });
   }
 
+  // Tree-view expansion (Franck 2026-04-22 20:34).
+  // In flat mode: `runs` is the final result set. In tree mode we
+  // need every run's ancestor chain fully materialised even when
+  // the ancestors fall outside the filter window — otherwise
+  // children would render orphaned. We fetch missing parents in
+  // batches, walking up until no new ids appear.
+  const treeRuns: typeof runs = [...runs];
+  if (view === 'tree') {
+    const seen = new Set(treeRuns.map((r) => r.id));
+    let wanted = treeRuns
+      .map((r) => r.parentRunId)
+      .filter((id): id is string => !!id && !seen.has(id));
+    // Bounded loop — KDUST_MAX_RUN_DEPTH caps chains at 10 so
+    // this converges fast.
+    for (let i = 0; i < 15 && wanted.length > 0; i++) {
+      const extra = await db.taskRun.findMany({
+        where: { id: { in: wanted } },
+        include: { task: { select: { id: true, name: true, projectPath: true } } },
+      });
+      for (const r of extra) {
+        seen.add(r.id);
+        treeRuns.push(r);
+      }
+      wanted = extra
+        .map((r) => r.parentRunId)
+        .filter((id): id is string => !!id && !seen.has(id));
+    }
+  }
+
   // Resolve TaskRun.dustConversationSId → local Conversation.id in a
   // single query. Stored as a soft reference (no FK) so we do the
   // lookup here and build a {sId → localId} map for O(1) access in the
@@ -123,7 +225,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   // the Dust call, or legacy pre-v3 rows) are simply absent from the
   // map and render no Chat link.
   const convSIds = Array.from(
-    new Set(runs.map((r) => r.dustConversationSId).filter((s): s is string => !!s)),
+    new Set(treeRuns.map((r) => r.dustConversationSId).filter((s): s is string => !!s)),
   );
   const convs = convSIds.length
     ? await db.conversation.findMany({
@@ -148,6 +250,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     q: string;
     sort: SortKey;
     dir: SortDir;
+    view: ViewMode;
   }>) => {
     const qs = new URLSearchParams();
     const merged = {
@@ -156,14 +259,58 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       q: patch.q ?? q,
       sort: patch.sort ?? sort,
       dir: patch.dir ?? dir,
+      view: patch.view ?? view,
     };
     if (merged.status && merged.status !== 'all') qs.set('status', merged.status);
     if (merged.task) qs.set('task', merged.task);
     if (merged.q) qs.set('q', merged.q);
     if (merged.sort !== 'started') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
+    if (merged.view !== 'flat') qs.set('view', merged.view);
     return `/runs${qs.toString() ? `?${qs}` : ''}`;
   };
+  // Tree ordering: DFS over the fetched runs. We preserve the
+  // original top-level order (already sorted by SQLite per sort/dir
+  // above) and recurse into children. Each row is annotated with
+  // its `depth` so the rendering loop can indent cleanly. In flat
+  // mode we just tag everything with depth=0.
+  type RenderRow = (typeof treeRuns)[number] & { depth: number; isLastAtDepth: boolean[] };
+  const byId = new Map(treeRuns.map((r) => [r.id, r]));
+  const childrenOf = new Map<string | null, typeof treeRuns>();
+  for (const r of treeRuns) {
+    const pid = r.parentRunId ?? null;
+    const arr = childrenOf.get(pid) ?? [];
+    arr.push(r);
+    childrenOf.set(pid, arr);
+  }
+  // Children order mirrors the initial sort (treeRuns already in
+  // the desired order thanks to the DB orderBy). We keep insertion
+  // order in `childrenOf` since Map preserves it.
+  const rendered: RenderRow[] = [];
+  if (view === 'tree') {
+    // Roots = anything whose parentRunId is null OR whose parent
+    // isn't in `byId` (orphaned from the filter). We treat both as
+    // top-level so filtered views stay coherent.
+    const roots = treeRuns.filter(
+      (r) => !r.parentRunId || !byId.has(r.parentRunId),
+    );
+    const visit = (r: (typeof treeRuns)[number], depth: number, ancestryLast: boolean[]) => {
+      rendered.push({ ...r, depth, isLastAtDepth: [...ancestryLast] });
+      const kids = childrenOf.get(r.id) ?? [];
+      kids.forEach((k, i) => {
+        const isLast = i === kids.length - 1;
+        visit(k, depth + 1, [...ancestryLast, isLast]);
+      });
+    };
+    roots.forEach((r, i) => visit(r, 0, [i === roots.length - 1]));
+  } else {
+    // Flat view: preserve original ordering from `runs` (not
+    // treeRuns, which may have extra ancestors appended).
+    for (const r of runs) {
+      rendered.push({ ...r, depth: 0, isLastAtDepth: [] });
+    }
+  }
+
   const sortHref = (col: SortKey) => {
     if (sort === col) return buildHref({ dir: dir === 'asc' ? 'desc' : 'asc' });
     // Durations / diffs / started feel most natural desc first; text-ish fields asc.
@@ -180,7 +327,41 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         {currentProject && (
           <span className="text-base font-normal text-slate-500">· {currentProject}</span>
         )}
-        <span className="text-sm text-slate-500 ml-auto">{runs.length} shown</span>
+        <span className="text-sm text-slate-500 ml-auto">
+          {runs.length} shown
+          {view === 'tree' && treeRuns.length > runs.length && (
+            <span className="text-xs text-slate-400">
+              {' '}(+{treeRuns.length - runs.length} ancestor
+              {treeRuns.length - runs.length > 1 ? 's' : ''})
+            </span>
+          )}
+        </span>
+        {/* View mode toggle (flat list vs run-tree with indentation
+            and parent links). The tree view auto-fetches missing
+            ancestors so a child row whose parent was filtered out
+            still renders under its real parent. */}
+        <div className="inline-flex rounded border border-slate-300 dark:border-slate-700 overflow-hidden text-xs">
+          <Link
+            href={buildHref({ view: 'flat' })}
+            className={`px-2 py-1 inline-flex items-center gap-1 ${
+              view === 'flat'
+                ? 'bg-slate-200 dark:bg-slate-800 font-semibold'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <List size={12} /> Flat
+          </Link>
+          <Link
+            href={buildHref({ view: 'tree' })}
+            className={`px-2 py-1 inline-flex items-center gap-1 border-l border-slate-300 dark:border-slate-700 ${
+              view === 'tree'
+                ? 'bg-slate-200 dark:bg-slate-800 font-semibold'
+                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Network size={12} /> Tree
+          </Link>
+        </div>
       </div>
 
       {/* Search */}
@@ -262,6 +443,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             <tr>
               <SortableTh col="status"   sort={sort} dir={dir} href={sortHref('status')}>Status</SortableTh>
               <SortableTh col="task"     sort={sort} dir={dir} href={sortHref('task')}>Task</SortableTh>
+              <th className="py-2">Trigger</th>
               <SortableTh col="project"  sort={sort} dir={dir} href={sortHref('project')}>Project</SortableTh>
               <SortableTh col="started"  sort={sort} dir={dir} href={sortHref('started')}>Started</SortableTh>
               <SortableTh col="duration" sort={sort} dir={dir} href={sortHref('duration')}>Duration</SortableTh>
@@ -272,7 +454,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             </tr>
           </thead>
           <tbody>
-            {runs.map((r) => {
+            {rendered.map((r) => {
               const dur = r.finishedAt
                 ? Math.round((r.finishedAt.getTime() - r.startedAt.getTime()) / 1000)
                 : null;
@@ -294,6 +476,20 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                     )}
                   </td>
                   <td>
+                    {/* Tree-view indentation. Uses a poor-man's
+                        ASCII connector (└─ for the last child at
+                        each level, ├─ otherwise) rendered in a
+                        monospace span before the link. Keeps pure
+                        CSS padding simple and avoids a wrapping
+                        flex container per cell. */}
+                    {view === 'tree' && r.depth > 0 && (
+                      <span className="text-slate-400 font-mono text-xs select-none mr-1">
+                        {r.isLastAtDepth.slice(0, -1).map((last, i) => (
+                          <span key={i}>{last ? '   ' : '│  '}</span>
+                        ))}
+                        {r.isLastAtDepth[r.isLastAtDepth.length - 1] ? '└─ ' : '├─ '}
+                      </span>
+                    )}
                     {r.task ? (
                       <Link href={`/tasks/${r.task.id}`} className="underline">
                         {r.task.name}
@@ -301,6 +497,12 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                     ) : (
                       <span className="text-slate-400">(deleted)</span>
                     )}
+                  </td>
+                  <td>
+                    <TriggerBadge
+                      trigger={(r as unknown as { trigger?: string | null }).trigger ?? null}
+                      triggeredBy={(r as unknown as { triggeredBy?: string | null }).triggeredBy ?? null}
+                    />
                   </td>
                   <td className="text-xs font-mono text-slate-500">{r.task?.projectPath ?? '-'}</td>
                   <td className="text-xs">

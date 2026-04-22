@@ -423,11 +423,25 @@ export async function startTaskRunnerServer(
       let earlyRunId: string | null = null;
       startHeartbeat(`child task "${child.name}" running`);
 
+      // Trigger provenance: this dispatch is always 'mcp'. For the
+      // display tag we use the parent task's name so /runs can show
+      // "mcp by <parentTaskName>" at a glance (the full chain is
+      // walkable via parentRunId but that's a click away).
+      const parentTaskName = await db.taskRun
+        .findUnique({
+          where: { id: orchestratorRunId },
+          select: { task: { select: { name: true } } },
+        })
+        .then((r) => r?.task?.name ?? '(unknown)')
+        .catch(() => '(unknown)');
+
       const childFinished = runTask(child.id, {
         parentRunId: orchestratorRunId,
         runDepth: nextDepth,
         promptOverride,
         projectOverride,
+        trigger: 'mcp',
+        triggeredBy: parentTaskName,
         onRunCreated: (id) => {
           earlyRunId = id;
         },

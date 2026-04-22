@@ -593,10 +593,11 @@ export default function ProjectSettingsPage({
       <section className="rounded-md border border-red-300 dark:border-red-800 p-4 space-y-2 bg-red-50/30 dark:bg-red-950/10">
         <h2 className="text-xs uppercase tracking-wide text-red-600">Danger zone</h2>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          Deleting a project removes all its conversations, tasks,
-          runs and audits. Optionally removes the working copy too.
-          The destructive confirmation dialog lives on the global
-          projects list.
+          Deleting a project removes all its conversations, tasks
+          and run history. Optionally removes the working copy too.
+          Clicking the button below redirects to the global projects
+          list and opens the destructive confirmation dialog for this
+          project.
         </p>
         <button
           onClick={() => router.push(`/settings/projects?delete=${id}`)}

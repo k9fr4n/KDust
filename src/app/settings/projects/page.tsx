@@ -17,9 +17,9 @@
  * on every action button so clicking Sync or Delete does not
  * accidentally navigate away.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   RefreshCw, Trash2, Plus, Folder, LayoutDashboard,
   ArrowLeft, GitBranch, FolderOpen, X, Search,
@@ -56,6 +56,13 @@ function relativeTime(iso: string): string {
 
 export default function ProjectsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Auto-delete trigger from /settings/projects/[id] "Delete this
+  // project…" button, which redirects here with ?delete=<id>. Held
+  // in a ref to avoid double-firing across React Strict Mode double
+  // renders or re-mounts. Once we process a given id we write it
+  // here and never act on it again.
+  const autoDeleteFiredFor = useRef<string | null>(null);
   const [projects, setProjects] = useState<P[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -82,6 +89,26 @@ export default function ProjectsPage() {
     }
   };
   useEffect(() => { void refresh(); }, []);
+
+  // Honour `?delete=<id>` coming from the detail-page "Delete this
+  // project…" button. We wait for `projects` to be populated so we
+  // can resolve the name (needed for the confirm prompt) and then
+  // fire `remove` once. The URL param is stripped from history so a
+  // later refresh doesn't re-trigger the flow.
+  useEffect(() => {
+    const targetId = searchParams?.get('delete');
+    if (!targetId) return;
+    if (autoDeleteFiredFor.current === targetId) return;
+    if (projects.length === 0) return;
+    const victim = projects.find((p) => p.id === targetId);
+    if (!victim) return;
+    autoDeleteFiredFor.current = targetId;
+    // Strip the query param before confirm() so the browser history
+    // doesn't carry it forward and re-fire on a hard refresh.
+    router.replace('/settings/projects');
+    void remove(victim.id, victim.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, projects]);
 
   const resetForm = () => {
     setForm({ name: '', gitUrl: '', branch: 'main', description: '' });

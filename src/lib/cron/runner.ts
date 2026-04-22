@@ -46,6 +46,92 @@ export function cancelTaskRun(runId: string): boolean {
   return true;
 }
 
+/**
+ * Cascade cancellation (Franck 2026-04-22 23:37).
+ *
+ * Aborts the given run AND every descendant still running/pending in
+ * this process. Walks the `parentRunId` tree breadth-first via the
+ * DB so we catch children that were spawned by dispatch_task (whose
+ * lifetimes are not tied to the parent's await stack) and nested
+ * orchestrators.
+ *
+ * For each descendant:
+ *   - if it has an active AbortController in THIS process, abort it
+ *     (same path as a user-initiated cancel → ends as 'aborted')
+ *   - if it's marked 'running' in DB but not in memory (ghost row
+ *     from a previous process), mark it 'aborted' directly so the
+ *     /runs UI doesn't show a stuck spinner forever
+ *   - if it's 'pending' (scheduled but waiting on concurrency lock),
+ *     mark it 'aborted' directly — no controller has been created yet
+ *
+ * Returns the list of runIds that were signalled (either via AC or
+ * DB update) for logging/debugging.
+ *
+ * Idempotent: calling twice does nothing the second time because
+ * descendants will no longer be in 'running'/'pending'.
+ */
+export async function cancelRunCascade(
+  rootRunId: string,
+  reason: string = 'cancelled by parent',
+): Promise<string[]> {
+  const cancelled: string[] = [];
+  // BFS via the parentRunId index. Depth is bounded by MAX_DEPTH
+  // (default 10) so this is effectively O(descendants).
+  const queue: string[] = [rootRunId];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const ac = activeRuns.get(id);
+    if (ac) {
+      // Let the normal catch-block path mark the row as 'aborted'.
+      // (Note: the run's own ac.signal handler in runTask throws
+      // with { aborted: true } and the catch block writes
+      // status='aborted'.)
+      ac.abort();
+      cancelled.push(id);
+    } else {
+      // No in-memory controller. Either the row is a ghost (process
+      // restart) or the child is still 'pending' on a lock. Write a
+      // terminal status directly so UIs stop spinning.
+      const row = await db.taskRun.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (row && (row.status === 'running' || row.status === 'pending')) {
+        await db.taskRun.update({
+          where: { id },
+          data: {
+            status: 'aborted',
+            phase: 'done',
+            phaseMessage: reason,
+            error: reason,
+            finishedAt: new Date(),
+          },
+        });
+        cancelled.push(id);
+      }
+    }
+
+    // Enqueue descendants still worth visiting. We include
+    // terminal-status children intentionally EXCLUDED: their own
+    // children (if any) already finished when the parent did.
+    const kids = await db.taskRun.findMany({
+      where: { parentRunId: id, status: { in: ['running', 'pending'] } },
+      select: { id: true },
+    });
+    for (const k of kids) queue.push(k.id);
+  }
+  if (cancelled.length > 0) {
+    console.log(
+      `[cron] cascade cancel from ${rootRunId}: ${cancelled.length} run(s) aborted (${reason})`,
+    );
+  }
+  return cancelled;
+}
+
 export function isRunActive(runId: string): boolean {
   return activeRuns.has(runId);
 }
@@ -920,6 +1006,24 @@ export async function runTask(
       });
     }
     console.error(`[cron] ${wasAborted ? 'ABORTED' : 'FAILED'} job="${job.name}": ${msg}`);
+
+    // Cascade cancellation (Franck 2026-04-22 23:37):
+    // When a parent run ends in a non-success terminal state, any
+    // descendant still running/pending should not keep working on
+    // behalf of a dead orchestrator. This matters most for
+    // dispatch_task children (fire-and-forget) whose lifetime is
+    // NOT tied to the parent's await stack.
+    //
+    // Fire-and-forget the cascade itself so the `finally` block
+    // below still releases locks promptly. The cascade does its
+    // own DB work with per-row atomic updates; no need to await.
+    void cancelRunCascade(run.id, `parent run ended with status=${terminalStatus}`).catch(
+      (cascadeErr) => {
+        console.warn(
+          `[cron] cascade cancel from ${run.id} raised: ${(cascadeErr as Error)?.message ?? cascadeErr}`,
+        );
+      },
+    );
   } finally {
     // Always release the per-task lock so the next scheduler fire (or
     // a manual /runs trigger) can proceed. Safe even if the try-block

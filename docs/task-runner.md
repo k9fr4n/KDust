@@ -357,6 +357,29 @@ env KDUST_MAX_RUN_DEPTH  (default 10)
 When the limit is reached, the dispatch is refused with a clear
 error so runaway recursion (A → B → A) terminates after 10 runs.
 
+### Cascade cancellation (parent-dies-children-die)
+
+When a parent run ends in a non-success terminal state (`failed`,
+`aborted`) or is cancelled by the user via
+`POST /api/taskruns/:id/cancel`, KDust cascades the cancellation to
+every descendant still `running` or `pending`:
+
+- Descendants with a live `AbortController` in this process are
+  aborted (normal `'aborted'` path, catch-block writes the row).
+- Descendants marked `running` in DB but without an in-memory
+  controller (ghost rows from a process restart) are flipped to
+  `'aborted'` directly.
+- Descendants still `pending` on the per-project concurrency lock
+  (queued but not started) are likewise flipped to `'aborted'` so
+  they never start.
+
+Walk is BFS through `parentRunId`, bounded by `MAX_DEPTH`, so it's
+effectively O(descendants). Same behaviour for `dispatch_task`
+children whose lifetime is otherwise NOT tied to the parent's
+await stack \u2014 that's the main motivation.
+
+See `cancelRunCascade()` in `src/lib/cron/runner.ts`.
+
 ### Per-project concurrency lock
 
 `runTask` acquires a per-project mutex before touching the working

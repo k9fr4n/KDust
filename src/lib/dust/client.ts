@@ -112,6 +112,39 @@ export async function getDustClient(): Promise<{
   // mutation of _options.apiKey via startTokenRefreshWatchdog). The
   // watchdog is kept as a compatibility shim returning a no-op cleanup
   // function \u2014 call sites that still invoke it don\u0027t need to change.
+  // We wrap the SDK's error channel to downgrade cooperative-
+  // cancellation chatter to a one-liner info log. When the caller
+  // aborts an SSE stream (user clicks "Stop" → /api/taskruns/:id/
+  // cancel fires AbortController.abort()), the SDK's event-stream
+  // loop catches the resulting AbortError, calls
+  //   logger.error({ error: e }, "Failed processing event stream")
+  // THEN checks `signal.aborted` and returns silently. So the error
+  // is logged even though it's the normal abort path. We detect the
+  // shape (AbortError + that exact message) and demote it to a
+  // console.log one-liner; everything else keeps the full error path.
+  const smartErrorLogger = (first: unknown, ...rest: unknown[]) => {
+    try {
+      const msg =
+        typeof rest[0] === 'string'
+          ? rest[0]
+          : typeof first === 'string'
+            ? first
+            : '';
+      const errObj = (first as any)?.error ?? first;
+      const isAbort =
+        errObj?.name === 'AbortError' ||
+        errObj?.code === 20 ||
+        /aborted/i.test(String(errObj?.message ?? ''));
+      if (isAbort && /event stream/i.test(msg)) {
+        console.log('[dust/sdk] event stream aborted by caller (cooperative cancel)');
+        return;
+      }
+    } catch {
+      /* fall through to plain error log */
+    }
+    console.error(first, ...rest);
+  };
+
   const client = new DustAPI(
     { url },
     {
@@ -125,8 +158,8 @@ export async function getDustClient(): Promise<{
         'X-Dust-CLI-Version': DUST_CLI_VERSION,
       },
     } as any,
-    // logger
-    { error: console.error, info: console.log } as any,
+    // logger — `error` is wrapped to demote AbortError chatter.
+    { error: smartErrorLogger, info: console.log } as any,
   );
 
   // ---------------------------------------------------------------

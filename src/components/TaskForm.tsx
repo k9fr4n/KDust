@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { TaskSecretBindings } from '@/components/TaskSecretBindings';
+import { TaskSecretBindings, type BindingDraft } from '@/components/TaskSecretBindings';
 
 export type CronFormValues = {
   name: string;
@@ -139,6 +139,12 @@ export function TaskForm({
     }
   }, [isEdit]);
 
+  // Secret bindings drafted on the /tasks/new page (deferred mode
+  // of TaskSecretBindings). Flushed via /api/tasks/:id/secrets once
+  // the task row has been created. In edit mode the child component
+  // persists directly and this state is unused.
+  const [pendingBindings, setPendingBindings] = useState<BindingDraft[]>([]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
@@ -155,8 +161,8 @@ export function TaskForm({
         teamsWebhook: form.teamsWebhook || null,
       }),
     });
-    setLoading(false);
     if (!res.ok) {
+      setLoading(false);
       try {
         setErr(JSON.stringify((await res.json()).error));
       } catch {
@@ -164,6 +170,54 @@ export function TaskForm({
       }
       return;
     }
+
+    // Create-mode only: flush the pending secret bindings now that we
+    // have the new task id. One POST per binding — non-batched so that
+    // partial failures (eg. deleted secret name) are reported but don't
+    // wipe sibling bindings. Any failure here surfaces the task id so
+    // the user can finish the wiring from /tasks/:id/edit.
+    if (!isEdit && pendingBindings.length > 0) {
+      let created: { task?: { id?: string } };
+      try {
+        created = await res.json();
+      } catch {
+        created = {};
+      }
+      const newId = created.task?.id;
+      if (!newId) {
+        setLoading(false);
+        setErr('Task created but the server response lacked an id — open the task to finish wiring secret bindings.');
+        return;
+      }
+      const failures: string[] = [];
+      for (const b of pendingBindings) {
+        const bRes = await fetch(
+          `/api/tasks/${encodeURIComponent(newId)}/secrets`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(b),
+          },
+        );
+        if (!bRes.ok) {
+          const j = await bRes.json().catch(() => ({}));
+          failures.push(`${b.envName} ← ${b.secretName}: ${j.error ?? `HTTP ${bRes.status}`}`);
+        }
+      }
+      if (failures.length > 0) {
+        setLoading(false);
+        setErr(
+          `Task created but ${failures.length} secret binding(s) failed:\n` +
+            failures.join('\n') +
+            `\nFinish the wiring from /tasks/${newId}/edit.`,
+        );
+        router.push(`/tasks/${newId}/edit`);
+        router.refresh();
+        return;
+      }
+    }
+
+    setLoading(false);
     router.push(isEdit ? `/tasks/${cronId}` : '/tasks');
     router.refresh();
   };
@@ -459,23 +513,28 @@ export function TaskForm({
           </span>
         </label>
 
-        {/* Secret env bindings (Franck 2026-04-21 22:00).
-            Only meaningful when command-runner is enabled AND the
-            task already exists in DB (a binding has no home without
-            taskId). Keeps the UI honest: we don't invite the user
-            to configure something that can't be persisted yet. */}
-        {isEdit && cronId && form.commandRunnerEnabled && (
+        {/* Secret env bindings (Franck 2026-04-21 22:00 + deferred
+            mode 2026-04-22 17:50). Shown whenever the command-runner
+            is enabled:
+              - edit mode  → persisted, mutates /api/tasks/:id/secrets
+              - new mode   → deferred, local state flushed after the
+                             task row is created (see submit() above)
+            When command-runner is off we swap in a hint so the user
+            doesn't wonder where the bindings went. */}
+        {form.commandRunnerEnabled && isEdit && cronId && (
           <TaskSecretBindings taskId={cronId} />
         )}
-        {isEdit && cronId && !form.commandRunnerEnabled && (
+        {form.commandRunnerEnabled && !isEdit && (
+          <TaskSecretBindings
+            deferred
+            initialBindings={pendingBindings}
+            onBindingsChange={setPendingBindings}
+          />
+        )}
+        {!form.commandRunnerEnabled && (
           <p className="mt-2 text-xs text-slate-400 italic">
             Enable the command-runner above to unlock secret env
             bindings for this task.
-          </p>
-        )}
-        {!isEdit && form.commandRunnerEnabled && (
-          <p className="mt-2 text-xs text-slate-400 italic">
-            Save the task first to bind secret env vars.
           </p>
         )}
       </fieldset>

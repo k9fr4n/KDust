@@ -3,11 +3,16 @@
 // src/components/TaskSecretBindings.tsx
 //
 // Inline editor for the TaskSecret bindings of a single task
-// (Franck 2026-04-21 22:00). Rendered by TaskForm in edit mode only
-// (a taskId is required to persist a binding). SWRs the list of
-// existing bindings AND the list of available secrets so the dropdown
-// reflects whatever was created in /settings/secrets without a page
-// reload.
+// (Franck 2026-04-21 22:00, deferred mode 2026-04-22 17:50).
+//
+// Two modes:
+//   - Persisted (default, used on /tasks/:id/edit). A taskId is
+//     required; add / remove calls hit /api/tasks/:id/secrets and the
+//     list refreshes from the server.
+//   - Deferred (used on /tasks/new). No taskId yet: the component
+//     maintains its bindings in local state and reports them upward
+//     via `onBindingsChange`. TaskForm flushes them by issuing one
+//     POST per binding right after the task row is created.
 //
 // Intentionally no display of values here — this component is only
 // about WHICH secret fills WHICH env var. The value editor lives in
@@ -17,28 +22,67 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2, KeyRound, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 
-interface Binding {
-  id: number;
+export interface BindingDraft {
   envName: string;
   secretName: string;
+}
+interface Binding extends BindingDraft {
+  id: number;
 }
 interface SecretOpt {
   name: string;
   description: string | null;
 }
 
-export function TaskSecretBindings({ taskId }: { taskId: string }) {
-  const [bindings, setBindings] = useState<Binding[] | null>(null);
+interface Props {
+  /** Required in persisted mode. Ignored in deferred mode. */
+  taskId?: string;
+  /**
+   * When true, skip the bindings fetch, keep state local, and report
+   * every change to the parent via `onBindingsChange`. The parent is
+   * responsible for flushing to /api/tasks/:id/secrets once the task
+   * row exists.
+   */
+  deferred?: boolean;
+  initialBindings?: BindingDraft[];
+  onBindingsChange?: (b: BindingDraft[]) => void;
+}
+
+export function TaskSecretBindings({
+  taskId,
+  deferred = false,
+  initialBindings,
+  onBindingsChange,
+}: Props) {
+  const [bindings, setBindings] = useState<Binding[] | null>(
+    deferred
+      ? (initialBindings ?? []).map((b, i) => ({ id: -1 - i, ...b }))
+      : null,
+  );
   const [secrets, setSecrets] = useState<SecretOpt[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Draft row for adding a new binding.
   const [draftEnv, setDraftEnv] = useState('');
   const [draftSecret, setDraftSecret] = useState('');
 
+  // Bubble current bindings up on every change in deferred mode so
+  // the parent form can flush them after save.
+  function publish(next: Binding[]) {
+    if (deferred) onBindingsChange?.(next.map(({ envName, secretName }) => ({ envName, secretName })));
+  }
+
   async function reload() {
     try {
+      if (deferred) {
+        // Only fetch the secrets list; bindings are local.
+        const sRes = await fetch('/api/secrets', { cache: 'no-store' });
+        if (!sRes.ok) throw new Error(`secrets HTTP ${sRes.status}`);
+        const sJ = await sRes.json();
+        setSecrets((sJ.secrets ?? []).map((s: any) => ({ name: s.name, description: s.description })));
+        return;
+      }
       const [bRes, sRes] = await Promise.all([
-        fetch(`/api/tasks/${encodeURIComponent(taskId)}/secrets`, { cache: 'no-store' }),
+        fetch(`/api/tasks/${encodeURIComponent(taskId!)}/secrets`, { cache: 'no-store' }),
         fetch('/api/secrets', { cache: 'no-store' }),
       ]);
       if (!bRes.ok) throw new Error(`bindings HTTP ${bRes.status}`);
@@ -55,7 +99,7 @@ export function TaskSecretBindings({ taskId }: { taskId: string }) {
   useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [taskId, deferred]);
 
   async function addBinding() {
     setError(null);
@@ -63,7 +107,22 @@ export function TaskSecretBindings({ taskId }: { taskId: string }) {
       setError('Pick both an env var name and a secret.');
       return;
     }
-    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/secrets`, {
+    if ((bindings ?? []).some((b) => b.envName === draftEnv)) {
+      setError(`Env var "${draftEnv}" is already bound; remove it first.`);
+      return;
+    }
+    if (deferred) {
+      const next: Binding[] = [
+        ...(bindings ?? []),
+        { id: -(Date.now()), envName: draftEnv, secretName: draftSecret },
+      ];
+      setBindings(next);
+      publish(next);
+      setDraftEnv('');
+      setDraftSecret('');
+      return;
+    }
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId!)}/secrets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ envName: draftEnv, secretName: draftSecret }),
@@ -80,8 +139,14 @@ export function TaskSecretBindings({ taskId }: { taskId: string }) {
 
   async function removeBinding(envName: string) {
     setError(null);
+    if (deferred) {
+      const next = (bindings ?? []).filter((b) => b.envName !== envName);
+      setBindings(next);
+      publish(next);
+      return;
+    }
     const res = await fetch(
-      `/api/tasks/${encodeURIComponent(taskId)}/secrets/${encodeURIComponent(envName)}`,
+      `/api/tasks/${encodeURIComponent(taskId!)}/secrets/${encodeURIComponent(envName)}`,
       { method: 'DELETE' },
     );
     if (!res.ok) {
@@ -111,6 +176,12 @@ export function TaskSecretBindings({ taskId }: { taskId: string }) {
         value is injected into the child process' environment.
         The agent never sees the value.
       </p>
+      {deferred && (
+        <p className="text-xs text-amber-700 dark:text-amber-400 italic">
+          These bindings will be persisted right after the task is
+          created. Nothing leaves the browser until you hit Save.
+        </p>
+      )}
       {error && (
         <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
       )}

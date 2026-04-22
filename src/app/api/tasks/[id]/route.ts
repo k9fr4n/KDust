@@ -65,8 +65,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       issues.push('schedule must be "manual" for a generic task');
     if (effective.pushEnabled)
       issues.push('pushEnabled must be false for a generic task');
-    if (effective.taskRunnerEnabled)
-      issues.push('taskRunnerEnabled must be false for a generic task');
+    // taskRunnerEnabled is allowed on generic tasks since Franck
+    // 2026-04-22 19:47 (reusable orchestration templates). See the
+    // matching comment in POST /api/tasks for the rationale.
     if (issues.length > 0) {
       return NextResponse.json(
         { error: `generic task invariants violated: ${issues.join('; ')}` },

@@ -97,13 +97,12 @@ const TaskInput = z.object({
         message: 'generic tasks must have pushEnabled=false (no git pipeline without a project)',
       });
     }
-    if (v.taskRunnerEnabled) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['taskRunnerEnabled'],
-        message: 'generic tasks cannot be orchestrators (they are leaves, not roots)',
-      });
-    }
+    // Generic orchestrators are allowed (Franck 2026-04-22 19:47).
+    // A generic task invoked with a project argument carries the
+    // override all the way down: nested run_task calls inherit the
+    // orchestrator's resolved project (see task-runner-server.ts).
+    // MAX_DEPTH still bounds the chain. The previous refusal
+    // blocked legitimate reusable orchestration templates.
   }
 });
 

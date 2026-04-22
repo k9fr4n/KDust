@@ -339,12 +339,17 @@ export function TaskForm({
               checked={form.projectPath === null}
               onChange={(e) => {
                 if (e.target.checked) {
+                  // Generic task: force schedule=manual (no cron
+                  // context) and pushEnabled=false (no git pipeline
+                  // without a project). taskRunnerEnabled is PRESERVED
+                  // since 2026-04-22 19:47 — a generic orchestrator
+                  // (reusable pipeline template) is now a legit use
+                  // case.
                   setForm({
                     ...form,
                     projectPath: null,
                     schedule: 'manual',
                     pushEnabled: false,
-                    taskRunnerEnabled: false,
                   });
                 } else {
                   setForm({ ...form, projectPath: '', pushEnabled: true });

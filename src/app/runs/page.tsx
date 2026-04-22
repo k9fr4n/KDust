@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import {
@@ -9,11 +10,10 @@ import {
   Bot,
   User,
   CalendarClock,
-  List,
-  Network,
 } from 'lucide-react';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { ClickableRunRow } from '@/components/ClickableRunRow';
+import { RunsViewToggle } from '@/components/RunsViewToggle';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -124,7 +124,20 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
-  const view: ViewMode = sp.view === 'tree' ? 'tree' : 'flat';
+  // View preference resolution (Franck 2026-04-22 20:48):
+  //   explicit ?view=… wins → otherwise fall back to the
+  //   `kdust_runs_view` cookie set by the RunsViewToggle → otherwise
+  //   default to flat. This makes "Runs" in the sidebar (a bare
+  //   /runs link with no params) honour the user's last pick.
+  const cookieView = (await cookies()).get('kdust_runs_view')?.value;
+  const view: ViewMode =
+    sp.view === 'tree'
+      ? 'tree'
+      : sp.view === 'flat'
+        ? 'flat'
+        : cookieView === 'tree'
+          ? 'tree'
+          : 'flat';
   const currentProject = await getCurrentProjectName();
 
   // Free-text search across the fields users most commonly want to find
@@ -337,31 +350,17 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           )}
         </span>
         {/* View mode toggle (flat list vs run-tree with indentation
-            and parent links). The tree view auto-fetches missing
-            ancestors so a child row whose parent was filtered out
-            still renders under its real parent. */}
-        <div className="inline-flex rounded border border-slate-300 dark:border-slate-700 overflow-hidden text-xs">
-          <Link
-            href={buildHref({ view: 'flat' })}
-            className={`px-2 py-1 inline-flex items-center gap-1 ${
-              view === 'flat'
-                ? 'bg-slate-200 dark:bg-slate-800 font-semibold'
-                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <List size={12} /> Flat
-          </Link>
-          <Link
-            href={buildHref({ view: 'tree' })}
-            className={`px-2 py-1 inline-flex items-center gap-1 border-l border-slate-300 dark:border-slate-700 ${
-              view === 'tree'
-                ? 'bg-slate-200 dark:bg-slate-800 font-semibold'
-                : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <Network size={12} /> Tree
-          </Link>
-        </div>
+            and parent links). Writes a `kdust_runs_view` cookie so
+            the choice persists when the user navigates back to
+            /runs via the sidebar (which links to a bare /runs path
+            with no query params). The tree view auto-fetches
+            missing ancestors so a child row whose parent was
+            filtered out still renders under its real parent. */}
+        <RunsViewToggle
+          current={view}
+          flatHref={buildHref({ view: 'flat' })}
+          treeHref={buildHref({ view: 'tree' })}
+        />
       </div>
 
       {/* Search */}

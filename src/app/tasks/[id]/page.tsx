@@ -59,7 +59,7 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
           >
             <Pencil size={14} /> Edit
           </Link>
-          <TaskDeleteButton id={cron.id} name={cron.name} />
+          <TaskDeleteButton id={cron.id} name={cron.name} mandatory={cron.mandatory} />
         </div>
       </div>
       <p className="text-sm text-slate-500 mb-4">

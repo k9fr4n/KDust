@@ -30,6 +30,47 @@ import {
 const activeRuns = new Map<string, AbortController>();
 
 /**
+ * Structured abort reason (Franck 2026-04-23 00:01). Passed to
+ * `AbortController.abort(reason)` at every cancel site so the
+ * catch-block in runTask can produce a faithful status line
+ * instead of the old hardcoded "run aborted by user" — which was
+ * misleading for cascade-triggered or timeout aborts.
+ *
+ * Surfaced through:
+ *   - TaskRun.phaseMessage (what the UI shows on /runs)
+ *   - TaskRun.error (long-form, full context)
+ *   - Teams card subtitle
+ */
+export type AbortReason =
+  | { kind: 'user' }                    // POST /api/taskruns/:id/cancel
+  | { kind: 'cascade'; parentRunId: string; parentStatus: string; note?: string }
+  | { kind: 'timeout'; ms: number };   // internal 10-min killTimer
+
+/** Build a short human string for a reason (used in phaseMessage). */
+function abortReasonSummary(r: AbortReason | undefined): string {
+  if (!r) return 'Aborted';
+  if (r.kind === 'user') return 'Aborted by user';
+  if (r.kind === 'cascade')
+    return `Aborted (cascade from parent ${r.parentRunId.slice(-6)}, parent=${r.parentStatus})`;
+  if (r.kind === 'timeout') return `Aborted (${Math.round(r.ms / 1000)}s timeout)`;
+  return 'Aborted';
+}
+
+/** Build the long-form error string (used in TaskRun.error). */
+function abortReasonDetail(r: AbortReason | undefined): string {
+  if (!r) return 'run aborted';
+  if (r.kind === 'user') return 'run aborted by user';
+  if (r.kind === 'cascade')
+    return (
+      `run aborted (cascade) \u2014 parent run ${r.parentRunId} ended with ` +
+      `status=${r.parentStatus}` +
+      (r.note ? `; ${r.note}` : '')
+    );
+  if (r.kind === 'timeout') return `run aborted: exceeded ${r.ms}ms wall-clock timeout`;
+  return 'run aborted';
+}
+
+/**
  * Separate tracker indexed by **Task id** (not TaskRun id). Updated
  * on the hot paths where we also touch `activeRuns`. Lets the
  * scheduler cheaply short-circuit a fire when a previous run of the
@@ -39,10 +80,13 @@ const activeRuns = new Map<string, AbortController>();
 const activeTaskIds = new Set<string>();
 
 /** Abort an in-flight run. Returns true if the runId was active. */
-export function cancelTaskRun(runId: string): boolean {
+export function cancelTaskRun(
+  runId: string,
+  reason: AbortReason = { kind: 'user' },
+): boolean {
   const ac = activeRuns.get(runId);
   if (!ac) return false;
-  ac.abort();
+  ac.abort(reason);
   return true;
 }
 
@@ -73,6 +117,7 @@ export function cancelTaskRun(runId: string): boolean {
 export async function cancelRunCascade(
   rootRunId: string,
   reason: string = 'cancelled by parent',
+  abortReason?: AbortReason,
 ): Promise<string[]> {
   const cancelled: string[] = [];
   // BFS via the parentRunId index. Depth is bounded by MAX_DEPTH
@@ -87,10 +132,11 @@ export async function cancelRunCascade(
     const ac = activeRuns.get(id);
     if (ac) {
       // Let the normal catch-block path mark the row as 'aborted'.
-      // (Note: the run's own ac.signal handler in runTask throws
-      // with { aborted: true } and the catch block writes
-      // status='aborted'.)
-      ac.abort();
+      // The `reason` payload is read by the catch-block via
+      // ac.signal.reason so phaseMessage / error / Teams card can
+      // explain WHY (cascade vs user vs timeout) instead of the
+      // old hardcoded "run aborted by user".
+      ac.abort(abortReason ?? { kind: 'user' });
       cancelled.push(id);
     } else {
       // No in-memory controller. Either the row is a ghost (process
@@ -632,7 +678,11 @@ export async function runTask(
     const ac = new AbortController();
     // Register so the HTTP cancel endpoint can abort from outside this scope.
     activeRuns.set(run.id, ac);
-    const killTimer = setTimeout(() => ac.abort(), 10 * 60 * 1000);
+    const KILL_TIMER_MS = 10 * 60 * 1000;
+    const killTimer = setTimeout(
+      () => ac.abort({ kind: 'timeout', ms: KILL_TIMER_MS } satisfies AbortReason),
+      KILL_TIMER_MS,
+    );
     let streamErr: string | null = null;
 
     // Periodically flush the partial agent output to DB so the /tasks/:id
@@ -673,7 +723,11 @@ export async function runTask(
       activeRuns.delete(run.id);
     }
     if (ac.signal.aborted) {
-      throw Object.assign(new Error('run aborted by user'), { aborted: true });
+      const reason = ac.signal.reason as AbortReason | undefined;
+      throw Object.assign(new Error(abortReasonDetail(reason)), {
+        aborted: true,
+        abortReason: reason,
+      });
     }
     if (streamErr) throw new Error(`agent stream error: ${streamErr}`);
     if (!agentText.trim()) agentText = '(agent returned an empty response)';
@@ -971,14 +1025,18 @@ export async function runTask(
     console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
   } catch (err) {
     const wasAborted = !!(err as { aborted?: boolean })?.aborted;
+    const abortReason = (err as { abortReason?: AbortReason })?.abortReason;
     const msg = err instanceof Error ? err.message : String(err);
     const terminalStatus = wasAborted ? 'aborted' : 'failed';
+    const abortSummary = wasAborted ? abortReasonSummary(abortReason) : null;
     await db.taskRun.update({
       where: { id: run.id },
       data: {
         status: terminalStatus,
         phase: 'done',
-        phaseMessage: wasAborted ? 'Aborted by user' : `Failed: ${msg.slice(0, 120)}`,
+        phaseMessage: wasAborted
+          ? abortSummary ?? 'Aborted'
+          : `Failed: ${msg.slice(0, 120)}`,
         error: msg,
         branch,
         commitSha,
@@ -996,7 +1054,9 @@ export async function runTask(
     if (webhook) {
       await postToTeams(webhook, {
         title: `${wasAborted ? '⏹️' : '❌'} KDust cron : ${job.name}`,
-        summary: wasAborted ? `Aborted on ${effectiveProjectPath}` : `Failed on ${effectiveProjectPath}`,
+        summary: wasAborted
+          ? `${abortSummary ?? 'Aborted'} on ${effectiveProjectPath}`
+          : `Failed on ${effectiveProjectPath}`,
         status: 'failed',
         details: msg,
         facts: branch ? [
@@ -1017,7 +1077,11 @@ export async function runTask(
     // Fire-and-forget the cascade itself so the `finally` block
     // below still releases locks promptly. The cascade does its
     // own DB work with per-row atomic updates; no need to await.
-    void cancelRunCascade(run.id, `parent run ended with status=${terminalStatus}`).catch(
+    void cancelRunCascade(
+      run.id,
+      `parent run ended with status=${terminalStatus}`,
+      { kind: 'cascade', parentRunId: run.id, parentStatus: terminalStatus },
+    ).catch(
       (cascadeErr) => {
         console.warn(
           `[cron] cascade cancel from ${run.id} raised: ${(cascadeErr as Error)?.message ?? cascadeErr}`,

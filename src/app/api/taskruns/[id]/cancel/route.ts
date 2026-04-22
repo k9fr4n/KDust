@@ -1,27 +1,23 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { cancelRunCascade } from '@/lib/cron/runner';
+import { cancelTaskRun, cancelRunCascade } from '@/lib/cron/runner';
 
 export const runtime = 'nodejs';
 
 /**
  * POST /api/taskruns/:id/cancel
  *
- * Abort an in-flight TaskRun and cascade the abort to every
- * descendant still running or pending.
+ * Abort an in-flight TaskRun. Cascades to descendants via the
+ * target's own catch-block, which triggers cancelRunCascade with a
+ * 'cascade' abort reason. That way, each row gets an accurate
+ * phaseMessage:
+ *   - the target: "Aborted by user"
+ *   - descendants: "Aborted (cascade from parent X, parent=aborted)"
  *
- * Cascade semantics (Franck 2026-04-22 23:37): cancelling a parent
- * MUST propagate to its children. Otherwise a fan-out orchestrator
- * that gets cancelled leaves its fire-and-forget children churning
- * in the background with no parent expecting their results \u2014 wasted
- * tokens and wasted branches.
- *
- * Response shape:
- *   { ok: true, cancelled: string[], ghost?: boolean }
- *   - cancelled: run ids that were actually signalled (the target
- *     plus any descendants still live)
- *   - ghost: true when the target had no in-memory controller and
- *     was marked aborted directly in DB (process restart case).
+ * Ghost fallback: when the target has no live AbortController
+ * (stale row from a previous process, or 'pending' on a lock), we
+ * walk the DB directly via cancelRunCascade and flip everything to
+ * 'aborted' with a cascade reason for descendants.
  */
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
@@ -31,15 +27,25 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json({ error: 'not_running', status: run.status }, { status: 409 });
   }
 
-  // cancelRunCascade handles both the live-controller and ghost-row
-  // paths internally, so the route stays a thin wrapper.
+  // Preferred path: abort the live controller. The target's
+  // runTask catch-block handles its own row (status='aborted',
+  // phaseMessage='Aborted by user') and fires cancelRunCascade
+  // for descendants with the correct 'cascade' reason.
+  const ok = cancelTaskRun(id, { kind: 'user' });
+  if (ok) {
+    return NextResponse.json({ ok: true, ghost: false });
+  }
+
+  // Ghost path: no live controller. Write a terminal row for the
+  // target AND propagate to descendants with a cascade reason.
   const cancelled = await cancelRunCascade(
     id,
-    'aborted by user (cascade)',
+    'aborted by user (ghost row, no live controller)',
+    { kind: 'cascade', parentRunId: id, parentStatus: 'aborted' },
   );
-
   return NextResponse.json({
     ok: true,
+    ghost: true,
     cancelled,
     count: cancelled.length,
   });

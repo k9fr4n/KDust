@@ -54,7 +54,21 @@ function relativeTime(iso: string): string {
   return `${Math.floor(mo / 12)}y ago`;
 }
 
+/**
+ * Next 15 mandates a Suspense boundary around any client component
+ * calling useSearchParams() so the static-export pre-render can bail
+ * that subtree to CSR cleanly. The wrapper is kept trivial; all the
+ * logic lives in ProjectsPageInner below.
+ */
 export default function ProjectsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProjectsPageInner />
+    </Suspense>
+  );
+}
+
+function ProjectsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Auto-delete trigger from /settings/projects/[id] "Delete this
@@ -504,22 +518,6 @@ export default function ProjectsPage() {
                   </button>
                   <button
                     className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                    onClick={(e) => { e.stopPropagation(); void remove(p.id, p.name); }}
-                    title="Delete project"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        )
-      )}
-    </div>
-  );
-}
-d-600 hover:bg-red-50 dark:hover:bg-red-950/30"
                     onClick={(e) => { e.stopPropagation(); void remove(p.id, p.name); }}
                     title="Delete project"
                   >

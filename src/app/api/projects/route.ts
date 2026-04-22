@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
-import { provisionAuditCrons } from '@/lib/audit/provision';
 
 export const runtime = 'nodejs';
 // A fresh clone can easily take 30-90s on large repos; Next.js default
@@ -102,18 +101,10 @@ export async function POST(req: Request) {
     );
   }
 
-  // Provision the 5 mandatory weekly advisory tasks (security, performance,
-  // code_quality, improvement, documentation). Idempotent and non-blocking
-  // from the user's POV — a provisioning failure (eg. Dust disconnected)
-  // logs a warning but doesn't void the clone.
-  try {
-    await provisionAuditCrons(project.name);
-  } catch (err) {
-    console.warn(
-      `[projects/POST] audit cron provisioning failed for "${project.name}":`,
-      err instanceof Error ? err.message : err,
-    );
-  }
+  // Audit task auto-provisioning was removed on 2026-04-22. Audits are
+  // now handled via user-created generic tasks invoked per project by
+  // an orchestrator (run_task(project=...)). New projects are shipped
+  // empty — the user wires them up from /tasks/new.
 
   return NextResponse.json({ project: updated, output: res.output }, { status: 201 });
 }

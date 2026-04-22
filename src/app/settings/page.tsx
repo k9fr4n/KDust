@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import {
   Settings as SettingsIcon,
-  Lightbulb,
   BarChart3,
   ChevronRight,
   FolderGit2,
@@ -63,14 +62,6 @@ export default function SettingsIndex() {
         'Encrypted credentials injected as environment variables into command-runner tasks (GitHub tokens, cloud creds, ...). Values never reach the LLM.',
       icon: <KeyRound size={18} />,
       accent: 'text-rose-600 dark:text-rose-400',
-    },
-    {
-      href: '/settings/audits',
-      title: 'Audit Categories',
-      description:
-        'Weekly audit cron templates: prompts, schedules, add/remove categories.',
-      icon: <Lightbulb size={18} />,
-      accent: 'text-amber-600 dark:text-amber-400',
     },
     {
       href: '/settings/usage',

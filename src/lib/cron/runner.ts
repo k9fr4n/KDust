@@ -8,7 +8,7 @@ import {
   releaseTaskRunnerServer,
 } from '../mcp/registry';
 import { parseAuditOutput } from '../audit/parser';
-import { getAuditDefaultByKey } from '../audit/defaults';
+import { pointCategoryMeta } from '../audit/categories';
 import { resolveBranchPolicy, type ResolvedBranchPolicy } from '../branch-policy';
 import { resolveGitPlatform } from '../git-platform';
 import {
@@ -623,11 +623,11 @@ export async function runTask(
         `[cron/audit] success job="${job.name}" category=${job.category} points=${points.length} duration=${durationMs}ms`,
       );
       if (webhook) {
-        // Look up the human-readable label from the DB template so
-        // custom (user-added) categories render nicely too. Fall back
-        // to the slug if the template has since been deleted.
-        const tpl = await getAuditDefaultByKey(job.category);
-        const categoryLabel = tpl?.label ?? job.category;
+        // Audit category metadata now comes from the in-code registry
+        // (POINT_CATEGORIES). The user-editable AuditCategoryDefault
+        // table was removed along with the auto-provisioning subsystem
+        // on 2026-04-22. Unknown / legacy keys fall back gracefully.
+        const categoryLabel = pointCategoryMeta(job.category).label;
         await postToTeams(webhook, {
           title: `📋 KDust audit : ${categoryLabel} — ${project.name}`,
           summary: `${points.length} recommendation(s) generated`,

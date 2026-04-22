@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { listAuditDefaults } from '@/lib/audit/defaults';
+import { pointCategoryMeta } from '@/lib/audit/categories';
 
 export const runtime = 'nodejs';
 
@@ -12,27 +12,28 @@ export const runtime = 'nodejs';
  * list (max 5). Ordering is left to the client so it can re-sort
  * without roundtripping.
  *
- * Missing category templates are tolerated: we fall back to the
- * category key as label so an orphan audit row (template deleted)
- * still surfaces rather than disappearing silently.
+ * Label / emoji lookup uses the built-in POINT_CATEGORIES map
+ * (src/lib/audit/categories.ts) directly. Before 2026-04-22 this
+ * went through AuditCategoryDefault DB rows (user-editable prompt
+ * templates) but that subsystem was removed when audit tasks became
+ * user-created generic tasks — only the findings dashboard remains.
+ * Unknown / legacy keys are handled gracefully by pointCategoryMeta.
  */
 export async function GET() {
-  const [advices, projects, defaults] = await Promise.all([
+  const [advices, projects] = await Promise.all([
     db.projectAudit.findMany({ orderBy: { generatedAt: 'desc' } }),
     db.project.findMany({
       select: { id: true, name: true, gitUrl: true, branch: true },
     }),
-    listAuditDefaults(),
   ]);
 
   const projByName = new Map(projects.map((p) => [p.name, p]));
-  const tplByKey = new Map(defaults.map((d) => [d.key, d]));
 
   const items = advices
     .map((a) => {
       const proj = projByName.get(a.projectName);
       if (!proj) return null; // orphan (project deleted): skip
-      const tpl = tplByKey.get(a.category);
+      const meta = pointCategoryMeta(a.category);
 
       // v5 stored format: `{version:5, category, notes, points[]}`.
       // Tolerant decoder for anything else that may still be in DB
@@ -54,8 +55,8 @@ export async function GET() {
         projectId: proj.id,
         projectName: proj.name,
         category: a.category,
-        label: tpl?.label ?? a.category,
-        emoji: tpl?.emoji ?? '\uD83D\uDCCB',
+        label: meta.label,
+        emoji: meta.emoji,
         score: a.score ?? null,
         notes,
         generatedAt: a.generatedAt,

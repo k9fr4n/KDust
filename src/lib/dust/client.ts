@@ -128,5 +128,56 @@ export async function getDustClient(): Promise<{
     // logger
     { error: console.error, info: console.log } as any,
   );
+
+  // ---------------------------------------------------------------
+  // Retry wrapper around postMCPResults (Franck 2026-04-22 18:53).
+  //
+  // The SDK's DustMcpServerTransport.send() calls client.postMCPResults()
+  // exactly ONCE. When eu.dust.tt has a transient blip and returns
+  // an HTML 502/503/504 body, the Result is marked Err with
+  // `dustError.type === 'unexpected_response_format'` and the
+  // transport logs a scary "Failed to send MCP result" transport
+  // error, even though Dust itself recommends "try again in 30s".
+  //
+  // We wrap the method so that these retryable errors are silently
+  // re-tried with exponential backoff. Non-retryable errors (4xx
+  // auth/permission, invalid serverId) are returned on the first
+  // attempt so they surface immediately.
+  //
+  // Attempts: up to 4 (initial + 3 retries). Delays: 2s, 6s, 15s.
+  // Total worst-case latency added: ~23s, comfortably under the
+  // ~30s window Dust suggests.
+  // ---------------------------------------------------------------
+  const original = client.postMCPResults.bind(client);
+  (client as any).postMCPResults = async (args: any) => {
+    const delays = [2000, 6000, 15000];
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      const res = await original(args);
+      if (!res.isErr()) return res;
+      const err: any = res.error;
+      // Only retry on clearly-transient conditions. Everything else
+      // (auth error, schema error, unknown serverId) returns now so
+      // the caller can fail fast.
+      const status = err?.status;
+      const type = err?.dustError?.type ?? err?.type;
+      const isTransient =
+        (typeof status === 'number' && status >= 500 && status <= 599) ||
+        type === 'unexpected_response_format' ||
+        type === 'connection_error' ||
+        type === 'fetch_error';
+      if (!isTransient || attempt === delays.length) {
+        return res;
+      }
+      const delay = delays[attempt];
+      console.warn(
+        `[dust/client] postMCPResults transient error (attempt ${attempt + 1}/${delays.length + 1}): ` +
+          `status=${status ?? '?'} type=${type ?? '?'} — retrying in ${delay}ms`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+    // Unreachable (loop always returns), but keeps TS happy.
+    return original(args);
+  };
+
   return { client, workspaceId: stored.workspaceId };
 }

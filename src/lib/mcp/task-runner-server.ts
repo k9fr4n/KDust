@@ -3,11 +3,20 @@
  *
  * Purpose
  * -------
- * Exposes a single tool `run_task` to Dust agents running inside a
- * KDust task, enabling one "orchestrator" task to invoke other
- * tasks of the same project sequentially. No DAG engine, no YAML:
- * the orchestration logic lives entirely in the orchestrator
- * agent's prompt.
+ * Exposes three tools to Dust agents running inside a KDust task,
+ * enabling one "orchestrator" task to invoke other tasks:
+ *
+ *   - run_task       : synchronous dispatch; blocks until the child
+ *                      finishes or max_wait_ms expires (then returns
+ *                      {status:'pending', run_id} so the caller can
+ *                      wait_for_run later).
+ *   - wait_for_run   : re-await a pending / dispatched run by id.
+ *   - dispatch_task  : fire-and-forget; returns as soon as the child
+ *                      TaskRun row exists. Use for fan-out or when
+ *                      the result isn't needed inline.
+ *
+ * No DAG engine, no YAML: the orchestration logic lives entirely in
+ * the orchestrator agent's prompt.
  *
  * Design choices
  * --------------
@@ -17,10 +26,12 @@
  *    requiring the agent to pass a run_id arg (which would be
  *    hallucination-prone).
  *
- * 2. Sequential only. The tool is synchronous: it awaits the child
- *    run to completion before returning. This matches the current
- *    Dust-side limitation that multiple concurrent fs-cli sessions
- *    don't work reliably. Parallelism is explicitly OUT of scope.
+ * 2. Sequential BY DEFAULT, detached available. run_task awaits the
+ *    child to completion (or max_wait_ms). When the agent explicitly
+ *    wants fan-out it can use dispatch_task instead. Note that
+ *    parallel children still share the project's working tree, so
+ *    two writing tasks on the same project will serialize on the
+ *    per-project concurrency lock in runner.ts.
  *
  * 3. Scope = same project. Only tasks whose projectPath matches the
  *    orchestrator's project can be invoked. Cross-project chaining
@@ -186,6 +197,102 @@ export async function startTaskRunnerServer(
     };
   }
 
+  // Shared dispatch validation used by run_task and dispatch_task.
+  // Resolves the child task, enforces the project-arg contract,
+  // checks the depth limit. Returns either a ready-to-send error
+  // response (caller should propagate it verbatim) or the resolved
+  // triplet (child, projectOverride, nextDepth) the dispatcher
+  // needs. Keeps the two tools in lockstep on validation semantics.
+  async function validateDispatch(
+    taskRef: string,
+    projectArg: string | undefined,
+  ): Promise<
+    | {
+        ok: false;
+        response: {
+          content: { type: 'text'; text: string }[];
+          isError: true;
+        };
+      }
+    | {
+        ok: true;
+        child: NonNullable<Awaited<ReturnType<typeof resolveTaskForProject>>>;
+        projectOverride: string | undefined;
+        nextDepth: number;
+      }
+  > {
+    const err = (message: string) => ({
+      ok: false as const,
+      response: {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ status: 'failure', error: message }),
+          },
+        ],
+        isError: true as const,
+      },
+    });
+
+    const child = await resolveTaskForProject(projectName, taskRef);
+    if (!child) {
+      return err(`task not found in project "${projectName}": ${taskRef}`);
+    }
+    if (child.taskRunnerEnabled) {
+      console.log(
+        `[mcp/task-runner] dispatching nested orchestrator "${child.name}" ` +
+          `(child has taskRunnerEnabled=true; depth is bounded by MAX_DEPTH=${MAX_DEPTH})`,
+      );
+    }
+
+    let projectOverride: string | undefined;
+    if (child.isGeneric) {
+      if (!projectArg) {
+        return err(
+          `refused: task "${child.name}" is a generic template and requires a "project" argument to supply its run context.`,
+        );
+      }
+      const projRow = await db.project.findFirst({
+        where: { name: projectArg },
+        select: { name: true },
+      });
+      if (!projRow) {
+        return err(
+          `refused: unknown project "${projectArg}" (not declared in /settings/projects).`,
+        );
+      }
+      projectOverride = projRow.name;
+    } else if (projectArg) {
+      return err(
+        `refused: task "${child.name}" is bound to a specific project; the "project" argument is only allowed for generic (template) tasks.`,
+      );
+    }
+
+    const parent = await db.taskRun.findUnique({
+      where: { id: orchestratorRunId },
+      select: { runDepth: true },
+    });
+    const nextDepth = (parent?.runDepth ?? 0) + 1;
+    if (nextDepth > MAX_DEPTH) {
+      return err(
+        `max run depth exceeded (${nextDepth} > ${MAX_DEPTH}). Aborting to prevent runaway recursion.`,
+      );
+    }
+    return { ok: true, child, projectOverride, nextDepth };
+  }
+
+  // Lookup the parent task name once — both tools use it for the
+  // 'triggeredBy' provenance field on new child runs.
+  async function getParentTaskName(): Promise<string> {
+    return db.taskRun
+      .findUnique({
+        where: { id: orchestratorRunId },
+        select: { task: { select: { name: true } } },
+      })
+      .then((r) => r?.task?.name ?? '(unknown)')
+      .catch(() => '(unknown)');
+  }
+
   server.registerTool(
     'run_task',
     {
@@ -294,114 +401,9 @@ export async function startTaskRunnerServer(
       // Lazy import to avoid a module cycle (runner → registry → this file).
       const { runTask } = await import('../cron/runner');
 
-      // Resolve child task
-      const child = await resolveTaskForProject(projectName, taskRef);
-      if (!child) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                status: 'failure',
-                error: `task not found in project "${projectName}": ${taskRef}`,
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-      // Nested orchestrators are allowed (Franck 2026-04-22 19:41).
-      // The original policy refused any child with taskRunnerEnabled
-      // to prevent recursion, but MAX_DEPTH (default 10, env
-      // KDUST_MAX_RUN_DEPTH) is already the real safety net and the
-      // refusal blocks legitimate multi-level pipelines (e.g. a
-      // top-level "test" orchestrator dispatching an "Audit"
-      // orchestrator that itself dispatches sub-tasks). We just emit
-      // an info log so multi-level chains are easy to spot in logs.
-      if (child.taskRunnerEnabled) {
-        console.log(
-          `[mcp/task-runner] dispatching nested orchestrator "${child.name}" ` +
-            `(child has taskRunnerEnabled=true; depth is bounded by MAX_DEPTH=${MAX_DEPTH})`,
-        );
-      }
-
-      // Enforce the project-arg contract based on child kind.
-      //   - generic child  → project arg REQUIRED, must exist in Project table
-      //   - bound child    → project arg REJECTED (safety: no silent cross-project)
-      let projectOverride: string | undefined;
-      if (child.isGeneric) {
-        if (!projectArg) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  status: 'failure',
-                  error:
-                    `refused: task "${child.name}" is a generic template and requires ` +
-                    `a "project" argument to supply its run context.`,
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-        const projRow = await db.project.findFirst({
-          where: { name: projectArg },
-          select: { name: true },
-        });
-        if (!projRow) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  status: 'failure',
-                  error: `refused: unknown project "${projectArg}" (not declared in /settings/projects).`,
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-        projectOverride = projRow.name;
-      } else if (projectArg) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                status: 'failure',
-                error:
-                  `refused: task "${child.name}" is bound to a specific project; ` +
-                  `the "project" argument is only allowed for generic (template) tasks.`,
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Depth guard: walk the parentRunId chain starting at the orchestrator run.
-      const parent = await db.taskRun.findUnique({
-        where: { id: orchestratorRunId },
-        select: { runDepth: true },
-      });
-      const nextDepth = (parent?.runDepth ?? 0) + 1;
-      if (nextDepth > MAX_DEPTH) {
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                status: 'failure',
-                error: `max run depth exceeded (${nextDepth} > ${MAX_DEPTH}). Aborting to prevent runaway recursion.`,
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
+      const v = await validateDispatch(taskRef, projectArg);
+      if (!v.ok) return v.response;
+      const { child, projectOverride, nextDepth } = v;
 
       // Async dispatch (Franck 2026-04-22 20:26).
       // We race the child run against a budget (max_wait_ms, capped
@@ -425,15 +427,8 @@ export async function startTaskRunnerServer(
 
       // Trigger provenance: this dispatch is always 'mcp'. For the
       // display tag we use the parent task's name so /runs can show
-      // "mcp by <parentTaskName>" at a glance (the full chain is
-      // walkable via parentRunId but that's a click away).
-      const parentTaskName = await db.taskRun
-        .findUnique({
-          where: { id: orchestratorRunId },
-          select: { task: { select: { name: true } } },
-        })
-        .then((r) => r?.task?.name ?? '(unknown)')
-        .catch(() => '(unknown)');
+      // "mcp by <parentTaskName>" at a glance.
+      const parentTaskName = await getParentTaskName();
 
       const childFinished = runTask(child.id, {
         parentRunId: orchestratorRunId,
@@ -674,6 +669,170 @@ export async function startTaskRunnerServer(
       } finally {
         if (hbId) clearInterval(hbId);
       }
+    },
+  );
+
+  // ---- NEW TOOL: dispatch_task -----------------------------------
+  // Fire-and-forget counterpart of run_task (Franck 2026-04-22 20:53).
+  //
+  // run_task holds the caller until the child finishes (or its
+  // max_wait_ms budget expires). Some pipelines legitimately want
+  // to launch N sibling tasks in parallel and move on without
+  // blocking — e.g. "kick off three independent audits across
+  // projects, I'll collect results later via wait_for_run or via
+  // /runs". That's what dispatch_task is for.
+  //
+  // Contract:
+  //   - Same validation as run_task (task resolution, project-arg
+  //     contract, MAX_DEPTH), so refusals are consistent.
+  //   - runTask() is started but NOT awaited: the tool returns as
+  //     soon as the TaskRun row is created (captured via the
+  //     onRunCreated callback added to runner.ts for async flows).
+  //   - A 5s safety budget bounds the wait for row creation in
+  //     case the runner is held on its concurrency lock; if the
+  //     budget expires we still return {status: 'dispatching',
+  //     run_id: null} with a hint so the agent can retry.
+  //   - The child keeps running in the background; use
+  //     wait_for_run({ run_id }) to collect its result later, or
+  //     the /runs UI for a visual view.
+  //
+  // Background execution survives the orchestrator's end: the
+  // MCP server is shut down when the orchestrator finishes, but
+  // runTask() has its own Dust client session and independent
+  // DB transactions.
+  server.registerTool(
+    'dispatch_task',
+    {
+      description:
+        `Launch another KDust task IN THE BACKGROUND and return ` +
+        `immediately — the orchestrator does NOT wait for the child to ` +
+        `finish. Use this when you want to fan out parallel work or ` +
+        `trigger a long task you don't need the result of right now. ` +
+        `\n\n` +
+        `If you DO need the result, either:\n` +
+        `  - call wait_for_run({ run_id }) later (blocks up to 55s per ` +
+        `    call, can be repeated), or\n` +
+        `  - use run_task instead (synchronous, returns the full ` +
+        `    structured result).\n` +
+        `\n` +
+        `Resolution scope, project-arg contract and depth guards are ` +
+        `IDENTICAL to run_task. The returned run_id can be fed to ` +
+        `wait_for_run at any time.`,
+      inputSchema: {
+        task: z
+          .string()
+          .min(1)
+          .describe('Task ID or exact name (case-insensitive).'),
+        input: z
+          .string()
+          .optional()
+          .describe('Override for the child task\'s stored prompt.'),
+        project: z
+          .string()
+          .optional()
+          .describe(
+            'Project context override. REQUIRED for generic tasks, REJECTED for project-bound tasks (same contract as run_task).',
+          ),
+      },
+    },
+    async (args) => {
+      const taskRef = args.task as string;
+      const promptOverride = (args.input as string | undefined) ?? undefined;
+      const projectArg = (args.project as string | undefined)?.trim() || undefined;
+
+      const { runTask } = await import('../cron/runner');
+
+      const v = await validateDispatch(taskRef, projectArg);
+      if (!v.ok) return v.response;
+      const { child, projectOverride, nextDepth } = v;
+
+      const parentTaskName = await getParentTaskName();
+
+      // Capture the run id as soon as the TaskRun row lands, then
+      // return. We DON'T await childFinished — it resolves whenever
+      // the actual agent run ends, possibly minutes/hours later.
+      let capturedRunId: string | null = null;
+      let rowReady: () => void = () => {};
+      const rowCreated = new Promise<void>((resolve) => {
+        rowReady = resolve;
+      });
+
+      const childFinished = runTask(child.id, {
+        parentRunId: orchestratorRunId,
+        runDepth: nextDepth,
+        promptOverride,
+        projectOverride,
+        trigger: 'mcp',
+        triggeredBy: parentTaskName,
+        onRunCreated: (id) => {
+          capturedRunId = id;
+          rowReady();
+        },
+      });
+      // Swallow any rejection so an unhandledRejection doesn't
+      // crash the server. Errors will show up as a 'failed' status
+      // on the child run row.
+      childFinished.catch((err) => {
+        console.warn(
+          `[mcp/task-runner] detached runTask for "${child.name}" rejected: ${(err as Error)?.message ?? err}`,
+        );
+      });
+
+      // Bounded wait for the row to exist (typically <50ms, but the
+      // runner can be held on its per-project concurrency lock for
+      // longer). 5s is plenty before we bail with a descriptive
+      // hint; the child is still being launched in the background.
+      const raceTimeout = new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), 5_000),
+      );
+      const outcome = await Promise.race([
+        rowCreated.then(() => 'ready' as const),
+        raceTimeout,
+      ]);
+
+      if (outcome === 'timeout') {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  status: 'dispatching',
+                  run_id: null,
+                  task: { id: child.id, name: child.name },
+                  hint:
+                    `Child run row not created within 5s (likely waiting on a ` +
+                    `concurrency lock). Dispatch is still in flight — check ` +
+                    `/runs in a moment or call dispatch_task again.`,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                status: 'dispatched',
+                run_id: capturedRunId,
+                task: { id: child.id, name: child.name },
+                hint:
+                  `Child is running detached. Call ` +
+                  `wait_for_run({ run_id: "${capturedRunId}" }) later to ` +
+                  `collect its result, or inspect /runs in the UI.`,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
     },
   );
 

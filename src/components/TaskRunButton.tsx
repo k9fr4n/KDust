@@ -1,44 +1,162 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { Play } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-export function TaskRunButton({ id, name }: { id: string; name: string }) {
+/**
+ * "Run now" button for the /tasks/:id detail page.
+ *
+ * Two modes (same contract as the compact RunNowButton on the task
+ * list page):
+ *   - Project-bound task (isGeneric=false): single click fires
+ *     POST /api/tasks/:id/run with an empty body.
+ *   - Generic task (isGeneric=true): click opens a minimalist
+ *     picker, the selected project name is sent as
+ *     { project: "<name>" } in the body. Without a project the
+ *     server returns 400 ("generic tasks require a project").
+ *
+ * Before Franck 2026-04-22 19:34 this button had no isGeneric path,
+ * so clicking Run on a generic task always produced HTTP 400.
+ */
+export function TaskRunButton({
+  id,
+  name,
+  isGeneric = false,
+}: {
+  id: string;
+  name: string;
+  isGeneric?: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState('');
+  const [projects, setProjects] = useState<{ name: string; branch: string }[]>([]);
 
-  const onClick = async () => {
+  // Lazy-load the project list when the picker opens. Avoids a
+  // useless /api/projects hit on every task page load.
+  useEffect(() => {
+    if (!open || projects.length > 0) return;
+    void fetch('/api/projects')
+      .then((r) => r.json())
+      .then((j) => setProjects(j.projects ?? []))
+      .catch(() => {
+        /* non-fatal */
+      });
+  }, [open, projects.length]);
+
+  const fire = async (projectOverride?: string) => {
     setBusy(true);
     setMsg(null);
-    const r = await fetch(`/api/tasks/${id}/run`, { method: 'POST' });
+    const r = await fetch(`/api/tasks/${id}/run`, {
+      method: 'POST',
+      headers: projectOverride ? { 'Content-Type': 'application/json' } : undefined,
+      body: projectOverride ? JSON.stringify({ project: projectOverride }) : undefined,
+    });
     setBusy(false);
     if (r.ok) {
-      setMsg(`Triggered "${name}". Live status will appear below.`);
-      // Refresh immediately so the TaskLiveStatus component picks up the new
-      // running TaskRun row and begins polling.
+      setMsg(
+        projectOverride
+          ? `Triggered "${name}" on project "${projectOverride}". Live status appears below.`
+          : `Triggered "${name}". Live status appears below.`,
+      );
+      // Refresh so TaskLiveStatus picks up the new running row.
       setTimeout(() => {
         router.refresh();
         setMsg(null);
       }, 800);
     } else {
-      setMsg(`HTTP ${r.status}`);
+      // Surface the server's error so the user knows why (generic
+      // task without project, unknown project, etc.).
+      let detail = `HTTP ${r.status}`;
+      try {
+        const j = await r.json();
+        if (j?.error) detail += ` — ${typeof j.error === 'string' ? j.error : JSON.stringify(j.error)}`;
+      } catch {
+        /* ignore */
+      }
+      setMsg(detail);
     }
   };
 
+  const onClick = () => {
+    if (isGeneric) {
+      setOpen((v) => !v);
+      return;
+    }
+    void fire();
+  };
+
   return (
-    <>
+    <span className="relative inline-block">
       <button
         type="button"
         onClick={onClick}
         disabled={busy}
         className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-green-600 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950 disabled:opacity-50"
+        title={isGeneric ? 'Run now — pick a project' : 'Run now'}
       >
         <Play size={14} /> {busy ? 'Running…' : 'Run now'}
       </button>
       {msg && (
         <span className="text-xs text-slate-500 ml-2 self-center">{msg}</span>
       )}
-    </>
+
+      {/* Project picker popover, generic tasks only. Mirrors the
+          RunNowButton popover verbatim so the UX is consistent
+          between the list page and the detail page. */}
+      {isGeneric && open && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
+          <div
+            className="absolute left-0 mt-1 z-50 w-64 p-2 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs space-y-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="font-medium text-slate-700 dark:text-slate-300">
+              Run this generic task on:
+            </div>
+            <select
+              className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1"
+              value={picked}
+              onChange={(e) => setPicked(e.target.value)}
+              autoFocus
+            >
+              <option value="">— select a project —</option>
+              {projects.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name} ({p.branch})
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-1 justify-end">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!picked) return;
+                  setOpen(false);
+                  void fire(picked);
+                }}
+                disabled={!picked}
+                className="px-2 py-1 rounded border border-green-600 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950 disabled:opacity-50"
+              >
+                Run
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </span>
   );
 }

@@ -56,7 +56,11 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
       <div className="flex items-start justify-between gap-4 mb-2">
         <h1 className="text-2xl font-bold">{cron.name}</h1>
         <div className="flex items-center gap-2 shrink-0">
-          <TaskRunButton id={cron.id} name={cron.name} />
+          <TaskRunButton
+            id={cron.id}
+            name={cron.name}
+            isGeneric={cron.projectPath === null}
+          />
           <Link
             href={`/runs?task=${cron.id}`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"

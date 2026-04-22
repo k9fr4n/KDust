@@ -10,10 +10,17 @@ import type { Prisma } from '@prisma/client';
 export const dynamic = 'force-dynamic';
 
 /**
- * UI-facing task kinds. `audit` is the v5 display name for DB
- * `kind='audit'`; URLs accept both for back-compat (aliased below).
+ * UI-facing task "kind" filter. This single filter conflates two
+ * orthogonal dimensions for UX compactness:
+ *   - DB Task.kind: 'automation' | 'audit'
+ *   - DB Task.projectPath nullability: 'generic' (null) | 'project' (set)
+ * The filter is exclusive (single-pick): picking 'generic' shows all
+ * template tasks regardless of their automation/audit kind, and
+ * 'project' shows all project-bound tasks regardless of kind.
+ * `audit` is the v5 display name for DB `kind='audit'`; legacy
+ * `advice` is still accepted in URLs for old bookmarks.
  */
-type UiKind = 'all' | 'automation' | 'audit';
+type UiKind = 'all' | 'automation' | 'audit' | 'generic' | 'project';
 type EnabledFlag = 'all' | 'on' | 'off';
 type Status = 'all' | 'success' | 'failed' | 'aborted' | 'running' | 'never';
 type SortKey =
@@ -42,13 +49,9 @@ type SearchProps = {
 function normaliseKind(raw?: string): UiKind {
   if (raw === 'automation') return 'automation';
   if (raw === 'audit' || raw === 'advice') return 'audit';
+  if (raw === 'generic') return 'generic';
+  if (raw === 'project') return 'project';
   return 'all';
-}
-/** Map the UI kind back to DB `Task.kind` for filtering. */
-function uiKindToDb(k: UiKind): string | null {
-  if (k === 'audit') return 'audit';
-  if (k === 'automation') return 'automation';
-  return null;
 }
 const SORT_KEYS: SortKey[] = [
   'name', 'kind', 'agent', 'project', 'enabled', 'lastStatus', 'lastRun',
@@ -84,10 +87,23 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '200', 10) || 200));
 
   const where: Prisma.TaskWhereInput = {};
-  if (cookieProject) where.projectPath = cookieProject;
+  // Cookie-scoped project filter is skipped when the user explicitly
+  // picks 'generic' (templates have no project by definition) so the
+  // filter works even from within a project context.
+  if (cookieProject && kind !== 'generic') where.projectPath = cookieProject;
   if (q) where.name = { contains: q };
-  const dbKind = uiKindToDb(kind);
-  if (dbKind) where.kind = dbKind;
+  // The 'kind' filter conflates two dimensions (see UiKind doc):
+  //   automation/audit → Task.kind column
+  //   generic/project  → Task.projectPath nullability
+  if (kind === 'automation' || kind === 'audit') {
+    where.kind = kind;
+  } else if (kind === 'generic') {
+    where.projectPath = null;
+  } else if (kind === 'project' && !where.projectPath) {
+    // Only add the "any project" constraint when no cookie-project
+    // narrowing is already in place (which already implies NOT NULL).
+    where.projectPath = { not: null };
+  }
   if (enabled === 'on') where.enabled = true;
   else if (enabled === 'off') where.enabled = false;
 
@@ -253,6 +269,12 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <Link href={buildHref({ kind: 'all' })} className={pillCls(kind === 'all')}>all</Link>
         <Link href={buildHref({ kind: 'automation' })} className={pillCls(kind === 'automation')}>automation</Link>
         <Link href={buildHref({ kind: 'audit' })} className={pillCls(kind === 'audit')}>audit</Link>
+        {/* Project / Generic dimension (Franck 2026-04-22). Orthogonal
+            to automation/audit but merged in the same filter row for
+            UX compactness \u2014 single-pick. `project` = any bound task,
+            `generic` = template tasks (projectPath=null). */}
+        <Link href={buildHref({ kind: 'project' })} className={pillCls(kind === 'project')}>project</Link>
+        <Link href={buildHref({ kind: 'generic' })} className={pillCls(kind === 'generic')}>generic</Link>
 
         <span className="mx-1 h-4 w-px bg-slate-200 dark:bg-slate-700" aria-hidden />
 
@@ -301,6 +323,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               const isRunning = runningIds.has(c.id);
               const last = c.runs[0];
               const isAudit = c.kind === 'audit';
+              const isGeneric = c.projectPath === null;
               // Next run: null when the task is manual (no cron), or
               // when the cron expression fails to parse. We show
               // "manual" for explicit `schedule === 'manual'` and
@@ -312,10 +335,14 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               const isManual = c.schedule === 'manual' || !c.schedule;
               // Kind-colored left border so the row's kind is
               // visible at a glance without a dedicated column
-              // (Franck 2026-04-19 13:39). Audit = amber (matches
-              // the audit accent used elsewhere in the app),
-              // automation = sky.
-              const kindBorder = isAudit
+              // (Franck 2026-04-19 13:39). Precedence:
+              //   generic (violet) > audit (amber) > automation (sky).
+              // Generic wins because it's the dispatch-model signal
+              // (template vs bound) which is more structurally
+              // distinctive than automation/audit at a glance.
+              const kindBorder = isGeneric
+                ? 'border-l-4 border-l-violet-400 dark:border-l-violet-500'
+                : isAudit
                 ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
                 : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
               return (
@@ -323,17 +350,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   {/* Name cell: just the name. Category/mand
                       badges removed 2026-04-19 13:48 as duplicates
                       of the left-border color and the task title. */}
-                  <td className="py-2 font-medium">
-                    {c.name}
-                    {c.projectPath === null && (
-                      <span
-                        className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 align-middle"
-                        title="Generic / template task. Invokable only via run_task(project=...) from an orchestrator."
-                      >
-                        generic
-                      </span>
-                    )}
-                  </td>
+                  <td className="py-2 font-medium">{c.name}</td>
                   <td className="text-xs">
                     {c.projectPath ?? (
                       <span className="italic text-slate-400">— template —</span>

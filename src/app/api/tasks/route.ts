@@ -40,7 +40,15 @@ const TaskInput = z.object({
   agentSId: z.string().min(1),
   agentName: z.string().optional().nullable(),
   prompt: z.string().min(1),
-  projectPath: z.string().min(1),
+  // Nullable since 2026-04-22: projectPath=null marks a generic
+  // (template) task. Generic tasks can only be invoked via run_task
+  // with a `project` argument. Additional invariants are enforced
+  // in the refinement below (no cron, no push, no orchestrator).
+  projectPath: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim() : null)),
   teamsWebhook: z.string().url().optional().nullable(),
   enabled: z.boolean().default(true),
   // automation-push settings
@@ -67,6 +75,36 @@ const TaskInput = z.object({
   dryRun: z.boolean().default(false),
   maxDiffLines: z.number().int().positive().default(2000),
   protectedBranches: z.string().nullable().optional().transform((v) => (v ? v : null)),
+}).superRefine((v, ctx) => {
+  // Generic-task invariants (Franck 2026-04-22).
+  // A task with projectPath=null is a reusable template dispatched
+  // by run_task(project=...). It cannot be auto-scheduled (the cron
+  // scheduler has no project context) and cannot push (no git pipeline
+  // without a project). The orchestrator flag is forbidden because
+  // generics are leaves in the invocation tree, not roots.
+  if (v.projectPath === null) {
+    if (v.schedule !== 'manual') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['schedule'],
+        message: 'generic tasks must use schedule="manual" (no project context for cron)',
+      });
+    }
+    if (v.pushEnabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pushEnabled'],
+        message: 'generic tasks must have pushEnabled=false (no git pipeline without a project)',
+      });
+    }
+    if (v.taskRunnerEnabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['taskRunnerEnabled'],
+        message: 'generic tasks cannot be orchestrators (they are leaves, not roots)',
+      });
+    }
+  }
 });
 
 export async function GET() {

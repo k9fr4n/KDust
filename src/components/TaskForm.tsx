@@ -10,7 +10,14 @@ export type CronFormValues = {
   timezone: string;
   agentSId: string;
   prompt: string;
-  projectPath: string;
+  /**
+   * NULL (Franck 2026-04-22) marks a GENERIC / template task. Only
+   * invokable via `run_task(project=...)` from an orchestrator. The
+   * UI has a dedicated checkbox; when ticked, projectPath is set to
+   * null and the dependent fields (schedule, pushEnabled, taskRunner)
+   * are locked to their generic-safe defaults.
+   */
+  projectPath: string | null;
   teamsWebhook: string;
   enabled: boolean;
   /**
@@ -98,7 +105,7 @@ export function TaskForm({
     timezone: initial?.timezone ?? 'Europe/Paris',
     agentSId: initial?.agentSId ?? '',
     prompt: initial?.prompt ?? '',
-    projectPath: initial?.projectPath ?? '',
+    projectPath: initial?.projectPath === null ? null : (initial?.projectPath ?? ''),
     teamsWebhook: initial?.teamsWebhook ?? '',
     enabled: initial?.enabled ?? true,
     kind: initial?.kind ?? 'automation',
@@ -130,7 +137,13 @@ export function TaskForm({
       void fetch('/api/current-project')
         .then((r) => r.json())
         .then((j) => {
-          if (j.current) setForm((f) => (f.projectPath ? f : { ...f, projectPath: j.current }));
+          // Only pre-fill when the user hasn't picked anything AND
+          // hasn't switched to generic mode (projectPath=null).
+          if (j.current) {
+            setForm((f) =>
+              f.projectPath === null || f.projectPath ? f : { ...f, projectPath: j.current },
+            );
+          }
         });
     }
   }, [isEdit]);
@@ -238,9 +251,10 @@ export function TaskForm({
               <span className="text-sm">Project</span>
               <select
                 className={field}
-                value={form.projectPath}
-                onChange={(e) => setForm({ ...form, projectPath: e.target.value })}
-                required
+                value={form.projectPath ?? ''}
+                onChange={(e) => setForm({ ...form, projectPath: e.target.value || null })}
+                disabled={form.projectPath === null /* generic mode */}
+                required={form.projectPath !== null}
               >
                 <option value="" className={optCls}>— select a project —</option>
                 {projects.map((p) => (
@@ -260,6 +274,52 @@ export function TaskForm({
               )}
             </label>
           </div>
+
+          {/* Generic / template task toggle (Franck 2026-04-22).
+              When ON, projectPath becomes null and the task becomes
+              a reusable template dispatched by run_task(project=...).
+              Enforced invariants (also validated server-side):
+                - schedule = manual
+                - pushEnabled = false
+                - taskRunnerEnabled = false
+              We force these values client-side on toggle so the user
+              can't save an invalid combination. Re-toggling back to a
+              project-bound task leaves those fields where the user set
+              them (minus pushEnabled which we restore to true — the
+              common default). */}
+          <label className="flex items-start gap-2 pt-1">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.projectPath === null}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setForm({
+                    ...form,
+                    projectPath: null,
+                    schedule: 'manual',
+                    pushEnabled: false,
+                    taskRunnerEnabled: false,
+                  });
+                } else {
+                  setForm({ ...form, projectPath: '', pushEnabled: true });
+                }
+              }}
+            />
+            <span className="text-sm">
+              <span className="font-medium">Generic task (template, no project)</span>
+              <span className="block text-xs text-slate-500">
+                Reusable template invoked only via the{' '}
+                <code className="font-mono">run_task</code> tool with a{' '}
+                <code className="font-mono">project</code> argument. Use{' '}
+                <code className="font-mono">{'{{PROJECT}}'}</code> and{' '}
+                <code className="font-mono">{'{{PROJECT_PATH}}'}</code> in the
+                prompt — substituted at dispatch time with the invoking
+                project. Forces <code>schedule=manual</code>,{' '}
+                <code>pushEnabled=off</code>, no orchestration.
+              </span>
+            </span>
+          </label>
           <label className="flex items-center gap-2 pt-1">
             <input
               type="checkbox"
@@ -327,7 +387,12 @@ export function TaskForm({
         <p className="text-xs text-slate-500">
           Sent as-is to the agent. When <em>Automation push</em> is on,
           KDust appends a context footer summarizing branch, task id,
-          and safety constraints.
+          and safety constraints. Placeholders{' '}
+          <code className="font-mono">{'{{PROJECT}}'}</code> and{' '}
+          <code className="font-mono">{'{{PROJECT_PATH}}'}</code> are
+          substituted at dispatch time — essential for{' '}
+          <strong>generic tasks</strong>, optional (DRY) for
+          project-bound tasks.
         </p>
       </fieldset>
 

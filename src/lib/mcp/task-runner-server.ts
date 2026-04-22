@@ -53,28 +53,60 @@ const MAX_DEPTH = Math.max(
     : 10,
 );
 
+/**
+ * Resolve a task reference (id or name) for dispatch by an orchestrator.
+ *
+ * Lookup scope (in order):
+ *   1. Exact id match. Accepted if the row belongs to `projectName`
+ *      OR is a generic task (projectPath=null).
+ *   2. Exact (case-insensitive) name match among:
+ *        - tasks of `projectName`, AND
+ *        - generic tasks (projectPath=null).
+ *      If both a project-bound AND a generic task share the same name,
+ *      the PROJECT-BOUND one wins (more specific → less surprising).
+ *
+ * Returns the resolved row with `isGeneric` flag so the caller can
+ * enforce the `project` argument rules correctly.
+ */
 async function resolveTaskForProject(
   projectName: string,
   taskRef: string,
-): Promise<{ id: string; name: string; taskRunnerEnabled: boolean } | null> {
+): Promise<{
+  id: string;
+  name: string;
+  taskRunnerEnabled: boolean;
+  isGeneric: boolean;
+} | null> {
   // 1) exact id lookup
   const byId = await db.task.findUnique({
     where: { id: taskRef },
     select: { id: true, name: true, projectPath: true, taskRunnerEnabled: true },
   });
-  if (byId && byId.projectPath === projectName) {
-    return { id: byId.id, name: byId.name, taskRunnerEnabled: byId.taskRunnerEnabled };
+  if (byId && (byId.projectPath === projectName || byId.projectPath === null)) {
+    return {
+      id: byId.id,
+      name: byId.name,
+      taskRunnerEnabled: byId.taskRunnerEnabled,
+      isGeneric: byId.projectPath === null,
+    };
   }
-  // 2) case-insensitive name within the orchestrator's project
-  const byName = await db.task.findFirst({
-    where: {
-      projectPath: projectName,
-      name: { equals: taskRef },
-    },
+
+  // 2) case-insensitive name match: project-bound wins over generic.
+  const bound = await db.task.findFirst({
+    where: { projectPath: projectName, name: { equals: taskRef } },
     select: { id: true, name: true, taskRunnerEnabled: true },
     orderBy: { createdAt: 'desc' },
   });
-  return byName;
+  if (bound) return { ...bound, isGeneric: false };
+
+  const generic = await db.task.findFirst({
+    where: { projectPath: null, name: { equals: taskRef } },
+    select: { id: true, name: true, taskRunnerEnabled: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (generic) return { ...generic, isGeneric: true };
+
+  return null;
 }
 
 export async function startTaskRunnerServer(
@@ -90,17 +122,26 @@ export async function startTaskRunnerServer(
     'run_task',
     {
       description:
-        `Run another KDust task of project "${projectName}" synchronously ` +
-        `and return its result. Blocks until the child run finishes. ` +
-        `Use this to delegate a step (codegen, lint, test, …) from an ` +
-        `orchestrator task. The child task must not itself have task-runner ` +
-        `enabled. One call at a time — do not attempt parallel calls.`,
+        `Run another KDust task synchronously and return its result. ` +
+        `Blocks until the child run finishes. Use this to delegate a ` +
+        `step (codegen, lint, test, audit, …) from an orchestrator task. ` +
+        `\n\n` +
+        `RESOLUTION SCOPE: tasks of project "${projectName}" AND generic ` +
+        `tasks (projectPath=null, reusable templates). A generic task REQUIRES ` +
+        `the "project" argument, which becomes its run context (MCP chroot, ` +
+        `{{PROJECT}} substitution in the prompt). A project-bound task MUST ` +
+        `NOT receive "project" — it runs on its own project. ` +
+        `\n\n` +
+        `CONSTRAINTS: the child task must not itself have task-runner enabled ` +
+        `(single orchestrator layer). One call at a time — do not attempt ` +
+        `parallel calls.`,
       inputSchema: {
         task: z
           .string()
           .min(1)
           .describe(
-            'Task ID or exact name (case-insensitive) within the same project.',
+            'Task ID or exact name (case-insensitive). Resolved against ' +
+              'this project\'s tasks first, then generic (projectPath=null) tasks.',
           ),
         input: z
           .string()
@@ -109,13 +150,26 @@ export async function startTaskRunnerServer(
             'Override for the child task\'s stored prompt. When provided, ' +
               'REPLACES the child prompt entirely for this single invocation ' +
               '(useful to pass lint errors or failure context for a retry). ' +
-              'When omitted, the child runs with its configured prompt.',
+              'When omitted, the child runs with its configured prompt ' +
+              '(still subject to {{PROJECT}} substitution).',
+          ),
+        project: z
+          .string()
+          .optional()
+          .describe(
+            'Project context override. REQUIRED when invoking a generic ' +
+              '(template) task — supplies the project whose workspace the ' +
+              'child run will use and substitutes {{PROJECT}} in the prompt. ' +
+              'MUST be omitted when the child task is project-bound: passing ' +
+              'it for a bound task is rejected to prevent accidental ' +
+              'cross-project execution. Must be a project name known to KDust.',
           ),
       },
     },
     async (args) => {
       const taskRef = args.task as string;
       const promptOverride = (args.input as string | undefined) ?? undefined;
+      const projectArg = (args.project as string | undefined)?.trim() || undefined;
 
       // Lazy import to avoid a module cycle (runner → registry → this file).
       const { runTask } = await import('../cron/runner');
@@ -153,6 +207,63 @@ export async function startTaskRunnerServer(
         };
       }
 
+      // Enforce the project-arg contract based on child kind.
+      //   - generic child  → project arg REQUIRED, must exist in Project table
+      //   - bound child    → project arg REJECTED (safety: no silent cross-project)
+      let projectOverride: string | undefined;
+      if (child.isGeneric) {
+        if (!projectArg) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  status: 'failure',
+                  error:
+                    `refused: task "${child.name}" is a generic template and requires ` +
+                    `a "project" argument to supply its run context.`,
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+        const projRow = await db.project.findFirst({
+          where: { name: projectArg },
+          select: { name: true },
+        });
+        if (!projRow) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({
+                  status: 'failure',
+                  error: `refused: unknown project "${projectArg}" (not declared in /settings/projects).`,
+                }),
+              },
+            ],
+            isError: true,
+          };
+        }
+        projectOverride = projRow.name;
+      } else if (projectArg) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                status: 'failure',
+                error:
+                  `refused: task "${child.name}" is bound to a specific project; ` +
+                  `the "project" argument is only allowed for generic (template) tasks.`,
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+
       // Depth guard: walk the parentRunId chain starting at the orchestrator run.
       const parent = await db.taskRun.findUnique({
         where: { id: orchestratorRunId },
@@ -181,6 +292,7 @@ export async function startTaskRunnerServer(
           parentRunId: orchestratorRunId,
           runDepth: nextDepth,
           promptOverride,
+          projectOverride,
         });
       } catch (e: any) {
         return {

@@ -160,7 +160,20 @@ model Task {
   agentSId       String
   agentName      String?
   prompt         String
-  projectPath    String    // chemin relatif dans /projects (ex: "my-app")
+  // chemin relatif dans /projects (ex: "my-app").
+  //
+  // NULLABLE (Franck 2026-04-22): a task with projectPath=null is a
+  // "generic" / "template" task, not bound to a specific project.
+  // It can only be invoked via the task-runner MCP tool `run_task`
+  // with a `project` argument, which supplies the project context
+  // for the run (MCP chroot, registry lookup, {{PROJECT}} substitution
+  // in the prompt). Generic tasks MUST have:
+  //   - schedule = 'manual'          (no cron: scheduler has no project context)
+  //   - pushEnabled = false          (no git pipeline without a project)
+  //   - taskRunnerEnabled = false    (generics are leaves, not orchestrators)
+  //   - mandatory = false            (not auto-created with a project)
+  // These invariants are enforced at create/patch time in /api/tasks.
+  projectPath    String?
   teamsWebhook   String?
   enabled        Boolean   @default(true)
   lastRunAt      DateTime?

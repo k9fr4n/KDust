@@ -125,7 +125,10 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       case 'agent':
         r = (a.agentName ?? a.agentSId).localeCompare(b.agentName ?? b.agentSId);
         break;
-      case 'project': r = a.projectPath.localeCompare(b.projectPath); break;
+      case 'project':
+        // Generic tasks (projectPath=null) sort last in ascending order.
+        r = (a.projectPath ?? '\uffff').localeCompare(b.projectPath ?? '\uffff');
+        break;
       case 'enabled':
         r = Number(a.enabled) - Number(b.enabled); break;
       case 'lastStatus':
@@ -320,8 +323,22 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   {/* Name cell: just the name. Category/mand
                       badges removed 2026-04-19 13:48 as duplicates
                       of the left-border color and the task title. */}
-                  <td className="py-2 font-medium">{c.name}</td>
-                  <td className="text-xs">{c.projectPath}</td>
+                  <td className="py-2 font-medium">
+                    {c.name}
+                    {c.projectPath === null && (
+                      <span
+                        className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 align-middle"
+                        title="Generic / template task. Invokable only via run_task(project=...) from an orchestrator."
+                      >
+                        generic
+                      </span>
+                    )}
+                  </td>
+                  <td className="text-xs">
+                    {c.projectPath ?? (
+                      <span className="italic text-slate-400">— template —</span>
+                    )}
+                  </td>
                   <td className="text-xs">{c.agentName ?? c.agentSId}</td>
                   <td>
                     {c.enabled ? (
@@ -394,7 +411,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                     )}
                   </td>
                   <td className="text-right">
-                    <RunNowButton cronId={c.id} />
+                    <RunNowButton cronId={c.id} isGeneric={c.projectPath === null} />
                   </td>
                 </ClickableTaskRow>
               );

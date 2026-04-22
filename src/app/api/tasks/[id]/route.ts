@@ -38,6 +38,42 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       data[k] = null;
     }
   }
+  // Generic tasks (Franck 2026-04-22): projectPath empty string → null.
+  // If becoming generic (null), enforce the same invariants as POST.
+  if ('projectPath' in data) {
+    if (typeof data.projectPath === 'string' && data.projectPath.trim() === '') {
+      data.projectPath = null;
+    }
+  }
+  // Load current row to merge-check invariants (PATCH may only flip
+  // one of the relevant fields; we need the EFFECTIVE post-patch value).
+  const current = await db.task.findUnique({
+    where: { id },
+    select: { projectPath: true, schedule: true, pushEnabled: true, taskRunnerEnabled: true },
+  });
+  if (!current) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const effective = {
+    projectPath: 'projectPath' in data ? data.projectPath : current.projectPath,
+    schedule: 'schedule' in data ? data.schedule : current.schedule,
+    pushEnabled: 'pushEnabled' in data ? data.pushEnabled : current.pushEnabled,
+    taskRunnerEnabled:
+      'taskRunnerEnabled' in data ? data.taskRunnerEnabled : current.taskRunnerEnabled,
+  };
+  if (effective.projectPath === null) {
+    const issues: string[] = [];
+    if (effective.schedule !== 'manual')
+      issues.push('schedule must be "manual" for a generic task');
+    if (effective.pushEnabled)
+      issues.push('pushEnabled must be false for a generic task');
+    if (effective.taskRunnerEnabled)
+      issues.push('taskRunnerEnabled must be false for a generic task');
+    if (issues.length > 0) {
+      return NextResponse.json(
+        { error: `generic task invariants violated: ${issues.join('; ')}` },
+        { status: 400 },
+      );
+    }
+  }
   const task = await db.task.update({ where: { id }, data });
   await reloadScheduler();
   return NextResponse.json({ task });

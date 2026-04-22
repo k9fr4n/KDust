@@ -989,7 +989,7 @@ export default async function UsagePage({
               const t = runTaskById.get(r.taskId);
               return {
                 label: t?.name ?? '(deleted)',
-                sub: t?.projectPath,
+                sub: t?.projectPath ?? undefined,
                 count: r._count._all,
                 href: t ? `/tasks/${t.id}` : undefined,
               };

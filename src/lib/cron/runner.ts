@@ -181,11 +181,22 @@ function buildAutomationPrompt(
  *                  this single invocation. Used by the orchestrator
  *                  to pass failure context on a retry (e.g. lint
  *                  errors back into codegen).
+ *
+ *   projectOverride When set, supplies the project context for a
+ *                  GENERIC task (a task with projectPath=null).
+ *                  Required in that case: generic tasks cannot be
+ *                  dispatched without an explicit project. For a
+ *                  non-generic task (projectPath set) this option
+ *                  is REJECTED by the caller (run_task MCP tool)
+ *                  to prevent accidental cross-project execution;
+ *                  the runner itself accepts it as a no-op for
+ *                  safety if it somehow gets through.
  */
 export interface RunTaskOptions {
   parentRunId?: string;
   runDepth?: number;
   promptOverride?: string;
+  projectOverride?: string;
 }
 
 /**
@@ -214,6 +225,37 @@ export async function runTask(
   const job = await db.task.findUnique({ where: { id: taskId } });
   if (!job) return '';
 
+  // [0] Resolve effective project --------------------------------------------
+  // Generic tasks (projectPath=null) REQUIRE opts.projectOverride. A
+  // project-bound task (projectPath set) uses its own projectPath; if a
+  // projectOverride is also provided we prefer the explicit one only
+  // when it MATCHES (safety: prevents silent cross-project execution
+  // through a stray override). Mismatches fail loudly.
+  const effectiveProjectPath = ((): string | null => {
+    if (job.projectPath && opts?.projectOverride && opts.projectOverride !== job.projectPath) {
+      return null; // sentinel for the loud failure a few lines below
+    }
+    return opts?.projectOverride ?? job.projectPath ?? null;
+  })();
+
+  if (!effectiveProjectPath) {
+    const reason = job.projectPath
+      ? `projectOverride="${opts?.projectOverride}" does not match task.projectPath="${job.projectPath}"`
+      : `task "${job.name}" is generic (projectPath=null) and no projectOverride was supplied; generic tasks can only be invoked via run_task with a "project" argument`;
+    console.warn(`[cron] refuse job="${job.name}": ${reason}`);
+    const errRow = await db.taskRun.create({
+      data: {
+        taskId,
+        status: 'failed',
+        error: reason,
+        finishedAt: new Date(),
+        parentRunId: opts?.parentRunId ?? null,
+        runDepth: opts?.runDepth ?? 0,
+      },
+    });
+    return errRow.id;
+  }
+
   // [1] Concurrency lock ------------------------------------------------------
   // Scoped per **project directory**, not per job, because two jobs sharing
   // the same /projects/<path> would race on `git reset --hard` / branch
@@ -231,7 +273,7 @@ export async function runTask(
   const concurrent = await db.taskRun.findFirst({
     where: {
       status: 'running',
-      task: { is: { projectPath: job.projectPath } },
+      task: { is: { projectPath: effectiveProjectPath } },
       ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
     },
     orderBy: { startedAt: 'desc' },
@@ -243,7 +285,7 @@ export async function runTask(
       const sameJob = concurrent.taskId === taskId;
       const reason = sameJob
         ? `previous run ${concurrent.id} of this job still running`
-        : `run ${concurrent.id} of sibling job "${concurrent.task?.name ?? concurrent.taskId}" still running on project "${job.projectPath}"`;
+        : `run ${concurrent.id} of sibling job "${concurrent.task?.name ?? concurrent.taskId}" still running on project "${effectiveProjectPath}"`;
       console.warn(`[cron] skip job="${job.name}": ${reason} (${Math.round(ageMs / 1000)}s)`);
       const skipRow = await db.taskRun.create({
         data: {
@@ -268,9 +310,7 @@ export async function runTask(
   // policy (Phase 1, Franck 2026-04-19). Project is the source of
   // truth for baseBranch/branchPrefix/protectedBranches; task rows
   // carry nullable overrides only. resolveBranchPolicy merges both.
-  const project = job.projectPath
-    ? await db.project.findFirst({ where: { name: job.projectPath } })
-    : null;
+  const project = await db.project.findFirst({ where: { name: effectiveProjectPath } });
 
   // Fallback policy when no project row exists yet (edge case: legacy
   // tasks with a projectPath pointing nowhere). We still need defaults
@@ -312,11 +352,28 @@ export async function runTask(
   // info needed to write correct `docker run -v` commands. The footer
   // is appended once at this level rather than inside each branch to
   // avoid duplication and to ensure consistency across code paths.
-  const basePrompt = opts?.promptOverride ?? job.prompt;
-  const dockerContext = buildDockerHostContext(job.projectPath);
+  // Prompt resolution pipeline:
+  //   1. Start with stored prompt OR opts.promptOverride (replaces it
+  //      entirely for this single invocation).
+  //   2. Substitute {{PROJECT}} and {{PROJECT_PATH}} placeholders with
+  //      the effective project. Mustache-style syntax chosen over
+  //      $PROJECT to avoid collision with bash variable expansion in
+  //      user prompts that reference shell scripts.
+  //   3. Append the Docker-host context footer (only if the feature
+  //      is wired via KDUST_HOST_PROJECTS_ROOT) so the agent knows
+  //      the host-side path for `docker run -v` left-hand-sides.
+  //
+  // Placeholders are substituted even for non-generic tasks: a
+  // project-bound task can use {{PROJECT}} in its prompt for DRY
+  // prompts that don't hardcode the project name.
+  const rawPrompt = opts?.promptOverride ?? job.prompt;
+  const basePrompt = rawPrompt
+    .replace(/\{\{PROJECT\}\}/g, effectiveProjectPath)
+    .replace(/\{\{PROJECT_PATH\}\}/g, `/projects/${effectiveProjectPath}`);
+  const dockerContext = buildDockerHostContext(effectiveProjectPath);
   const effectivePrompt = dockerContext ? `${basePrompt}${dockerContext}` : basePrompt;
   const startedAt = Date.now();
-  console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${job.projectPath} base=${policy.baseBranch} mode=${job.branchMode}`);
+  console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${effectiveProjectPath}${opts?.projectOverride ? ' (via override, task is generic)' : ''} base=${policy.baseBranch} mode=${job.branchMode}`);
 
   const setPhase = (phase: string, message: string) =>
     db.taskRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
@@ -335,7 +392,7 @@ export async function runTask(
   activeTaskIds.add(taskId);
   try {
     if (!project) {
-      throw new Error(`project "${job.projectPath}" not found in DB; add it in Projects first`);
+      throw new Error(`project "${effectiveProjectPath}" not found in DB; add it in Projects first`);
     }
 
     // [2] Pre-run sync --------------------------------------------------------
@@ -1051,7 +1108,7 @@ export async function runTask(
     if (webhook) {
       await postToTeams(webhook, {
         title: `${wasAborted ? '⏹️' : '❌'} KDust cron : ${job.name}`,
-        summary: wasAborted ? `Aborted on ${job.projectPath}` : `Failed on ${job.projectPath}`,
+        summary: wasAborted ? `Aborted on ${effectiveProjectPath}` : `Failed on ${effectiveProjectPath}`,
         status: 'failed',
         details: msg,
         facts: branch ? [

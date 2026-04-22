@@ -18,7 +18,9 @@ export default async function EditCronPage({ params }: { params: Promise<{ id: s
         timezone: cron.timezone,
         agentSId: cron.agentSId,
         prompt: cron.prompt,
-        projectPath: cron.projectPath ?? '',
+        // Preserve NULL so the form opens in "generic" mode when editing
+        // a template task (checkbox pre-ticked, project select disabled).
+        projectPath: cron.projectPath,
         teamsWebhook: cron.teamsWebhook ?? '',
         enabled: cron.enabled,
         kind: (cron.kind === 'audit' ? 'audit' : 'automation'),

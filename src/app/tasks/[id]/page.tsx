@@ -29,7 +29,10 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
   // Resolve branch policy so the detail page shows the effective
   // values (task override or inherited from project) \u2014 Phase 1,
   // Franck 2026-04-19.
-  const project = await db.project.findFirst({ where: { name: cron.projectPath } });
+  // Generic tasks have no bound project — skip the lookup, policy stays null.
+  const project = cron.projectPath
+    ? await db.project.findFirst({ where: { name: cron.projectPath } })
+    : null;
   const policy = project
     ? resolveBranchPolicy(cron, project)
     : null;
@@ -101,7 +104,19 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
             <span className="text-xs text-slate-400 ml-1">({cron.agentSId})</span>
           )}
         </div>
-        <div><span className="text-slate-500">Project:</span> <span className="font-mono">{cron.projectPath}</span></div>
+        <div>
+          <span className="text-slate-500">Project:</span>{' '}
+          {cron.projectPath ? (
+            <span className="font-mono">{cron.projectPath}</span>
+          ) : (
+            <span
+              className="inline-block px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300"
+              title="Generic template — project supplied at dispatch by run_task"
+            >
+              generic template
+            </span>
+          )}
+        </div>
         {cron.kind === 'audit' && (
           <div><span className="text-slate-500">Category:</span> <span className="font-mono">{cron.category ?? '\u2014'}</span></div>
         )}

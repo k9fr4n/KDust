@@ -17,7 +17,7 @@
  * on every action button so clicking Sync or Delete does not
  * accidentally navigate away.
  */
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -504,6 +504,22 @@ export default function ProjectsPage() {
                   </button>
                   <button
                     className="p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    onClick={(e) => { e.stopPropagation(); void remove(p.id, p.name); }}
+                    title="Delete project"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        )
+      )}
+    </div>
+  );
+}
+d-600 hover:bg-red-50 dark:hover:bg-red-950/30"
                     onClick={(e) => { e.stopPropagation(); void remove(p.id, p.name); }}
                     title="Delete project"
                   >

@@ -3,6 +3,12 @@
 Web UI perso qui remplace `@dust-tt/dust-cli` avec en plus un scheduler de crons
 qui fait éditer des projets locaux par des agents Dust et poste un rapport Teams.
 
+## Documentation
+
+- [`docs/task-runner.md`](docs/task-runner.md) — task-runner MCP server
+  (`run_task`, `dispatch_task`, `wait_for_run`), prompt patterns,
+  invariants, troubleshooting, ADR.
+
 ## Features
 
 - Authentification WorkOS Device Flow (même mécanisme que le CLI, aucune config redirect URI).

@@ -306,15 +306,20 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
           // wrapping anchor so a click opens the full-size image.
           img: ({ src, alt, title }) => {
             if (!src) return null;
-            // Agents sometimes return a bare Dust file id
-            // (`fil_...`) as the image src instead of a full URL.
-            // Rewrite to our authenticated proxy route so the
-            // browser doesn't try to fetch it relative to the
-            // current origin (which 404s on localhost:3000/fil_xxx).
-            // See src/app/api/files/[sId]/route.ts.
-            const resolvedSrc = /^fil_[A-Za-z0-9_-]+$/.test(src)
-              ? `/api/files/${src}`
-              : src;
+            // Rewrite any Dust file reference to our authenticated
+            // proxy (see src/app/api/files/[sId]/route.ts).
+            // Agents return images in several shapes observed in
+            // the wild:
+            //   1. bare id:        `fil_HbVDt...`
+            //   2. origin-resolved: `http://localhost:3000/fil_xxx`
+            //      (bare id that the browser already resolved)
+            //   3. Dust url:        `https://eu.dust.tt/api/.../files/fil_xxx`
+            // All three carry a trailing `fil_<sId>` segment, so
+            // we extract it with a single regex and rebuild the
+            // URL through our proxy. Anything without a fil_ id
+            // passes through untouched (http image, data URI, ...).
+            const filMatch = src.match(/(?:^|\/)(fil_[A-Za-z0-9_-]+)(?:[?#].*)?$/);
+            const resolvedSrc = filMatch ? `/api/files/${filMatch[1]}` : src;
             return (
               <a
                 href={resolvedSrc}

@@ -21,5 +21,20 @@
 export const dynamic = 'force-dynamic';
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  // Padding cancel (Franck 2026-04-23 21:48). RootLayout wraps
+  // every page in <main class="px-4 lg:px-6 py-6">. The chat
+  // surface wants the full viewport width so the message area,
+  // composer, and the merged toolbar reach the browser edges.
+  // We negate the root padding with inverse margins and size the
+  // wrapper explicitly to "viewport minus the sticky Nav (h-14)".
+  //
+  // Why negative margins rather than editing RootLayout:
+  // touching the root affects /conversations, /agents, /projects,
+  // /admin, / \u2026 which all rely on that same breathing room.
+  // Cancelling locally keeps the diff scoped to /chat.
+  return (
+    <div className="-mx-4 lg:-mx-6 -my-6 h-[calc(100dvh-3.5rem)] min-h-0">
+      {children}
+    </div>
+  );
 }

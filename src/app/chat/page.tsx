@@ -986,15 +986,14 @@ function ChatPageInner() {
   return (
     // Height math:
     //   - sticky <Nav/> is h-14 (3.5rem) at the top of <body>
-    //   - RootLayout wraps children in <main class="py-6"> → 3rem vertical
-    // So the chat surface must be calc(100dvh - 6.5rem) to fit exactly on
-    // screen without producing a page-level scrollbar. dvh (vs vh) keeps it
-    // stable on mobile browsers that resize the viewport with their
-    // address bar. min-h-0 lets flex children shrink so only the inner
-    // messages pane scrolls, never the page.
+    //   - /chat/layout.tsx cancels the root <main> padding and
+    //     sizes its wrapper to calc(100dvh - 3.5rem), so this div
+    //     just needs h-full to inherit the correct height.
+    //   - min-h-0 lets flex children shrink so only the inner
+    //     messages pane scrolls, never the page.
     <div
       data-chat-root
-      className="flex gap-0 h-[calc(100dvh-6.5rem)] min-h-0 max-w-full"
+      className="flex gap-0 h-full min-h-0 max-w-full"
       onPointerMove={onResizeMove}
       onPointerUp={onResizeEnd}
       onPointerCancel={onResizeEnd}

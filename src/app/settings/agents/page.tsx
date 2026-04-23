@@ -20,13 +20,14 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft, Bot, Plus, RefreshCw, Search, X,
-  Sparkles, Star, ExternalLink,
+  Sparkles, Star, ExternalLink, Pencil, Trash2, Save,
 } from 'lucide-react';
 
 type Agent = {
   sId: string;
   name: string;
   description?: string | null;
+  instructions?: string | null;
   pictureUrl?: string | null;
   scope?: string;
   userFavorite?: boolean;
@@ -85,6 +86,22 @@ export default function AgentsSettingsPage() {
   const [creating, setCreating] = useState(false);
   const [lastCreatedSId, setLastCreatedSId] = useState<string | null>(null);
 
+  // Edit modal (2026-04-23 13:49). `editing` carries the sId of the
+  // agent being edited; null when closed. `editForm` holds the
+  // current field values, pre-filled from GET /api/agents/:sId.
+  // `editLoading` is true while we fetch the full agent (to get
+  // `instructions`, which is not in the list payload).
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', description: '', instructions: '', emoji: '' });
+  const [editLoading, setEditLoading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Delete confirmation: holds the agent we're about to archive so
+  // the UI can show an inline prompt ("Type the name to confirm").
+  const [deleting, setDeleting] = useState<Agent | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
   const refresh = async () => {
     setLoading(true);
     try {
@@ -135,6 +152,91 @@ export default function AgentsSettingsPage() {
   };
 
   const input = 'w-full text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950';
+
+  // Open the edit modal: fetch full agent (to get instructions),
+  // then populate the form. Failure to fetch still opens the modal
+  // with empty fields so the user can retype from scratch rather
+  // than being stuck.
+  const openEdit = async (a: Agent) => {
+    setEditing(a.sId);
+    setEditForm({ name: a.name, description: a.description ?? '', instructions: '', emoji: '' });
+    setEditLoading(true);
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(a.sId)}`, { cache: 'no-store' });
+      if (r.ok) {
+        const j = await r.json();
+        setEditForm({
+          name: j.agent.name ?? a.name,
+          description: j.agent.description ?? '',
+          instructions: j.agent.instructions ?? '',
+          emoji: '',
+        });
+      }
+    } catch {
+      // Stay open with list data; user can still save (PATCH accepts
+      // partial bodies so they don't have to re-enter instructions).
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setEditSaving(true);
+    setErr(null);
+    try {
+      // Send only fields the user actually changed. Empty string is
+      // treated as "clear me" for emoji but "skip me" for the others
+      // (we can't blank name/description/instructions \u2014 the server
+      // enforces min(1)).
+      const body: Record<string, string> = {};
+      if (editForm.name.trim()) body.name = editForm.name.trim();
+      if (editForm.description.trim()) body.description = editForm.description.trim();
+      if (editForm.instructions.trim()) body.instructions = editForm.instructions.trim();
+      if (editForm.emoji.trim()) body.emoji = editForm.emoji.trim();
+      const r = await fetch(`/api/agents/${encodeURIComponent(editing)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+      }
+      setEditing(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    // Name-match gate mirrors the task-runner "type the name to
+    // confirm" pattern. Prevents accidental clicks and satisfies the
+    // semi-autonomous "CONFIRM BEFORE" rule for destructive ops.
+    if (deleteConfirm !== deleting.name) return;
+    setDeleteBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(deleting.sId)}`, {
+        method: 'DELETE',
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(typeof j.error === 'string' ? j.error : JSON.stringify(j.error));
+      }
+      setDeleting(null);
+      setDeleteConfirm('');
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   // Split + sort + filter, memoized. Sort alphabetically within
   // each bucket. Filter applies to name + description.
@@ -202,6 +304,28 @@ export default function AgentsSettingsPage() {
             {a.sId}
           </code>
         </div>
+
+        {/* Action cluster (Franck 2026-04-23 13:49). Edit + Delete
+            are only shown for workspace agents; default ones are
+            Dust-provided and can't be mutated from here. */}
+        {!isDefault && (
+          <div className="shrink-0 flex flex-col gap-1">
+            <button
+              onClick={(e) => { e.stopPropagation(); void openEdit(a); }}
+              title="Edit agent"
+              className="p-1.5 rounded border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-brand-600 hover:border-brand-400"
+            >
+              <Pencil size={12} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeleting(a); setDeleteConfirm(''); }}
+              title="Delete agent"
+              className="p-1.5 rounded border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-red-600 hover:border-red-400"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -366,9 +490,140 @@ export default function AgentsSettingsPage() {
         </div>
       )}
 
+      {/* Edit modal (Franck 2026-04-23 13:49). Plain overlay, no
+          portal / dialog element to keep the component self-contained.
+          z-40 so it lives above the card grid but below toast-style
+          notifications if we ever add them. Backdrop click closes. */}
+      {editing && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !editSaving && setEditing(null)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold inline-flex items-center gap-2">
+                <Pencil size={14} /> Edit agent
+              </h2>
+              <button
+                onClick={() => !editSaving && setEditing(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <code className="block font-mono text-[10px] text-slate-400">{editing}</code>
+            {editLoading ? (
+              <p className="text-xs text-slate-400">Loading current values…</p>
+            ) : (
+              <>
+                <div className="grid md:grid-cols-[2fr_80px] gap-2">
+                  <label className="block">
+                    <span className="text-slate-500 text-xs">Name *</span>
+                    <input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} className={input} maxLength={64} />
+                  </label>
+                  <label className="block">
+                    <span className="text-slate-500 text-xs">Emoji</span>
+                    <input value={editForm.emoji} onChange={(e) => setEditForm({ ...editForm, emoji: e.target.value })} className={input} placeholder="unchanged" maxLength={10} />
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="text-slate-500 text-xs">Description * (max 256)</span>
+                  <input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} className={input} maxLength={256} />
+                </label>
+                <label className="block">
+                  <span className="text-slate-500 text-xs">Instructions * (max 8000)</span>
+                  <textarea
+                    value={editForm.instructions}
+                    onChange={(e) => setEditForm({ ...editForm, instructions: e.target.value })}
+                    className={input + ' min-h-[200px] font-mono text-xs'}
+                    maxLength={8000}
+                  />
+                  <div className="text-[10px] text-slate-400 text-right">{editForm.instructions.length}/8000</div>
+                </label>
+              </>
+            )}
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setEditing(null)}
+                disabled={editSaving}
+                className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={editSaving || editLoading || !editForm.name.trim() || !editForm.description.trim() || !editForm.instructions.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 disabled:opacity-50 text-sm"
+              >
+                {editSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                {editSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete modal. Name-match gate intentional: agents may be
+          referenced by tasks, by project default-agent bindings, or
+          by pinned conversations \u2014 archiving one is a high-impact
+          operation. We mirror the pattern from /tasks/:id delete. */}
+      {deleting && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !deleteBusy && setDeleting(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg bg-white dark:bg-slate-900 border border-red-300 dark:border-red-700 p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-semibold text-red-700 dark:text-red-400 inline-flex items-center gap-2">
+              <Trash2 size={14} /> Delete agent
+            </h2>
+            <p className="text-sm">
+              You are about to archive the agent{' '}
+              <strong className="font-mono">{deleting.name}</strong>.
+              This is irreversible from KDust (the agent becomes
+              inaccessible to tasks and pickers). Existing
+              conversations stay intact.
+            </p>
+            <label className="block text-sm">
+              <span className="text-slate-500 text-xs">
+                Type <code className="font-mono">{deleting.name}</code> to confirm:
+              </span>
+              <input
+                value={deleteConfirm}
+                onChange={(e) => setDeleteConfirm(e.target.value)}
+                className={input}
+                autoFocus
+              />
+            </label>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setDeleting(null)}
+                disabled={deleteBusy}
+                className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleteBusy || deleteConfirm !== deleting.name}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-500 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-50 text-sm"
+              >
+                {deleteBusy ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                {deleteBusy ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <p className="text-[11px] text-slate-500">
-        Agents are managed in your Dust workspace. Edit / delete them from
-        the Dust UI — KDust only creates and lists them.{' '}
+        Agents are managed in your Dust workspace. You can also edit
+        or delete them directly from the Dust UI.{' '}
         <a
           href="https://dust.tt"
           target="_blank"

@@ -6,6 +6,7 @@ import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
+import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import { nextRunAt } from '@/lib/cron/validator';
 import type { Prisma } from '@prisma/client';
@@ -261,26 +262,12 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         </Link>
       </div>
 
-      {/* Search */}
-      <form method="get" action="/tasks" className="mb-4 flex gap-2">
-        <input
-          type="search"
-          name="q"
-          defaultValue={q}
-          placeholder="Search by name…"
-          className="flex-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm"
-        />
-        {kind !== 'all' && <input type="hidden" name="kind" value={kind} />}
-        {enabled !== 'all' && <input type="hidden" name="enabled" value={enabled} />}
-        {status !== 'all' && <input type="hidden" name="status" value={status} />}
-        {sort !== 'lastRun' && <input type="hidden" name="sort" value={sort} />}
-        {dir !== 'desc' && <input type="hidden" name="dir" value={dir} />}
-        <button
-          type="submit"
-          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
-        >
-          Search
-        </button>
+      {/* Live search \u2014 see LiveSearchInput for rationale. Sibling
+          filter params (kind/enabled/status/sort/dir) are preserved
+          automatically by the component so no hidden inputs are
+          needed anymore. */}
+      <div className="mb-4 flex gap-2">
+        <LiveSearchInput placeholder="Search by name…" />
         {hasActiveFilter && (
           <Link
             href="/tasks"
@@ -289,7 +276,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             Clear filters
           </Link>
         )}
-      </form>
+      </div>
 
       {/*
         All three filter groups on a single wrap-aware row. We keep

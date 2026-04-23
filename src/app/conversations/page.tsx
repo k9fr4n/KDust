@@ -8,6 +8,7 @@ import { getCurrentProjectName } from '@/lib/current-project';
 import { ConversationCard } from '@/components/ConversationCard';
 import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
+import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 
 export const dynamic = 'force-dynamic';
@@ -95,21 +96,16 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         </span>
       </div>
 
-      <form method="get" action="/conversations" className="mb-4 flex gap-2">
-        <input
-          type="search"
-          name="q"
-          defaultValue={q}
-          placeholder="Search by title…"
-          className="flex-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm"
-        />
-        {agentFilter && <input type="hidden" name="agent" value={agentFilter} />}
-        <button
-          type="submit"
-          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
-        >
-          Search
-        </button>
+      {/* Live search (Franck 2026-04-23 22:29). Replaces the old
+          form + submit button with a debounced input that updates
+          the `q` query-string parameter as the user types; the
+          server component re-runs on URL change. Clear-filters
+          link kept for an explicit reset path (also clears the
+          agent pill). Sibling query params like `agent` are
+          preserved by LiveSearchInput so no hidden input is
+          needed anymore. */}
+      <div className="mb-4 flex gap-2">
+        <LiveSearchInput placeholder="Search by title…" />
         {(q || agentFilter) && (
           <Link
             href="/conversations"
@@ -118,7 +114,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
             Clear filters
           </Link>
         )}
-      </form>
+      </div>
 
       {allAgents.length > 1 && (
         <div className="flex flex-wrap gap-2 mb-4 text-xs">

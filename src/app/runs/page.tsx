@@ -16,6 +16,7 @@ import { ClickableRunRow } from '@/components/ClickableRunRow';
 import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import { Pagination } from '@/components/Pagination';
+import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import type { Prisma } from '@prisma/client';
@@ -419,25 +420,10 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         </div>
       </div>
 
-      {/* Search */}
-      <form method="get" action="/runs" className="mb-4 flex gap-2">
-        <input
-          type="search"
-          name="q"
-          defaultValue={q}
-          placeholder="Search task name, branch, commit, status message…"
-          className="flex-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm"
-        />
-        {statusFilter && <input type="hidden" name="status" value={statusFilter} />}
-        {taskFilter && <input type="hidden" name="task" value={taskFilter} />}
-        {sort !== 'started' && <input type="hidden" name="sort" value={sort} />}
-        {dir !== 'desc' && <input type="hidden" name="dir" value={dir} />}
-        <button
-          type="submit"
-          className="px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
-        >
-          Search
-        </button>
+      {/* Live search \u2014 see LiveSearchInput for rationale. Siblings
+          (status/task/sort/dir) are preserved automatically. */}
+      <div className="mb-4 flex gap-2">
+        <LiveSearchInput placeholder="Search task name, branch, commit, status message…" />
         {(q || statusFilter || taskFilter) && (
           <Link
             href="/runs"
@@ -446,7 +432,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             Clear filters
           </Link>
         )}
-      </form>
+      </div>
 
       <div className="flex flex-wrap gap-2 mb-4 text-xs">
         {statuses.map((s) => {

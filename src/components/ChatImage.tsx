@@ -54,10 +54,22 @@ export function ChatImage({ src, alt, title }: Props) {
 
   return (
     <>
-      <button
-        type="button"
+      {/* Thumbnail wrapper: using a <span> rather than a <button>
+          so we can nest a download <a> without breaking the DOM
+          (buttons can't contain interactive descendants). The
+          container is still keyboard-actionable via role+tabIndex
+          so Enter / Space still open the lightbox. */}
+      <span
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(true)}
-        className="inline-block my-2 max-w-full group relative"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
+        className="inline-block my-2 max-w-full group relative align-top"
         title={title ?? alt ?? 'Open image'}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -67,7 +79,23 @@ export function ChatImage({ src, alt, title }: Props) {
           className="max-h-48 max-w-full h-auto w-auto rounded-md border border-slate-200 dark:border-slate-700 object-contain group-hover:opacity-90 transition-opacity cursor-zoom-in"
           loading="lazy"
         />
-      </button>
+        {/* Floating download button on the thumbnail (Franck
+            2026-04-23 16:57). Absolute-positioned top-right,
+            hidden by default, fades in on hover / focus-within
+            so the thumbnail stays clean at rest. stopPropagation
+            on click so the surrounding "open lightbox" handler
+            does not fire. */}
+        <a
+          href={downloadHref}
+          download
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-1 right-1 inline-flex items-center justify-center w-7 h-7 rounded-md bg-black/55 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/75"
+          title="Download"
+          aria-label="Download image"
+        >
+          <Download size={14} />
+        </a>
+      </span>
 
       {open && (
         <div

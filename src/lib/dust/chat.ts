@@ -95,6 +95,20 @@ export async function createDustConversation(
    * signal schedule-driven but still human-billed usage.
    */
   origin: NonBilledOrigin = 'cli',
+  /**
+   * Pre-uploaded Dust file ids (from POST /api/files/upload) to
+   * attach as content fragments to the first user message. Each
+   * fid is packaged as a `{fileId, title}` entry; Dust handles the
+   * server-side wire-up so the agent can reference them.
+   */
+  fileIds?: string[] | null,
+  /**
+   * Optional metadata for the files \u2014 used to set a human-readable
+   * title on each content fragment. If absent, we fall back to
+   * 'Attachment'. Keep it optional so callers without that info
+   * still work.
+   */
+  fileMetas?: Array<{ sId: string; name: string }> | null,
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
@@ -102,6 +116,21 @@ export async function createDustConversation(
   console.log(
     `[chat] createConversation agentSId=${agentSId} origin=${origin} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
   );
+
+  // Attachments (Franck 2026-04-23 16:59): for each pre-uploaded
+  // Dust file id, build a content fragment that Dust will attach
+  // to the conversation alongside the user message. Title is the
+  // filename if the caller passed one; falls back to 'Attachment'.
+  const contentFragments =
+    fileIds && fileIds.length > 0
+      ? fileIds.map((fid) => {
+          const meta = fileMetas?.find((m) => m.sId === fid);
+          return {
+            fileId: fid,
+            title: meta?.name ?? 'Attachment',
+          };
+        })
+      : undefined;
 
   const res = await ctx.client.createConversation({
     title: title ?? null,
@@ -111,6 +140,7 @@ export async function createDustConversation(
       mentions: [{ configurationId: agentSId }],
       context: userContext(mcpServerIds, origin),
     },
+    contentFragments,
     blocking: false,
   });
   if (res.isErr()) throw new Error(`Dust createConversation: ${res.error.message}`);
@@ -130,13 +160,35 @@ export async function postUserMessage(
   mcpServerIds?: string[] | null,
   /** See createDustConversation for origin billing policy. */
   origin: NonBilledOrigin = 'cli',
+  /** Pre-uploaded Dust file ids to attach. See createDustConversation. */
+  fileIds?: string[] | null,
+  /** Optional filename metadata; used for human-readable fragment titles. */
+  fileMetas?: Array<{ sId: string; name: string }> | null,
 ): Promise<StartMessageResult> {
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
 
   console.log(
-    `[chat] postUserMessage conv=${dustConversationSId} agentSId=${agentSId} origin=${origin} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)}`,
+    `[chat] postUserMessage conv=${dustConversationSId} agentSId=${agentSId} origin=${origin} mcpServerIds=${JSON.stringify(mcpServerIds ?? null)} fileIds=${JSON.stringify(fileIds ?? null)}`,
   );
+
+  // Attachments: Dust requires content fragments to exist before
+  // the user message is posted so they're threaded onto the same
+  // turn. Post them sequentially; sequential is fine because the
+  // user typically attaches 1-3 files and we already serialised
+  // the upload itself in /api/files/upload.
+  if (fileIds && fileIds.length > 0) {
+    for (const fid of fileIds) {
+      const meta = fileMetas?.find((m) => m.sId === fid);
+      const cfRes = await ctx.client.postContentFragment({
+        conversationId: dustConversationSId,
+        contentFragment: { fileId: fid, title: meta?.name ?? 'Attachment' },
+      });
+      if (cfRes.isErr()) {
+        throw new Error(`Dust postContentFragment(${fid}): ${cfRes.error.message}`);
+      }
+    }
+  }
 
   const res = await ctx.client.postUserMessage({
     conversationId: dustConversationSId,

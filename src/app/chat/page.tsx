@@ -20,6 +20,9 @@ import {
   PinOff,
   Copy,
   Check,
+  Paperclip,
+  X as XIcon,
+  Loader2,
 } from 'lucide-react';
 
 type Agent = { sId: string; name: string };
@@ -182,6 +185,31 @@ function ChatPageInner() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState('');
+
+  /**
+   * Composer attachments (Franck 2026-04-23 16:59).
+   *
+   * Files go through three lifecycle stages:
+   *   - 'uploading': multipart POST to /api/files/upload in flight.
+   *   - 'ready':     Dust returned a file sId, ready to send.
+   *   - 'error':     upload failed; shown with a red tint, user can
+   *                  click the X to remove and retry.
+   *
+   * Using clientId (crypto.randomUUID) rather than the server sId as
+   * the React key because uploads start before the sId is known. The
+   * sId lands on the same row when the upload resolves.
+   */
+  type PendingAttachment = {
+    clientId: string;
+    name: string;
+    size: number;
+    contentType: string;
+    status: 'uploading' | 'ready' | 'error';
+    sId?: string;
+    error?: string;
+  };
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [agentSId, setAgentSId] = useState('');
   // Tracks priority of the current agent selection. See the lookup
   // in the /api/projects/current effect for the override rules.
@@ -625,11 +653,84 @@ function ChatPageInner() {
     }
   };
 
+  /**
+   * Uploads selected files to /api/files/upload sequentially, one
+   * request per File so we can surface per-row errors instead of
+   * failing the whole batch. Each file gets a client-side row with
+   * status='uploading'; on success the row flips to 'ready' and
+   * keeps its Dust sId; on failure the row shows the error message
+   * with a retry-by-removal affordance.
+   */
+  const uploadFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    // Seed placeholder rows synchronously so the UI reflects the
+    // selection immediately. We upload them one by one below.
+    const rows: PendingAttachment[] = list.map((f) => ({
+      clientId: crypto.randomUUID(),
+      name: f.name,
+      size: f.size,
+      contentType: f.type || 'application/octet-stream',
+      status: 'uploading',
+    }));
+    setAttachments((prev) => [...prev, ...rows]);
+
+    for (let i = 0; i < list.length; i += 1) {
+      const file = list[i];
+      const row = rows[i];
+      const form = new FormData();
+      form.append('files', file);
+      try {
+        const r = await fetch('/api/files/upload', { method: 'POST', body: form });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.detail ?? j.error ?? `HTTP ${r.status}`);
+        }
+        const j = await r.json();
+        const uploaded = j.files?.[0];
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.clientId === row.clientId
+              ? { ...a, status: 'ready', sId: uploaded?.sId }
+              : a,
+          ),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.clientId === row.clientId ? { ...a, status: 'error', error: msg } : a,
+          ),
+        );
+      }
+    }
+  };
+
+  const removeAttachment = (clientId: string) => {
+    setAttachments((prev) => prev.filter((a) => a.clientId !== clientId));
+  };
+
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!draft.trim() || streaming) return;
+    // Block sending while attachments are still uploading \u2014 the
+    // Dust postContentFragment call would otherwise fire without
+    // the intended files. Failed uploads are allowed through: we
+    // just drop them from the payload.
+    if (attachments.some((a) => a.status === 'uploading')) {
+      setError('Please wait for attachments to finish uploading.');
+      return;
+    }
+    const readyFiles = attachments.filter(
+      (a): a is PendingAttachment & { sId: string } =>
+        a.status === 'ready' && !!a.sId,
+    );
+    const fileIds = readyFiles.map((a) => a.sId);
+    const fileMetas = readyFiles.map((a) => ({ sId: a.sId, name: a.name }));
+
     const content = draft;
     setDraft('');
+    setAttachments([]); // clear chips so the next turn starts fresh
     setError(null);
 
     // Optimistic local append
@@ -718,7 +819,11 @@ function ChatPageInner() {
       if (!currentId) {
         const agentName = agents.find((a) => a.sId === agentSId)?.name;
         const r = await postWithRetry('/api/conversations', {
-          agentSId, agentName, content,
+          agentSId,
+          agentName,
+          content,
+          fileIds: fileIds.length > 0 ? fileIds : undefined,
+          fileMetas: fileMetas.length > 0 ? fileMetas : undefined,
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
@@ -727,6 +832,8 @@ function ChatPageInner() {
       } else {
         const r = await postWithRetry(`/api/conversations/${currentId}/messages`, {
           content,
+          fileIds: fileIds.length > 0 ? fileIds : undefined,
+          fileMetas: fileMetas.length > 0 ? fileMetas : undefined,
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
@@ -1369,32 +1476,123 @@ function ChatPageInner() {
 
         <form
           onSubmit={send}
-          className="p-3 border-t border-slate-200 dark:border-slate-800 flex gap-2 items-end"
+          className="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2"
         >
-          <textarea
-            ref={textareaRef}
-            className={field + ' resize-none leading-relaxed'}
-            rows={2}
-            // The height is driven by `autoResize` (see useLayoutEffect
-            // on `draft`). max-height is set inline because tailwind's
-            // max-h-[Xpx] works but duplicating the constant here
-            // keeps the JS ceiling and the CSS ceiling in sync.
-            style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '2.75rem' }}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onInput={autoResize}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                (e.target as HTMLTextAreaElement).form?.requestSubmit();
+          {/* Attachment chips (Franck 2026-04-23 16:59). Rendered
+              above the textarea so they don't compete horizontally
+              with the send button. Each chip shows name + size,
+              status indicator (spinner / ready / error), and an X
+              to remove before send. */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {attachments.map((a) => {
+                const sizeKb = Math.max(1, Math.round(a.size / 1024));
+                return (
+                  <span
+                    key={a.clientId}
+                    className={
+                      'inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs ' +
+                      (a.status === 'error'
+                        ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300'
+                        : 'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200')
+                    }
+                    title={a.error ?? `${a.name} \u2022 ${sizeKb} KB`}
+                  >
+                    {a.status === 'uploading' && <Loader2 size={12} className="animate-spin" />}
+                    {a.status === 'ready' && <Check size={12} className="text-green-600" />}
+                    {a.status === 'error' && <XIcon size={12} />}
+                    <span className="max-w-[180px] truncate">{a.name}</span>
+                    <span className="text-slate-400">{sizeKb}K</span>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(a.clientId)}
+                      className="ml-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                      aria-label="Remove"
+                      title="Remove"
+                    >
+                      <XIcon size={12} />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex gap-2 items-end">
+            {/* Hidden input + clickable paperclip button. Multiple
+                selection supported; re-opening the picker does NOT
+                reset existing chips (onChange appends). */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) void uploadFiles(e.target.files);
+                // Reset the input so selecting the same file twice
+                // in a row still fires onChange.
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              className="h-[2.75rem] px-2.5 rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              <Paperclip size={16} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              className={field + ' resize-none leading-relaxed'}
+              rows={2}
+              // The height is driven by `autoResize` (see useLayoutEffect
+              // on `draft`). max-height is set inline because tailwind's
+              // max-h-[Xpx] works but duplicating the constant here
+              // keeps the JS ceiling and the CSS ceiling in sync.
+              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '2.75rem' }}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onInput={autoResize}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  (e.target as HTMLTextAreaElement).form?.requestSubmit();
+                }
+              }}
+              // Drag-and-drop files onto the textarea (Franck
+              // 2026-04-23 16:59). dragover must preventDefault so
+              // drop fires. We accept the drop on the textarea
+              // rather than a dedicated zone to keep the composer
+              // compact.
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes('Files')) {
+                  e.preventDefault();
+                }
+              }}
+              onDrop={(e) => {
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                  e.preventDefault();
+                  void uploadFiles(e.dataTransfer.files);
+                }
+              }}
+              placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
+              disabled={streaming || !agentSId}
+            />
+            <Button
+              type="submit"
+              disabled={
+                streaming ||
+                !draft.trim() ||
+                !agentSId ||
+                attachments.some((a) => a.status === 'uploading')
               }
-            }}
-            placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
-            disabled={streaming || !agentSId}
-          />
-          <Button type="submit" disabled={streaming || !draft.trim() || !agentSId}>
-            <Send size={14} /> {streaming ? 'Streaming…' : 'Send'}
-          </Button>
+            >
+              <Send size={14} /> {streaming ? 'Streaming…' : 'Send'}
+            </Button>
+          </div>
         </form>
       </section>
     </div>

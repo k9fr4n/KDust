@@ -31,6 +31,16 @@ const CreateSchema = z.object({
   content: z.string().min(1),
   title: z.string().optional(),
   mcpServerIds: z.array(z.string()).optional(),
+  /**
+   * Pre-uploaded Dust file ids (from /api/files/upload) attached
+   * to this first message as content fragments. fileMetas carries
+   * the original filenames for a nicer fragment title surfaced in
+   * the agent's context.
+   */
+  fileIds: z.array(z.string().regex(/^fil_/)).optional(),
+  fileMetas: z
+    .array(z.object({ sId: z.string(), name: z.string() }))
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -38,9 +48,18 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
 
   const project = await getCurrentProjectName();
-  const { agentSId, agentName, content, title, mcpServerIds } = parsed.data;
+  const { agentSId, agentName, content, title, mcpServerIds, fileIds, fileMetas } =
+    parsed.data;
 
-  const dust = await createDustConversation(agentSId, content, title, mcpServerIds);
+  const dust = await createDustConversation(
+    agentSId,
+    content,
+    title,
+    mcpServerIds,
+    'cli',
+    fileIds,
+    fileMetas,
+  );
 
   const derivedTitle = title && title.trim().length > 0
     ? title
@@ -54,7 +73,18 @@ export async function POST(req: Request) {
       title: derivedTitle,
       projectName: project,
       messages: {
-        create: [{ role: 'user', content }],
+        create: [
+          {
+            role: 'user',
+            // Same attachment-marker convention as the follow-up
+            // messages endpoint. See comment there.
+            content:
+              content +
+              (fileMetas && fileMetas.length > 0
+                ? '\n\n_Attachments: ' + fileMetas.map((f) => f.name).join(', ') + '_'
+                : ''),
+          },
+        ],
       },
     },
   });

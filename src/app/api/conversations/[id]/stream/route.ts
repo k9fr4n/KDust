@@ -93,6 +93,38 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           },
         });
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });
+
+        // Title sync (Franck 2026-04-23 21:59). Dust auto-generates a
+        // human-readable title on the conversation after the first
+        // agent turn (e.g. "g\u00e9n\u00e8re moi une image" \u2192 "Demande
+        // d'image g\u00e9n\u00e9r\u00e9e par IA"). Fetch it once the reply is
+        // saved and persist locally so the /chat header and\n        // /conversations listing match what users see on dust.tt.
+        // Best-effort: failures are logged but never block the
+        // stream response. Skip if we already have a non-trivial
+        // local title AND it's been set manually (we never override
+        // a title the user typed themselves \u2014 detectable by\n        // comparing with the first user message; see below).
+        try {
+          // Non-null: we returned 404 above if dustConversationSId
+          // was missing; re-asserted here because TS doesn't carry
+          // the narrowing into this async closure.
+          const convSId = conv.dustConversationSId as string;
+          const latest = await cli.client.getConversation({
+            conversationId: convSId,
+          });
+          if (latest.isOk()) {
+            // SDK's getConversation() unwraps the response envelope
+            // to the bare ConversationType, so title is at the root.
+            const dustTitle = latest.value?.title?.trim();
+            if (dustTitle && dustTitle !== conv.title) {
+              await db.conversation.update({ where: { id }, data: { title: dustTitle } });
+              console.log(`[chat stream] title synced conv=${id} \u2192 "${dustTitle}"`);
+            }
+          } else {
+            console.warn('[chat stream] title sync getConversation err', latest.error?.message);
+          }
+        } catch (e) {
+          console.warn('[chat stream] title sync threw', e instanceof Error ? e.message : e);
+        }
       } catch (err) {
         send('error', err instanceof Error ? err.message : String(err));
         console.error('[chat stream] run failed for conv', id, err);

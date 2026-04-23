@@ -182,6 +182,15 @@ function ChatPageInner() {
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [convs, setConvs] = useState<ConvSummary[]>([]);
+  /**
+   * Current Dust workspace sId (from DustSession.workspaceId,
+   * returned alongside the conversations list). Used to build
+   * https://dust.tt/w/<wsSId>/assistant/<convSId> links so the
+   * "Open in Dust" icon lands on the right workspace. null until
+   * the first /api/conversations fetch completes; the link is
+   * hidden while that's the case.
+   */
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [draft, setDraft] = useState('');
@@ -340,6 +349,10 @@ function ChatPageInner() {
     const r = await fetch('/api/conversations');
     const j = await r.json();
     setConvs(j.conversations ?? []);
+    // Workspace sId travels on the same payload so we only pay
+    // for one round-trip; stays pinned to the most recent value
+    // the server knows about.
+    if (typeof j.workspaceId === 'string') setWorkspaceId(j.workspaceId);
   };
 
   const loadConv = async (id: string) => {
@@ -1169,9 +1182,15 @@ function ChatPageInner() {
                     {displayedId}
                   </code>
                   <CopyIdButton value={displayedId} />
-                  {currentConv?.dustConversationSId && (
+                  {currentConv?.dustConversationSId && workspaceId && (
                     <a
-                      href={`https://dust.tt/w/0/assistant/${currentConv.dustConversationSId}`}
+                      // dust.tt URL shape: /w/<workspaceSId>/assistant/<convSId>
+                      // e.g. https://app.dust.tt/w/afoH8Y2BIz/conversation/ZZ4Vo645fo
+                      // Using app.dust.tt (the primary app host); the
+                      // short-form dust.tt/w redirects work too but
+                      // users paste this URL around and matching the
+                      // canonical host avoids a redirect flash.
+                      href={`https://app.dust.tt/w/${workspaceId}/conversation/${currentConv.dustConversationSId}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"

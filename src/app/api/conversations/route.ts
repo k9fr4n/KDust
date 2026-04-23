@@ -8,21 +8,43 @@ export const runtime = 'nodejs';
 
 export async function GET() {
   const project = await getCurrentProjectName();
-  const conversations = await db.conversation.findMany({
-    where: project ? { projectName: project } : undefined,
-    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
-    select: {
-      id: true,
-      title: true,
-      agentName: true,
-      agentSId: true,
-      updatedAt: true,
-      projectName: true,
-      pinned: true,
-    },
-    take: 100,
+  // Fetch conversations + current DustSession.workspaceId in
+  // parallel. Workspace id is used by the /chat UI to build
+  // correct https://dust.tt/w/<wsSId>/\u2026 links; without it we'd
+  // fall back to 'w/0' which 404s on a real workspace like
+  // afoH8Y2BIz.
+  const [conversations, dustSession] = await Promise.all([
+    db.conversation.findMany({
+      where: project ? { projectName: project } : undefined,
+      orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+      select: {
+        id: true,
+        // Include the Dust sId so the UI can:
+        //   \u2022 display it in the header (the short id users
+        //     recognise from dust.tt, e.g. ZZ4Vo645fo)
+        //   \u2022 build a correct open-in-dust link
+        // Absent rows (Conversation created locally before first
+        // Dust message) return null; the UI falls back to the
+        // local cuid in that window.
+        dustConversationSId: true,
+        title: true,
+        agentName: true,
+        agentSId: true,
+        updatedAt: true,
+        projectName: true,
+        pinned: true,
+      },
+      take: 100,
+    }),
+    db.dustSession.findUnique({
+      where: { id: 1 },
+      select: { workspaceId: true },
+    }),
+  ]);
+  return NextResponse.json({
+    conversations,
+    workspaceId: dustSession?.workspaceId ?? null,
   });
-  return NextResponse.json({ conversations });
 }
 
 const CreateSchema = z.object({

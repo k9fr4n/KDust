@@ -94,7 +94,7 @@ export function TaskRunButton({
         type="button"
         onClick={onClick}
         disabled={busy}
-        className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-green-600 text-green-700 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-950 disabled:opacity-50"
+        className="inline-flex items-center justify-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 hover:bg-success-subtle dark:hover:bg-green-950/30 transition-colors disabled:opacity-50 disabled:pointer-events-none"
         title={isGeneric ? 'Run now — pick a project' : 'Run now'}
       >
         <Play size={14} /> {busy ? 'Running…' : 'Run now'}

@@ -92,7 +92,7 @@ export function RunNowButton({
           run();
         }}
         disabled={state === 'running'}
-        className="inline-flex items-center justify-center p-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+        className="inline-flex items-center justify-center p-1.5 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
         title={isGeneric ? 'Run now — pick a project' : aria}
         aria-label={aria}
       >

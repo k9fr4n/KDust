@@ -740,7 +740,7 @@ export function TaskForm({
           <button
             type="button"
             onClick={() => router.push(`/tasks/${cronId}`)}
-            className="px-4 py-2 rounded border border-slate-300 dark:border-slate-700"
+            className="inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             Cancel
           </button>

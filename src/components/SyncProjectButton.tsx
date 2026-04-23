@@ -46,7 +46,7 @@ export function SyncProjectButton({ projectId }: { projectId: string }) {
       <button
         onClick={sync}
         disabled={state === 'running'}
-        className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+        className="inline-flex items-center justify-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
       >
         {icon}
         {label}

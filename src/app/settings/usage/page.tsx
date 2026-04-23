@@ -113,29 +113,45 @@ export default async function UsagePage({
     db.conversation.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
     db.message.count({ where: { createdAt: { gte: thirtyDaysAgo } } }),
     db.taskRun.count({ where: { startedAt: { gte: thirtyDaysAgo } } }),
-    db.taskRun.groupBy({ by: ['status'], _count: { _all: true } }),
+    // Range-scoped rankings (Franck 2026-04-23 23:24). Previously
+    // these ran all-time and so looked frozen when the user moved
+    // the range picker. Adding the same `gte: thirtyDaysAgo` gate
+    // used by the headline KPIs makes every block react to the
+    // selected window. "All time" sets thirtyDaysAgo to epoch 0 so
+    // the filter is a no-op \u2014 behaviour is preserved.
+    db.taskRun.groupBy({
+      by: ['status'],
+      where: { startedAt: { gte: thirtyDaysAgo } },
+      _count: { _all: true },
+    }),
     db.conversation.groupBy({
       by: ['agentSId', 'agentName'],
+      where: { createdAt: { gte: thirtyDaysAgo } },
       _count: { _all: true },
       orderBy: { _count: { agentSId: 'desc' } },
       take: 10,
     }),
     db.conversation.groupBy({
       by: ['projectName'],
+      where: { createdAt: { gte: thirtyDaysAgo } },
       _count: { _all: true },
       orderBy: { _count: { projectName: 'desc' } },
       take: 10,
     }),
     db.taskRun.groupBy({
       by: ['taskId'],
+      where: { startedAt: { gte: thirtyDaysAgo } },
       _count: { _all: true },
       orderBy: { _count: { taskId: 'desc' } },
       take: 10,
     }),
-    // Conversations ranked by message count. groupBy on Message is cheap
-    // since we have an index on conversationId.
+    // Conversations ranked by message count, scoped to messages
+    // created in the selected window. A conversation that was
+    // created years ago but is active today still surfaces here;
+    // a historical one that saw no traffic in the window won't.
     db.message.groupBy({
       by: ['conversationId'],
+      where: { createdAt: { gte: thirtyDaysAgo } },
       _count: { _all: true },
       orderBy: { _count: { conversationId: 'desc' } },
       take: 10,
@@ -254,9 +270,13 @@ export default async function UsagePage({
     }),
     // Conversations with the most tool-heavy agent turns (agent msg
     // with max toolCalls wins). Useful to spot "the agent did 80 tool
-    // calls in one turn" outliers.
+    // calls in one turn" outliers. Scoped to the selected window.
     db.message.findMany({
-      where: { role: 'agent', toolCalls: { gt: 0 } },
+      where: {
+        role: 'agent',
+        toolCalls: { gt: 0 },
+        createdAt: { gte: thirtyDaysAgo },
+      },
       orderBy: { toolCalls: 'desc' },
       take: 10,
       select: {
@@ -270,9 +290,14 @@ export default async function UsagePage({
         },
       },
     }),
-    // Slowest stream turns (useful to debug agent hangs).
+    // Slowest stream turns (useful to debug agent hangs). Scoped to
+    // the selected window.
     db.message.findMany({
-      where: { role: 'agent', durationMs: { gt: 0 } },
+      where: {
+        role: 'agent',
+        durationMs: { gt: 0 },
+        createdAt: { gte: thirtyDaysAgo },
+      },
       orderBy: { durationMs: 'desc' },
       take: 10,
       select: {
@@ -450,7 +475,15 @@ export default async function UsagePage({
   const runStatus = Object.fromEntries(
     runsByStatus.map((r) => [r.status, r._count._all]),
   );
-  // Sparkline helper: inline div bars, max-height scaled by series max.
+  // Sparkline helper (Franck 2026-04-23 23:24).
+  // Fixed-width bars (w-1.5) caused two visual regressions when the
+  // range picker was introduced:
+  //   - "Today" early in the day \u2192 2 bars = 12px wide, invisible
+  //   - "All time" \u2192 365 bars = 2190px, horizontal overflow
+  // Switched to flex-1 bars that share the parent width equally,
+  // so the chart fills its container regardless of bucket count.
+  // min-w-0 on the bars prevents the browser from forcing a
+  // minimum intrinsic width that would reintroduce the overflow.
   const Sparkline = ({
     series,
     color = 'bg-brand-400',
@@ -462,11 +495,11 @@ export default async function UsagePage({
   }) => {
     const max = Math.max(1, ...series.map((s) => s.n));
     return (
-      <div className="flex items-end gap-0.5" style={{ height }}>
+      <div className="flex items-end gap-px w-full" style={{ height }}>
         {series.map((s) => (
           <div
             key={s.day}
-            className={`${color} rounded-sm w-1.5 opacity-80 hover:opacity-100`}
+            className={`${color} rounded-sm flex-1 min-w-0 opacity-80 hover:opacity-100`}
             style={{ height: `${Math.max(2, (s.n / max) * height)}px` }}
             title={`${s.day}: ${s.n}`}
           />

@@ -14,6 +14,7 @@ import {
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { ClickableRunRow } from '@/components/ClickableRunRow';
 import { RunsViewToggle } from '@/components/RunsViewToggle';
+import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -356,11 +357,17 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             with no query params). The tree view auto-fetches
             missing ancestors so a child row whose parent was
             filtered out still renders under its real parent. */}
-        <RunsViewToggle
-          current={view}
-          flatHref={buildHref({ view: 'flat' })}
-          treeHref={buildHref({ view: 'tree' })}
-        />
+        <div className="flex items-center gap-2">
+          {/* Auto-refresh ticks router.refresh() every 5s while the
+              tab is visible. Persisted on/off state in localStorage.
+              See src/components/RunsAutoRefresh.tsx. */}
+          <RunsAutoRefresh />
+          <RunsViewToggle
+            current={view}
+            flatHref={buildHref({ view: 'flat' })}
+            treeHref={buildHref({ view: 'tree' })}
+          />
+        </div>
       </div>
 
       {/* Search */}

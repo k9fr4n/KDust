@@ -82,6 +82,75 @@ export default function GlobalSettingsPage() {
             <span className="text-sm">Default Teams webhook</span>
             <input className={field} type="url" {...bind('defaultTeamsWebhook')} />
           </label>
+
+          {/* --- Runtime caps (Franck 2026-04-23) ----------------
+              Wall-clock kill-timer applied to every task run when
+              Task.maxRuntimeMs is not set. Stored as ms in DB, shown
+              in minutes here for ergonomics. Clamp [1, 360] min
+              matches the server-side [30s, 6h] clamp in runner.ts. */}
+          <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-700">
+            <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              Run timeouts
+            </h2>
+            <p className="text-xs text-slate-500 mb-3">
+              Wall-clock kill-timer applied when a task does not
+              override <code className="font-mono">maxRuntimeMs</code>.
+              Values in minutes. Range: 1-360.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="block">
+                <span className="text-sm">Leaf task timeout (minutes)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={360}
+                  className={field}
+                  value={
+                    typeof cfg.leafRunTimeoutMs === 'number'
+                      ? Math.round(cfg.leafRunTimeoutMs / 60000)
+                      : ''
+                  }
+                  onChange={(e) => {
+                    const m = parseInt(e.target.value, 10);
+                    setCfg({
+                      ...cfg,
+                      leafRunTimeoutMs: Number.isFinite(m) && m > 0 ? m * 60000 : cfg.leafRunTimeoutMs,
+                    });
+                  }}
+                />
+                <span className="block mt-1 text-[11px] text-slate-500">
+                  Default: 30 min. Applied to tasks with
+                  <code className="mx-1 font-mono">taskRunnerEnabled=false</code>.
+                </span>
+              </label>
+              <label className="block">
+                <span className="text-sm">Orchestrator task timeout (minutes)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={360}
+                  className={field}
+                  value={
+                    typeof cfg.orchestratorRunTimeoutMs === 'number'
+                      ? Math.round(cfg.orchestratorRunTimeoutMs / 60000)
+                      : ''
+                  }
+                  onChange={(e) => {
+                    const m = parseInt(e.target.value, 10);
+                    setCfg({
+                      ...cfg,
+                      orchestratorRunTimeoutMs: Number.isFinite(m) && m > 0 ? m * 60000 : cfg.orchestratorRunTimeoutMs,
+                    });
+                  }}
+                />
+                <span className="block mt-1 text-[11px] text-slate-500">
+                  Default: 60 min. Applied to tasks with
+                  <code className="mx-1 font-mono">taskRunnerEnabled=true</code>.
+                </span>
+              </label>
+            </div>
+          </div>
+
           <div className="flex items-center gap-4">
             <Button onClick={save} disabled={saving}>
               {saving ? 'Saving…' : 'Save'}

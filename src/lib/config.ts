@@ -6,6 +6,10 @@ export interface AppConfigData {
   workosDomain: string;
   claimNamespace: string;
   defaultTeamsWebhook: string | null;
+  // Wall-clock runtime caps (Franck 2026-04-23 09:56). Stored in
+  // ms; clamped [30s, 6h] by the runner and by the settings API.
+  leafRunTimeoutMs: number;
+  orchestratorRunTimeoutMs: number;
 }
 
 export async function getAppConfig(): Promise<AppConfigData> {
@@ -17,9 +21,11 @@ export async function getAppConfig(): Promise<AppConfigData> {
       workosDomain: existing.workosDomain,
       claimNamespace: existing.claimNamespace,
       defaultTeamsWebhook: existing.defaultTeamsWebhook,
+      leafRunTimeoutMs: existing.leafRunTimeoutMs,
+      orchestratorRunTimeoutMs: existing.orchestratorRunTimeoutMs,
     };
   }
-  // bootstrap from env
+  // bootstrap from env (one-shot, first boot only)
   const created = await db.appConfig.create({
     data: {
       id: 1,
@@ -28,6 +34,8 @@ export async function getAppConfig(): Promise<AppConfigData> {
       workosDomain: process.env.WORKOS_DOMAIN ?? 'api.workos.com',
       claimNamespace: process.env.WORKOS_CLAIM_NAMESPACE ?? 'https://dust.tt/',
       defaultTeamsWebhook: null,
+      // Schema @default covers the timeouts — no need to seed
+      // explicitly from env.
     },
   });
   return {
@@ -36,6 +44,8 @@ export async function getAppConfig(): Promise<AppConfigData> {
     workosDomain: created.workosDomain,
     claimNamespace: created.claimNamespace,
     defaultTeamsWebhook: created.defaultTeamsWebhook,
+    leafRunTimeoutMs: created.leafRunTimeoutMs,
+    orchestratorRunTimeoutMs: created.orchestratorRunTimeoutMs,
   };
 }
 

@@ -15,6 +15,14 @@ model AppConfig {
   workosDomain        String   @default("api.workos.com")
   claimNamespace      String   @default("https://dust.tt/")
   defaultTeamsWebhook String?
+
+  // Global wall-clock runtime caps (Franck 2026-04-23 09:56).
+  // Applied when Task.maxRuntimeMs is null. Clamp [30s, 6h] still
+  // enforced in runner.ts — out-of-range values fall back to the
+  // schema defaults below. Stored in ms for parity with task rows.
+  leafRunTimeoutMs         Int @default(1800000)   // 30 min
+  orchestratorRunTimeoutMs Int @default(3600000)   // 60 min
+
   updatedAt           DateTime @updatedAt
 }
 

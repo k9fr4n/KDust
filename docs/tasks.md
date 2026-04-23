@@ -100,13 +100,15 @@ cancelled (see [`docs/task-runner.md`](task-runner.md#cascade-cancellation-paren
 Resolution order at dispatch:
 
 1. `Task.maxRuntimeMs` if set and in `[30s, 6h]`
-2. env `KDUST_ORCHESTRATOR_TIMEOUT_MS` if `taskRunnerEnabled=true`
-3. env `KDUST_RUN_TIMEOUT_MS` for leaf tasks
+2. `AppConfig.orchestratorRunTimeoutMs` if `taskRunnerEnabled=true`
+3. `AppConfig.leafRunTimeoutMs` for leaf tasks
 4. hard default: **30 min** leaf, **60 min** orchestrator
 
-Both env vars accept a value in milliseconds, subject to the same
-`[30s, 6h]` clamp. Out-of-range values silently fall back to the
-hard default.
+The two AppConfig values are editable from
+**`/settings/global` → Run timeouts** (entered in minutes, stored
+in ms, clamp 1-360). No restart required — the runner reads
+AppConfig on every dispatch. Out-of-range values silently fall
+back to the hard default at the runner level.
 
 UI: the task form accepts the value in **minutes** (clamped 1-360)
 for ergonomics. Stored as ms in DB.

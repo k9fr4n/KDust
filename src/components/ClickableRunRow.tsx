@@ -21,9 +21,23 @@ import React from 'react';
 export function ClickableRunRow({
   runId,
   children,
+  compact = false,
 }: {
   runId: string;
   children: React.ReactNode;
+  /**
+   * When true, suppress the top separator border. Used in tree
+   * view on child rows (depth > 0) so a parent and its descendants
+   * visually cluster into a single block without a dividing line
+   * between each row (Franck 2026-04-23 14:13).
+   *
+   * Vertical padding is driven by a sibling `data-compact` attr:
+   * the page-level <td className="py-..."> pick it up via CSS
+   * selectors to shrink py-2 \u2192 py-0.5. Keeping it as a data attr
+   * means we don't have to thread className changes through every
+   * <td>.
+   */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const href = `/runs/${runId}`;
@@ -56,7 +70,16 @@ export function ClickableRunRow({
     <tr
       onClick={onClick}
       onAuxClick={onAuxClick}
-      className="border-t border-slate-200 dark:border-slate-800 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/50"
+      data-compact={compact ? '1' : undefined}
+      className={
+        'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/50 ' +
+        (compact
+          // Child row: no border + halved vertical padding on any
+          // <td> inside (targeted via the arbitrary selector so we
+          // don't need to touch every cell).
+          ? '[&>td]:py-0.5'
+          : 'border-t border-slate-200 dark:border-slate-800')
+      }
     >
       {children}
     </tr>

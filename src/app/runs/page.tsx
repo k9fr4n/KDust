@@ -510,7 +510,15 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                 : null;
               const statusCls = STATUS_CLASS[r.status] ?? 'bg-slate-100 text-slate-600';
               return (
-                <ClickableRunRow key={r.id} runId={r.id}>
+                <ClickableRunRow
+                  key={r.id}
+                  runId={r.id}
+                  /* Tree view: child rows (depth > 0) render in
+                     compact mode \u2014 no top border + halved vertical
+                     padding \u2014 so a parent and its descendants read
+                     as a single visual group (Franck 2026-04-23 14:13). */
+                  compact={view === 'tree' && r.depth > 0}
+                >
                   <td className="py-2">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${statusCls}`}>
                       {r.status === 'running' && (

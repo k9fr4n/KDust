@@ -18,8 +18,13 @@ import { Square, RotateCw, Trash2, Loader2 } from 'lucide-react';
  *   - Stop   : POST /api/taskruns/:id/cancel
  *              (existing endpoint, aborts the in-flight controller;
  *              falls back to a ghost-row write for stale entries).
- *   - Rerun  : POST /api/tasks/:taskId/run
- *              (fire-and-forget; spawns a brand-new TaskRun row).
+ *   - Rerun  : POST /api/runs/:id/rerun
+ *              Inherits the original run's project context. For
+ *              project-bound tasks this is task.projectPath; for
+ *              generic tasks, fallback is the Conversation's
+ *              projectName via dustConversationSId. This is the
+ *              key distinction with POST /api/tasks/:taskId/run,
+ *              which would fail on generic tasks (missing body).
  *              Disabled when run.task was deleted (taskId is null).
  *   - Delete : DELETE /api/runs/:id (idempotent).
  *
@@ -73,11 +78,18 @@ export function RunActions({
     ev.preventDefault();
     if (busy || !taskId) return;
     setBusy('rerun');
-    fetch(`/api/tasks/${taskId}/run`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{}',
-    })
+    // Hit the per-run rerun route so the original run's project
+    // context is carried over (important for generic tasks whose
+    // project cannot be derived from the task row alone).
+    fetch(`/api/runs/${runId}/rerun`, { method: 'POST' })
+      .then(async (r) => {
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          window.alert(
+            j.message ?? j.error ?? `Rerun failed (HTTP ${r.status})`,
+          );
+        }
+      })
       .catch(() => null)
       .finally(() => {
         setBusy(null);
@@ -134,10 +146,10 @@ export function RunActions({
           className={successCls}
           title={
             taskId
-              ? 'Re-run this task (creates a new run)'
+              ? 'Re-run this run (inherits its project context)'
               : 'Cannot re-run: parent task was deleted'
           }
-          aria-label="Re-run task"
+          aria-label="Re-run this run"
         >
           {busy === 'rerun' ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
         </button>

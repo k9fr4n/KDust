@@ -1116,84 +1116,102 @@ function ChatPageInner() {
           in turn pushes the body past 100dvh and creates a page-level
           scrollbar on the right. */}
       <section className="flex-1 flex flex-col min-h-0 min-w-0 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
-        {/* Toolbar container (Franck 2026-04-23 18:48). Two stacked
-            rows in the same bordered block:
-              1. Conversation identity (title + copyable Dust sId
-                 + open-in-dust link). Only rendered when a
-                 conversation is active.
-              2. Agent picker + MCP chip + per-conversation
-                 actions + New chat.
-            Previously these lived in two separate border-b'd
-            blocks; merging them keeps the chat header compact and
-            groups all meta-info next to the agent selector. */}
-        <div className="border-b border-slate-200 dark:border-slate-800">
-          {currentId && (() => {
+        {/* Compact single-row toolbar (Franck 2026-04-23 19:27).
+            Everything fits on one horizontal line. Two render modes:
+              \u2022 Active conversation (currentId != null):
+                [\ud83d\udcac] Title \u00b7 Agent(name as text)
+                       sId [copy] [open-in-dust]
+                                             [MCP] [pin/del] [+New]
+                Agent is rendered as a muted label (not a combobox)
+                because changing the agent mid-conversation is
+                unsupported by Dust \u2014 the picker was always
+                disabled anyway, so we drop the control entirely.
+              \u2022 No conversation (currentId == null):
+                [\ud83d\udcac] <agent select>               [MCP] [+New]
+                Full picker because the user is choosing an agent
+                before their first message.
+            Single flex row, min-w-0 + truncate on the title so long
+            titles collapse gracefully instead of pushing buttons
+            off-screen. */}
+        <div className="p-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 min-w-0">
+          <MessageSquare size={16} className="text-slate-400 shrink-0" />
+
+          {currentId ? (() => {
             const currentConv = convs.find((c) => c.id === currentId);
-            // Prefer the Dust sId \u2014 that's what dust.tt shows and
-            // what users paste for cross-tool navigation. Falls
-            // back to the local cuid if the sId hasn't been synced
-            // yet (pre-first-message race).
+            const agentName =
+              agents.find((a) => a.sId === agentSId)?.name ??
+              currentConv?.agentName ??
+              currentConv?.agentSId ??
+              'Agent';
+            // Prefer the Dust sId over our local cuid: that's what
+            // users recognise from dust.tt and what they paste to
+            // cross-link. Falls back to the cuid only before the
+            // sId has been synced (first-message race).
             const displayedId = currentConv?.dustConversationSId ?? currentId;
             return (
-              <div className="px-3 pt-2 pb-1 flex items-center gap-3 min-w-0">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium truncate" title={currentConv?.title}>
-                    {currentConv?.title ?? 'Untitled conversation'}
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                    <code className="font-mono truncate" title={displayedId}>
-                      {displayedId}
-                    </code>
-                    <CopyIdButton value={displayedId} />
-                    {currentConv?.dustConversationSId && (
-                      <a
-                        href={`https://dust.tt/w/0/assistant/${currentConv.dustConversationSId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                        title="Open in Dust"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-                      </a>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <>
+                {/* Title block \u2014 truncates. Agent name is shown as
+                    a subtle prefix-suffix next to the title so it's
+                    always visible without taking its own column. */}
+                <span
+                  className="text-sm font-medium truncate min-w-0"
+                  title={currentConv?.title}
+                >
+                  {currentConv?.title ?? 'Untitled conversation'}
+                </span>
+                <span className="text-xs text-slate-500 shrink-0" title="Agent">
+                  {'\u00b7 ' + agentName}
+                </span>
+                {/* sId group: monospace id + copy + open-in-dust.
+                    `ml-3` keeps some air between the title block and
+                    the identity group so the eye separates them. */}
+                <span className="ml-3 flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
+                  <code className="font-mono" title={displayedId}>
+                    {displayedId}
+                  </code>
+                  <CopyIdButton value={displayedId} />
+                  {currentConv?.dustConversationSId && (
+                    <a
+                      href={`https://dust.tt/w/0/assistant/${currentConv.dustConversationSId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                      title="Open in Dust"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                    </a>
+                  )}
+                </span>
+              </>
             );
-          })()}
-        <div className="p-3 flex items-center gap-3">
-          <MessageSquare size={18} className="text-slate-400" />
-          <select
-            className={field + ' max-w-xs'}
-            value={agentSId}
-            onChange={(e) => {
-              setAgentSId(e.target.value);
-              setAgentPickedBy('user');
-            }}
-            disabled={!!currentId}
-          >
-            {agents.map((a) => (
-              <option
-                key={a.sId}
-                value={a.sId}
-                className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
-              >
-                {a.name}
-              </option>
-            ))}
-          </select>
-          {currentId && (
-            <span className="text-xs text-slate-500">
-              Agent locked for this conversation
-            </span>
+          })() : (
+            /* New-chat mode: show the agent picker inline. Kept as
+               a native <select> to match the rest of the app; the
+               combobox-disabled arm used to live here too. */
+            <select
+              className={field + ' max-w-xs'}
+              value={agentSId}
+              onChange={(e) => {
+                setAgentSId(e.target.value);
+                setAgentPickedBy('user');
+              }}
+            >
+              {agents.map((a) => (
+                <option
+                  key={a.sId}
+                  value={a.sId}
+                  className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  {a.name}
+                </option>
+              ))}
+            </select>
           )}
 
-          {/* Right-aligned cluster: MCP status chip (when a project
-              is bound) + the "New chat" button that used to live in
-              the now-removed sidebar. `ml-auto` on the wrapper keeps
-              both anchored to the right regardless of whether the
-              MCP chip is visible. */}
-          <div className="ml-auto flex items-center gap-2">
+          {/* Right-aligned cluster: MCP chip + per-conv actions +
+              New chat. `ml-auto` pushes the cluster regardless of
+              whether the title/agent column is wide or narrow. */}
+          <div className="ml-auto flex items-center gap-2 shrink-0">
             {currentProject && (
               <span
                 className={`flex items-center gap-1 text-xs px-2 py-1 rounded border ${
@@ -1213,22 +1231,14 @@ function ChatPageInner() {
               >
                 <Wrench size={12} />
                 {mcpStatus === 'ready'
-                  ? `fs tools \u00b7 ${currentProject}`
+                  ? `fs \u00b7 ${currentProject}`
                   : mcpStatus === 'starting'
-                    ? `starting fs tools\u2026`
+                    ? `starting\u2026`
                     : mcpStatus === 'error'
-                      ? 'fs tools error'
-                      : `fs tools idle \u00b7 ${currentProject}`}
+                      ? 'fs error'
+                      : `fs idle`}
               </span>
             )}
-            {/* Per-conversation actions (Franck 2026-04-20 16:46):
-                pin + delete for the CURRENT conversation, always
-                visible so they are discoverable on touch devices and
-                match the /conversations dashboard behaviour. Same
-                togglePin / removeConv handlers as the sidebar code
-                and the same /api/conversations/:id/pin endpoint as
-                ConversationCard \u2014 pin state is therefore shared
-                across /chat and the dashboard without extra plumbing. */}
             {currentId && (() => {
               const currentConv = convs.find((c) => c.id === currentId);
               const isPinned = !!currentConv?.pinned;
@@ -1259,19 +1269,11 @@ function ChatPageInner() {
                 </div>
               );
             })()}
-            {/* New chat \u2014 moved here from the removed left sidebar
-                (Franck 2026-04-20 16:36). Same handler, unchanged
-                behaviour. */}
             <Button onClick={newChat} title="Start a new conversation">
-              <Plus size={14} /> New chat
+              <Plus size={14} /> New
             </Button>
           </div>
         </div>
-        </div>
-        {/* \u2191 closes the merged toolbar container opened above.
-            Old standalone identity strip (its own border-b block)
-            has been removed in favour of the row nested inside
-            this container (see top of section). */}
 
         <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {/* Windowing banner: only visible when the top of the

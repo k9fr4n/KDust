@@ -1116,7 +1116,52 @@ function ChatPageInner() {
           in turn pushes the body past 100dvh and creates a page-level
           scrollbar on the right. */}
       <section className="flex-1 flex flex-col min-h-0 min-w-0 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
-        <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
+        {/* Toolbar container (Franck 2026-04-23 18:48). Two stacked
+            rows in the same bordered block:
+              1. Conversation identity (title + copyable Dust sId
+                 + open-in-dust link). Only rendered when a
+                 conversation is active.
+              2. Agent picker + MCP chip + per-conversation
+                 actions + New chat.
+            Previously these lived in two separate border-b'd
+            blocks; merging them keeps the chat header compact and
+            groups all meta-info next to the agent selector. */}
+        <div className="border-b border-slate-200 dark:border-slate-800">
+          {currentId && (() => {
+            const currentConv = convs.find((c) => c.id === currentId);
+            // Prefer the Dust sId \u2014 that's what dust.tt shows and
+            // what users paste for cross-tool navigation. Falls
+            // back to the local cuid if the sId hasn't been synced
+            // yet (pre-first-message race).
+            const displayedId = currentConv?.dustConversationSId ?? currentId;
+            return (
+              <div className="px-3 pt-2 pb-1 flex items-center gap-3 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate" title={currentConv?.title}>
+                    {currentConv?.title ?? 'Untitled conversation'}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                    <code className="font-mono truncate" title={displayedId}>
+                      {displayedId}
+                    </code>
+                    <CopyIdButton value={displayedId} />
+                    {currentConv?.dustConversationSId && (
+                      <a
+                        href={`https://dust.tt/w/0/assistant/${currentConv.dustConversationSId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                        title="Open in Dust"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        <div className="p-3 flex items-center gap-3">
           <MessageSquare size={18} className="text-slate-400" />
           <select
             className={field + ' max-w-xs'}
@@ -1222,54 +1267,11 @@ function ChatPageInner() {
             </Button>
           </div>
         </div>
-
-        {/*
-          Conversation identity strip (Franck 2026-04-23 15:31).
-          Re-added above the scroller after user feedback: the
-          status strip near the composer still shows timestamps
-          and counters, but users need the title on screen for
-          context-switching and the sId copyable for support /
-          linking purposes. Only rendered when a conversation is
-          active (currentId != null). Sticky within its section
-          so it stays visible on scroll.
-        */}
-        {currentId && (() => {
-          const currentConv = convs.find((c) => c.id === currentId);
-          // Prefer the Dust sId (shown on dust.tt as e.g. ZZ4Vo645fo)
-          // over our local cuid \u2014 it's what users recognise and can
-          // paste back into the Dust UI to navigate cross-platform.
-          // Falls back to the local id only while the sId hasn't
-          // been synced yet (pre-first-message race).
-          const displayedId =
-            currentConv?.dustConversationSId ?? currentId;
-          return (
-            <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 flex items-center gap-3 min-w-0">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium truncate" title={currentConv?.title}>
-                  {currentConv?.title ?? 'Untitled conversation'}
-                </div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <code className="font-mono truncate" title={displayedId}>
-                    {displayedId}
-                  </code>
-                  <CopyIdButton value={displayedId} />
-                  {currentConv?.dustConversationSId && (
-                    <a
-                      href={`https://dust.tt/w/0/assistant/${currentConv.dustConversationSId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                      title="Open in Dust"
-                    >
-                      {/* same 12px sizing as the copy icon for visual balance */}
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+        </div>
+        {/* \u2191 closes the merged toolbar container opened above.
+            Old standalone identity strip (its own border-b block)
+            has been removed in favour of the row nested inside
+            this container (see top of section). */}
 
         <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {/* Windowing banner: only visible when the top of the

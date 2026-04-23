@@ -17,6 +17,7 @@ import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import { Pagination } from '@/components/Pagination';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
+import { RunActions } from '@/components/RunActions';
 import { PageHeader } from '@/components/PageHeader';
 import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
@@ -476,7 +477,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
               <SortableTh col="diff"     sort={sort} dir={dir} href={sortHref('diff')}>Diff</SortableTh>
               <SortableTh col="branch"   sort={sort} dir={dir} href={sortHref('branch')}>Branch</SortableTh>
               <th className="py-2">Chat</th>
-              <th></th>
+              <th className="py-2 text-right pr-2">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -605,6 +606,17 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       }
                       return <span className="text-slate-300 text-xs">—</span>;
                     })()}
+                  </td>
+                  <td className="text-right pr-2">
+                    {/* Per-row actions: Stop (if running) or Rerun
+                        (if finished), plus Delete. Full behaviour
+                        and click-event stopPropagation lives in
+                        <RunActions/>. */}
+                    <RunActions
+                      runId={r.id}
+                      taskId={r.task?.id ?? null}
+                      status={r.status}
+                    />
                   </td>
                 </ClickableRunRow>
               );

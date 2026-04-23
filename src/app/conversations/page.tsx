@@ -6,11 +6,14 @@ import { getCurrentProjectName } from '@/lib/current-project';
 // hood; we render ConversationCard directly now so we inherit the
 // always-visible pin / delete action cluster (Franck 2026-04-20 17:45).
 import { ConversationCard } from '@/components/ConversationCard';
+import { Pagination } from '@/components/Pagination';
 
 export const dynamic = 'force-dynamic';
 
+const PAGE_SIZE = 50;
+
 type SearchProps = {
-  searchParams?: Promise<{ agent?: string; q?: string; limit?: string }>;
+  searchParams?: Promise<{ agent?: string; q?: string; page?: string }>;
 };
 
 /**
@@ -31,19 +34,26 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   const cookieProject = await getCurrentProjectName();
   const agentFilter = sp.agent ?? undefined;
   const q = (sp.q ?? '').trim();
-  const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
+  const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
 
   const where: Record<string, unknown> = {};
   if (cookieProject) where.projectName = cookieProject;
   if (agentFilter) where.agentSId = agentFilter;
   if (q) where.title = { contains: q };
 
-  const conversations = await db.conversation.findMany({
-    where,
-    orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
-    take: limit,
-    include: { _count: { select: { messages: true } } },
-  });
+  // Parallel count + page fetch. count() respects the `where` so
+  // the total reflects the active filter (project, agent, q). The
+  // Pagination component computes totalPages from `total / PAGE_SIZE`.
+  const [total, conversations] = await Promise.all([
+    db.conversation.count({ where }),
+    db.conversation.findMany({
+      where,
+      orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+      include: { _count: { select: { messages: true } } },
+    }),
+  ]);
 
   const allAgents = await db.conversation.findMany({
     select: { agentSId: true, agentName: true },
@@ -63,7 +73,9 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
             </span>
           )}
         </h1>
-        <span className="text-sm text-slate-500 ml-auto">{conversations.length} shown</span>
+        <span className="text-sm text-slate-500 ml-auto">
+          {conversations.length} shown · {total.toLocaleString('fr-FR')} total
+        </span>
       </div>
 
       <form method="get" action="/conversations" className="mb-4 flex gap-2">
@@ -136,6 +148,16 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
           ))}
         </ul>
       )}
+
+      {/* Pagination keeps the active filters (agent, q) so paging
+          through a narrowed list works as expected. */}
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        unit="conversations"
+        buildHref={(p) => buildHref({ agent: agentFilter, q, page: p })}
+      />
     </div>
   );
 }
@@ -149,9 +171,10 @@ function pillCls(active: boolean) {
   ].join(' ');
 }
 
-function buildHref({ agent, q }: { agent?: string; q?: string }) {
+function buildHref({ agent, q, page }: { agent?: string; q?: string; page?: number }) {
   const qs = new URLSearchParams();
   if (agent) qs.set('agent', agent);
   if (q) qs.set('q', q);
+  if (page && page > 1) qs.set('page', String(page));
   return `/conversations${qs.toString() ? `?${qs}` : ''}`;
 }

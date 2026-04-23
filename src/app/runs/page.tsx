@@ -15,6 +15,7 @@ import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { ClickableRunRow } from '@/components/ClickableRunRow';
 import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
+import { Pagination } from '@/components/Pagination';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -51,12 +52,16 @@ type SearchProps = {
     status?: string;
     task?: string;
     q?: string;
-    limit?: string;
+    page?: string;
     sort?: string;
     dir?: SortDir;
     view?: string;
   }>;
 };
+
+// Pagination page size. 50 balances "see enough history on one
+// screen" against "don't nuke SQLite on a wide project".
+const PAGE_SIZE = 50;
 
 /**
  * Small badge showing the run's provenance (who/what launched it).
@@ -122,7 +127,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const statusFilter = sp.status && sp.status !== 'all' ? sp.status : undefined;
   const taskFilter = sp.task || undefined;
   const q = (sp.q ?? '').trim();
-  const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '100', 10) || 100));
+  const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
   // View preference resolution (Franck 2026-04-22 20:48):
@@ -169,17 +174,24 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     sort === 'started' ? { startedAt: dir } :
     { startedAt: 'desc' }; // duration / diff \u2192 in-memory re-sort below
 
-  const runs = await db.taskRun.findMany({
-    where: {
-      ...(statusFilter ? { status: statusFilter } : {}),
-      ...(taskFilter ? { taskId: taskFilter } : {}),
-      ...(currentProject ? { task: { is: { projectPath: currentProject } } } : {}),
-      ...qClause,
-    },
-    orderBy: dbOrderBy,
-    take: limit,
-    include: { task: { select: { id: true, name: true, projectPath: true } } },
-  });
+  // where is shared between count() and findMany() so pagination
+  // stays consistent with the active filters.
+  const runsWhere = {
+    ...(statusFilter ? { status: statusFilter } : {}),
+    ...(taskFilter ? { taskId: taskFilter } : {}),
+    ...(currentProject ? { task: { is: { projectPath: currentProject } } } : {}),
+    ...qClause,
+  };
+  const [totalRuns, runs] = await Promise.all([
+    db.taskRun.count({ where: runsWhere }),
+    db.taskRun.findMany({
+      where: runsWhere,
+      orderBy: dbOrderBy,
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+      include: { task: { select: { id: true, name: true, projectPath: true } } },
+    }),
+  ]);
 
   // In-memory re-sort for computed fields. Tiebreak on startedAt desc
   // so rows stay deterministic when values collide (e.g. many runs\n  // with filesChanged=null).
@@ -265,6 +277,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     sort: SortKey;
     dir: SortDir;
     view: ViewMode;
+    page: number;
   }>) => {
     const qs = new URLSearchParams();
     const merged = {
@@ -274,6 +287,15 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       sort: patch.sort ?? sort,
       dir: patch.dir ?? dir,
       view: patch.view ?? view,
+      // Any filter change (status/task/q/sort/dir) resets to page 1
+      // unless the caller explicitly passes a page value. The tree
+      // view toggle also resets paging since the row set differs.
+      page: patch.page ?? (
+        (patch.status !== undefined || patch.task !== undefined || patch.q !== undefined ||
+         patch.sort !== undefined || patch.dir !== undefined || patch.view !== undefined)
+          ? 1
+          : page
+      ),
     };
     if (merged.status && merged.status !== 'all') qs.set('status', merged.status);
     if (merged.task) qs.set('task', merged.task);
@@ -281,6 +303,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     if (merged.sort !== 'started') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
     if (merged.view !== 'flat') qs.set('view', merged.view);
+    if (merged.page > 1) qs.set('page', String(merged.page));
     return `/runs${qs.toString() ? `?${qs}` : ''}`;
   };
   // Tree ordering: DFS over the fetched runs. We preserve the
@@ -584,6 +607,18 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           </tbody>
         </table>
       )}
+
+      {/* Pagination. Note: in tree view, `totalRuns` still counts
+          top-level matches (skip/take apply there); orphan ancestors
+          pulled in separately are not included in the total. Users
+          page through "origin" rows, not the rendered tree size. */}
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={totalRuns}
+        unit="runs"
+        buildHref={(p) => buildHref({ page: p })}
+      />
     </div>
   );
 }

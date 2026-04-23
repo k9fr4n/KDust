@@ -4,10 +4,18 @@ import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
+import { Pagination } from '@/components/Pagination';
 import { nextRunAt } from '@/lib/cron/validator';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
+
+// Page size for /tasks. Tasks rows are taller than run rows
+// (prompt preview, inline actions) so 30 fits a reasonable screen
+// without a vertical scroll explosion. Paging works against the
+// post-filter, post-sort in-memory array because several filters
+// (status, lastRun) join TaskRun and are applied outside SQL.
+const PAGE_SIZE = 30;
 
 /**
  * UI-facing task "kind" filter. This single filter conflates two
@@ -41,7 +49,7 @@ type SearchProps = {
     status?: Status;
     sort?: string;
     dir?: SortDir;
-    limit?: string;
+    page?: string;
   }>;
 };
 
@@ -84,7 +92,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   const status: Status = sp.status ?? 'all';
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
-  const limit = Math.min(500, Math.max(1, parseInt(sp.limit ?? '200', 10) || 200));
+  const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
 
   const where: Prisma.TaskWhereInput = {};
   // Cookie-scoped project filter is skipped when the user explicitly
@@ -156,7 +164,10 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     return r * mult;
   };
   filtered.sort(cmp);
-  const paged = filtered.slice(0, limit);
+  // Pagination applies AFTER the in-memory status filter + sort so
+  // the total displayed matches what the user would actually browse.
+  const total = filtered.length;
+  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const runningIds = new Set(
     paged.filter((c) => c.runs[0]?.status === 'running').map((c) => c.id),
@@ -169,8 +180,17 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     status: Status;
     sort: SortKey;
     dir: SortDir;
+    page: number;
   }>) => {
     const qs = new URLSearchParams();
+    // Filter / sort changes reset pagination to page 1 so the user
+    // doesn't land on an empty page after narrowing the list. If
+    // the caller explicitly wants to keep the current page, they
+    // pass `page: currentPage`.
+    const resetsPage =
+      patch.q !== undefined || patch.kind !== undefined ||
+      patch.enabled !== undefined || patch.status !== undefined ||
+      patch.sort !== undefined || patch.dir !== undefined;
     const merged = {
       q: patch.q ?? q,
       kind: patch.kind ?? kind,
@@ -178,6 +198,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       status: patch.status ?? status,
       sort: patch.sort ?? sort,
       dir: patch.dir ?? dir,
+      page: patch.page ?? (resetsPage ? 1 : page),
     };
     if (merged.q) qs.set('q', merged.q);
     if (merged.kind && merged.kind !== 'all') qs.set('kind', merged.kind);
@@ -187,6 +208,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     // (lastRun desc) so pristine links stay short.
     if (merged.sort !== 'lastRun') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
+    if (merged.page > 1) qs.set('page', String(merged.page));
     return `/tasks${qs.toString() ? `?${qs}` : ''}`;
   };
   /** Build the href for a column header click: flip dir on same col, else asc/desc default. */
@@ -213,7 +235,9 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             </span>
           )}
         </h1>
-        <span className="text-sm text-slate-500 ml-auto">{paged.length} shown</span>
+        <span className="text-sm text-slate-500 ml-auto">
+          {paged.length} shown · {total.toLocaleString('fr-FR')} total
+        </span>
         <Link
           href="/tasks/new"
           className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"
@@ -421,6 +445,14 @@ export default async function TasksPage({ searchParams }: SearchProps) {
           </tbody>
         </table>
       )}
+
+      <Pagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        unit="tasks"
+        buildHref={(p) => buildHref({ page: p })}
+      />
     </div>
   );
 }

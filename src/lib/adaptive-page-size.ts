@@ -25,7 +25,15 @@ import { cookies } from 'next/headers';
  *                screens; ceiling protects SQLite on huge displays.
  */
 export async function getAdaptivePageSize(params: {
+  /**
+   * Fallback row-height estimate in pixels, used only when the
+   * probe hasn't measured a real row yet (first visit, or the
+   * current filter returns zero rows so there's nothing to
+   * measure). Precise value doesn't matter much \u2014 one-off first
+   * paint before the probe refreshes.
+   */
   rowPx: number;
+  /** Fallback page size when neither measurement is available. */
   fallback: number;
   /**
    * Vertical pixels between the #rows-anchor element and the
@@ -34,21 +42,34 @@ export async function getAdaptivePageSize(params: {
    *   - /conversations: 0    (no header; the anchor sits at the
    *                           top of the first card)
    * Subtracted from the probe-measured availablePx before dividing
-   * by rowPx.
+   * by row height.
    */
   topOffsetPx?: number;
   min?: number;
   max?: number;
 }): Promise<number> {
-  const { rowPx, fallback } = params;
+  const { rowPx: fallbackRowPx, fallback } = params;
   const topOffset = params.topOffsetPx ?? 0;
   const min = params.min ?? 10;
   const max = params.max ?? 100;
 
   const c = await cookies();
-  const raw = c.get('kdust_vp_rows_h')?.value;
-  const availablePx = raw ? parseInt(raw, 10) : NaN;
+  const availRaw = c.get('kdust_vp_rows_h')?.value;
+  const availablePx = availRaw ? parseInt(availRaw, 10) : NaN;
   if (!Number.isFinite(availablePx) || availablePx <= 0) return fallback;
+
+  // Prefer the browser-measured row height over the CFG fallback.
+  // The measurement is taken from the rendered first row via
+  // getBoundingClientRect(), so it already accounts for padding,
+  // font metrics, dark-mode differences and any CSS wrapping
+  // triggered by narrow widths. Only when the cookie is missing
+  // (first visit OR empty list) do we fall back to the constant.
+  const rowHRaw = c.get('kdust_row_h')?.value;
+  const measuredRowH = rowHRaw ? parseInt(rowHRaw, 10) : NaN;
+  const rowPx =
+    Number.isFinite(measuredRowH) && measuredRowH > 4
+      ? measuredRowH
+      : fallbackRowPx;
 
   const rows = Math.floor((availablePx - topOffset) / rowPx);
   return Math.max(min, Math.min(max, rows));

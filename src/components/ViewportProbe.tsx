@@ -37,13 +37,22 @@
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
-const COOKIE_NAME = 'kdust_vp_rows_h';
+const COOKIE_AVAIL = 'kdust_vp_rows_h';
+// Measured height of one actual row, queried from the DOM (Franck
+// 2026-04-23 15:25). Replaces the per-page rowPx constant which
+// was a poor guess because real row heights vary with viewport
+// width (wrapping), dark-mode font rendering, and CSS loading
+// order. When present, the server helper prefers this over its
+// fallback rowPx.
+const COOKIE_ROW_H = 'kdust_row_h';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 const CHANGE_THRESHOLD_PX = 40;
 const RESIZE_DEBOUNCE_MS = 400;
 // Vertical budget for the pagination control at the bottom
 // (label line + buttons + top margin + some breathing room).
-const PAGINATION_FOOTER_PX = 72;
+// Bumped from 72 to 88 to give a small anti-scrollbar buffer \u2014
+// better to leave a few px empty than to trigger a scroll.
+const PAGINATION_FOOTER_PX = 88;
 const ANCHOR_ID = 'rows-anchor';
 
 function readCookie(name: string): number | null {
@@ -62,11 +71,30 @@ function writeCookie(name: string, value: number) {
 
 export function ViewportProbe() {
   const router = useRouter();
-  const lastRef = useRef<number | null>(null);
+  const lastAvailRef = useRef<number | null>(null);
+  const lastRowHRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    lastRef.current = readCookie(COOKIE_NAME);
+    lastAvailRef.current = readCookie(COOKIE_AVAIL);
+    lastRowHRef.current = readCookie(COOKIE_ROW_H);
+
+    const measureRowHeight = (anchor: HTMLElement): number | null => {
+      // Look for the first real row inside the anchor's sibling
+      // container. Supports the two shapes used by our list pages:
+      //   - table row  (<tbody><tr>) for /runs, /tasks
+      //   - list item  (<ul><li>)   for /conversations
+      // Returns null when no row is rendered (empty filter). In
+      // that case the server helper keeps its fallback rowPx.
+      const parent = anchor.parentElement;
+      if (!parent) return null;
+      const candidate = parent.querySelector<HTMLElement>(
+        'tbody > tr, ul > li',
+      );
+      if (!candidate) return null;
+      const h = candidate.getBoundingClientRect().height;
+      return h > 4 ? h : null;
+    };
 
     const apply = () => {
       // Find the anchor element. If missing, fall back to 70% of
@@ -77,20 +105,38 @@ export function ViewportProbe() {
       const anchor = document.getElementById(ANCHOR_ID);
       const winH = window.innerHeight;
       let available: number;
+      let rowH: number | null = null;
       if (anchor) {
         const top = anchor.getBoundingClientRect().top;
         available = winH - top - PAGINATION_FOOTER_PX;
+        rowH = measureRowHeight(anchor);
       } else {
         available = Math.floor(winH * 0.7);
       }
       available = Math.max(100, available); // hard floor, sanity
 
-      const prev = lastRef.current;
-      if (prev !== null && Math.abs(available - prev) < CHANGE_THRESHOLD_PX) {
-        return;
+      const availChanged =
+        lastAvailRef.current === null ||
+        Math.abs(available - lastAvailRef.current) >= CHANGE_THRESHOLD_PX;
+      // Row-height change gets a much tighter threshold (2px) \u2014
+      // it changes discretely with CSS / viewport width, and any
+      // drift affects pageSize precision. No storm risk since the
+      // row geometry doesn't fluctuate mid-scroll.
+      const rowHChanged =
+        rowH !== null &&
+        (lastRowHRef.current === null ||
+          Math.abs(rowH - lastRowHRef.current) >= 2);
+
+      if (!availChanged && !rowHChanged) return;
+
+      const availRounded = Math.round(available);
+      writeCookie(COOKIE_AVAIL, availRounded);
+      lastAvailRef.current = availRounded;
+      if (rowH !== null) {
+        const rowHRounded = Math.round(rowH);
+        writeCookie(COOKIE_ROW_H, rowHRounded);
+        lastRowHRef.current = rowHRounded;
       }
-      writeCookie(COOKIE_NAME, available);
-      lastRef.current = available;
       router.refresh();
     };
 

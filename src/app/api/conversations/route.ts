@@ -39,9 +39,29 @@ const CreateSchema = z.object({
    */
   fileIds: z.array(z.string().regex(/^fil_/)).optional(),
   fileMetas: z
-    .array(z.object({ sId: z.string(), name: z.string() }))
+    .array(
+      z.object({
+        sId: z.string(),
+        name: z.string(),
+        contentType: z.string().optional(),
+      }),
+    )
     .optional(),
 });
+
+// Same shape as in [id]/messages/route.ts. Kept duplicated to
+// avoid a shared utility import just for 10 lines.
+function buildAttachmentSuffix(
+  metas: Array<{ sId: string; name: string; contentType?: string }> | undefined,
+): string {
+  if (!metas || metas.length === 0) return '';
+  const lines = metas.map((f) => {
+    const isImage = (f.contentType ?? '').startsWith('image/');
+    if (isImage) return `![${f.name}](${f.sId})`;
+    return `[\ud83d\udcce ${f.name}](/api/files/${f.sId})`;
+  });
+  return '\n\n' + lines.join('\n');
+}
 
 export async function POST(req: Request) {
   const parsed = CreateSchema.safeParse(await req.json());
@@ -76,13 +96,7 @@ export async function POST(req: Request) {
         create: [
           {
             role: 'user',
-            // Same attachment-marker convention as the follow-up
-            // messages endpoint. See comment there.
-            content:
-              content +
-              (fileMetas && fileMetas.length > 0
-                ? '\n\n_Attachments: ' + fileMetas.map((f) => f.name).join(', ') + '_'
-                : ''),
+            content: content + buildAttachmentSuffix(fileMetas),
           },
         ],
       },

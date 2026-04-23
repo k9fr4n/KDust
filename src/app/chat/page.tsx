@@ -726,17 +726,43 @@ function ChatPageInner() {
         a.status === 'ready' && !!a.sId,
     );
     const fileIds = readyFiles.map((a) => a.sId);
-    const fileMetas = readyFiles.map((a) => ({ sId: a.sId, name: a.name }));
+    const fileMetas = readyFiles.map((a) => ({
+      sId: a.sId,
+      name: a.name,
+      contentType: a.contentType,
+    }));
 
     const content = draft;
+    // Markdown appended to the user message so the attachments
+    // render in the thread (thumbnails for images, download link
+    // for other files). Mirrors buildAttachmentSuffix() on the
+    // server; kept client-side so the optimistic local bubble
+    // shows the attachment immediately without waiting for the
+    // server round-trip.
+    const attachmentMarkdown =
+      readyFiles.length > 0
+        ? '\n\n' +
+          readyFiles
+            .map((f) =>
+              f.contentType.startsWith('image/')
+                ? `![${f.name}](${f.sId})`
+                : `[\ud83d\udcce ${f.name}](/api/files/${f.sId})`,
+            )
+            .join('\n')
+        : '';
+    const contentWithAttachments = content + attachmentMarkdown;
+
     setDraft('');
     setAttachments([]); // clear chips so the next turn starts fresh
     setError(null);
 
-    // Optimistic local append
+    // Optimistic local append \u2014 use the content WITH attachment
+    // markdown so the user sees their uploads in the thread
+    // immediately. The server persists the same merged content,
+    // so the tmp row is replaced seamlessly on refresh.
     setMessages((m) => [
       ...m,
-      { id: `tmp-${Date.now()}`, role: 'user', content },
+      { id: `tmp-${Date.now()}`, role: 'user', content: contentWithAttachments },
     ]);
 
     // --- MCP freshness guard (Franck 2026-04-20 14:07) -----------------

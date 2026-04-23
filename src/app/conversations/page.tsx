@@ -18,7 +18,9 @@ export const dynamic = 'force-dynamic';
 // row + pagination footer \u2248 280px. Fallback 50 matches the
 // previous fixed value.
 const CONV_PAGE_SIZE_CFG = {
-  rowPx: 60,
+  // Two-line card: title + agent/project row under py-2 padding.
+  // Measured \u224848px. Previous 60 left a small gap at the bottom.
+  rowPx: 48,
   // No table header; anchor sits at the top of the first card.
   fallback: 20,
   min: 10,

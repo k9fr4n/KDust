@@ -75,7 +75,8 @@ type SearchProps = {
 // only need the per-row height estimate here. Run rows render
 // at ~36px (single-line table row, status pill + monospace).
 const RUNS_PAGE_SIZE_CFG = {
-  rowPx: 36,
+  // py-2 (16px) + single text line (~18px) \u2248 34px per row.
+  rowPx: 34,
   topOffsetPx: 36, // <thead> row height sits inside the measured area
   fallback: 30,
   min: 15,

@@ -20,7 +20,10 @@ export const dynamic = 'force-dynamic';
 // in-memory array because several filters (status, lastRun) join
 // TaskRun and are applied outside SQL.
 const TASKS_PAGE_SIZE_CFG = {
-  rowPx: 48,
+  // Measured: py-2 (16px) + single-line content (~18px) \u2248 34px.
+  // Previous estimate (48) assumed a taller two-line cell and
+  // left ~3-4 empty row slots at the bottom.
+  rowPx: 34,
   topOffsetPx: 36, // <thead> row height
   fallback: 20,
   min: 10,

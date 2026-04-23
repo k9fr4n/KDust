@@ -70,10 +70,14 @@ type SearchProps = {
 // fixed value for first-visit parity. Clamp [15, 100] keeps a
 // useful page size on tiny windows and avoids 200+ count-heavy
 // queries on a 4K screen.
+// ViewportProbe measures the actual available pixels for the
+// rows (below #rows-anchor, above the pagination footer). We
+// only need the per-row height estimate here. Run rows render
+// at ~36px (single-line table row, status pill + monospace).
 const RUNS_PAGE_SIZE_CFG = {
-  rowPx: 40,
-  reservedPx: 360,
-  fallback: 50,
+  rowPx: 36,
+  topOffsetPx: 36, // <thead> row height sits inside the measured area
+  fallback: 30,
   min: 15,
   max: 100,
 };
@@ -485,6 +489,10 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         )}
       </div>
 
+      {/* Anchor for ViewportProbe: measures the top of the rows
+          area to compute available height. Must sit right where
+          the first row would be (above the table if rendered). */}
+      <div id="rows-anchor" />
       {runs.length === 0 ? (
         <p className="text-slate-500 text-sm">No runs match these filters.</p>
       ) : (

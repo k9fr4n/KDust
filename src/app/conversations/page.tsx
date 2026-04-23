@@ -18,9 +18,9 @@ export const dynamic = 'force-dynamic';
 // row + pagination footer \u2248 280px. Fallback 50 matches the
 // previous fixed value.
 const CONV_PAGE_SIZE_CFG = {
-  rowPx: 70,
-  reservedPx: 280,
-  fallback: 50,
+  rowPx: 60,
+  // No table header; anchor sits at the top of the first card.
+  fallback: 20,
   min: 10,
   max: 100,
 };
@@ -143,6 +143,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         </div>
       )}
 
+      <div id="rows-anchor" />
       {conversations.length === 0 ? (
         <p className="text-slate-500 text-sm">No conversations match these filters.</p>
       ) : (

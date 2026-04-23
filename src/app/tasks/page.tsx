@@ -20,9 +20,9 @@ export const dynamic = 'force-dynamic';
 // in-memory array because several filters (status, lastRun) join
 // TaskRun and are applied outside SQL.
 const TASKS_PAGE_SIZE_CFG = {
-  rowPx: 56,
-  reservedPx: 340,
-  fallback: 30,
+  rowPx: 48,
+  topOffsetPx: 36, // <thead> row height
+  fallback: 20,
   min: 10,
   max: 80,
 };
@@ -319,6 +319,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <Link href={buildHref({ status: 'never' })} className={pillCls(status === 'never')}>never ran</Link>
       </div>
 
+      {/* Anchor measured by ViewportProbe to size PAGE_SIZE. */}
+      <div id="rows-anchor" />
       {paged.length === 0 ? (
         <p className="text-slate-500 text-sm">No cron matches the filters.</p>
       ) : (

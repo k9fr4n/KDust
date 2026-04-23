@@ -16,7 +16,38 @@
  */
 'use client';
 import React, { Fragment, useEffect, useState } from 'react';
+import { Copy, Check } from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
+
+/**
+ * Local copy-to-clipboard button (Franck 2026-04-23 15:31). Kept
+ * here rather than imported from /chat/page to avoid pulling the
+ * whole chat page into the bubble memoisation unit. Swallows
+ * clipboard errors silently (secure-context / iframe denial).
+ */
+function CopyContentButton({ value }: { value: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(value);
+          setDone(true);
+          window.setTimeout(() => setDone(false), 1500);
+        } catch {
+          /* silent */
+        }
+      }}
+      className="inline-flex items-center gap-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+      title={done ? 'Copied!' : 'Copy message'}
+      aria-label="Copy message"
+    >
+      {done ? <Check size={11} className="text-green-600" /> : <Copy size={11} />}
+    </button>
+  );
+}
 
 /** Short HH:MM. Kept here to avoid a prop — pure function of ISO. */
 function clockTime(iso: string): string {
@@ -109,17 +140,26 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
               </MessageMarkdown>
             )}
           </div>
-          <div className={`text-[10px] text-slate-400 px-1 ${isUser ? 'text-right' : 'text-left'}`}>
+          {/* Metadata row (Franck 2026-04-23 15:31):
+              - timestamp bumped 10px \u2192 11px (old was hard to read),
+              - copy button on the opposite side of the role label so
+                it's always reachable regardless of user/agent alignment. */}
+          <div
+            className={`text-[11px] text-slate-500 dark:text-slate-400 px-1 flex items-center gap-1.5 ${
+              isUser ? 'flex-row-reverse' : 'flex-row'
+            }`}
+          >
             <span className="font-medium">{roleLabel}</span>
             {createdAt && (
               <span title={fullTime(createdAt)}>
-                {' · '}
+                {'· '}
                 {clockTime(createdAt)}
-                <span className="ml-1 text-slate-300 dark:text-slate-600">
+                <span className="ml-1 text-slate-400 dark:text-slate-500">
                   (<LiveRelativeTime iso={createdAt} />)
                 </span>
               </span>
             )}
+            {role !== 'system' && content && <CopyContentButton value={content} />}
           </div>
         </div>
       </div>

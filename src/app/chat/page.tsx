@@ -18,6 +18,8 @@ import {
   Clock,
   Pin,
   PinOff,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 type Agent = { sId: string; name: string };
@@ -94,6 +96,50 @@ function elapsed(sinceIso?: string | null, nowMs?: number): string {
   return `${h}h ${String(m % 60).padStart(2, '0')}m`;
 }
 
+/**
+ * Small inline copy-to-clipboard button used in the conversation
+ * header strip (for the sId) and in message bubbles (for the raw
+ * message content). Shows a check mark for 1.5s after a successful
+ * copy; swallows errors silently (clipboard access can be denied
+ * in some iframed / non-secure contexts).
+ */
+function CopyIdButton({
+  value,
+  label = 'Copy',
+  size = 12,
+  className = '',
+}: {
+  value: string;
+  label?: string;
+  size?: number;
+  className?: string;
+}) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(value);
+          setDone(true);
+          window.setTimeout(() => setDone(false), 1500);
+        } catch {
+          /* silent */
+        }
+      }}
+      className={
+        'inline-flex items-center gap-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 ' +
+        className
+      }
+      title={done ? 'Copied!' : label}
+      aria-label={label}
+    >
+      {done ? <Check size={size} className="text-green-600" /> : <Copy size={size} />}
+    </button>
+  );
+}
+
 export default function ChatPage() {
   // Suspense boundary required by Next.js 15 because ChatPageInner calls useSearchParams().
   return (
@@ -104,6 +150,24 @@ export default function ChatPage() {
 }
 
 function ChatPageInner() {
+  /**
+   * Disable body-level scrolling while /chat is mounted
+   * (Franck 2026-04-23 15:31). The chat surface is sized with
+   * calc(100dvh - 6.5rem); any conditional element above (the
+   * DustAuthBanner, browser chrome changes) can shift the math
+   * by a few px and surface a useless global scrollbar. Only the
+   * inner messages pane (scrollerRef) should scroll; clipping at
+   * <body> is the safe belt-and-braces fix. Reverts on unmount so
+   * other routes keep their normal scroll behaviour.
+   */
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
   const [agents, setAgents] = useState<Agent[]>([]);
   const [convs, setConvs] = useState<ConvSummary[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -1018,12 +1082,33 @@ function ChatPageInner() {
         </div>
 
         {/*
-          Conversation info was previously duplicated here at the top of
-          the pane. Removed 2026-04-18 — the persistent status strip
-          just above the composer now carries the same info (message
-          count, agent, timestamps) and is always in the user's
-          immediate visual field regardless of scroll position.
+          Conversation identity strip (Franck 2026-04-23 15:31).
+          Re-added above the scroller after user feedback: the
+          status strip near the composer still shows timestamps
+          and counters, but users need the title on screen for
+          context-switching and the sId copyable for support /
+          linking purposes. Only rendered when a conversation is
+          active (currentId != null). Sticky within its section
+          so it stays visible on scroll.
         */}
+        {currentId && (() => {
+          const currentConv = convs.find((c) => c.id === currentId);
+          return (
+            <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 flex items-center gap-3 min-w-0">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate" title={currentConv?.title}>
+                  {currentConv?.title ?? 'Untitled conversation'}
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <code className="font-mono truncate" title={currentId}>
+                    {currentId}
+                  </code>
+                  <CopyIdButton value={currentId} />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {/* Windowing banner: only visible when the top of the

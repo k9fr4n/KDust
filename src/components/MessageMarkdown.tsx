@@ -297,6 +297,36 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
           ),
           p: ({ children: c }) => <p className="my-1 whitespace-pre-wrap">{c}</p>,
           hr: () => <hr className="my-3 border-slate-200 dark:border-slate-700" />,
+          // Image support (Franck 2026-04-23 15:31). Agent-generated
+          // images arrive inline as ![alt](url) in the message
+          // content; the default react-markdown <img> has no size
+          // constraints so it overflowed or rendered invisibly.
+          // We cap width to the bubble, keep aspect ratio, add
+          // rounded corners + subtle border. target=_blank on the
+          // wrapping anchor so a click opens the full-size image.
+          img: ({ src, alt, title }) => {
+            if (!src) return null;
+            return (
+              <a
+                href={src}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block my-2 max-w-full"
+                title={title ?? alt ?? 'Open image'}
+              >
+                {/* Plain <img>: content comes from our backend /
+                    the agent; we do not need next/image optimization
+                    (would require remote domain allowlisting anyway). */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={src}
+                  alt={alt ?? ''}
+                  className="max-w-full h-auto rounded-md border border-slate-200 dark:border-slate-700"
+                  loading="lazy"
+                />
+              </a>
+            );
+          },
         }}
       >
         {children}

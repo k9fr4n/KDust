@@ -306,9 +306,18 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
           // wrapping anchor so a click opens the full-size image.
           img: ({ src, alt, title }) => {
             if (!src) return null;
+            // Agents sometimes return a bare Dust file id
+            // (`fil_...`) as the image src instead of a full URL.
+            // Rewrite to our authenticated proxy route so the
+            // browser doesn't try to fetch it relative to the
+            // current origin (which 404s on localhost:3000/fil_xxx).
+            // See src/app/api/files/[sId]/route.ts.
+            const resolvedSrc = /^fil_[A-Za-z0-9_-]+$/.test(src)
+              ? `/api/files/${src}`
+              : src;
             return (
               <a
-                href={src}
+                href={resolvedSrc}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block my-2 max-w-full"
@@ -319,7 +328,7 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
                     (would require remote domain allowlisting anyway). */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={src}
+                  src={resolvedSrc}
                   alt={alt ?? ''}
                   className="max-w-full h-auto rounded-md border border-slate-200 dark:border-slate-700"
                   loading="lazy"

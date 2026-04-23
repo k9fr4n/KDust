@@ -7,10 +7,23 @@ import { getCurrentProjectName } from '@/lib/current-project';
 // always-visible pin / delete action cluster (Franck 2026-04-20 17:45).
 import { ConversationCard } from '@/components/ConversationCard';
 import { Pagination } from '@/components/Pagination';
+import { ViewportProbe } from '@/components/ViewportProbe';
+import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 
 export const dynamic = 'force-dynamic';
 
-const PAGE_SIZE = 50;
+// Adaptive pagination (Franck 2026-04-23 14:04). Conversation
+// cards are \u224870px each (title + agent line + timestamp). Reserved
+// vertical = top nav + page title + search form + agent pills
+// row + pagination footer \u2248 280px. Fallback 50 matches the
+// previous fixed value.
+const CONV_PAGE_SIZE_CFG = {
+  rowPx: 70,
+  reservedPx: 280,
+  fallback: 50,
+  min: 10,
+  max: 100,
+};
 
 type SearchProps = {
   searchParams?: Promise<{ agent?: string; q?: string; page?: string }>;
@@ -35,6 +48,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   const agentFilter = sp.agent ?? undefined;
   const q = (sp.q ?? '').trim();
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
+  const PAGE_SIZE = await getAdaptivePageSize(CONV_PAGE_SIZE_CFG);
 
   const where: Record<string, unknown> = {};
   if (cookieProject) where.projectName = cookieProject;
@@ -63,6 +77,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
 
   return (
     <div className="w-full">
+      <ViewportProbe />
       <div className="flex items-center gap-3 mb-4">
         <MessageSquare className="text-slate-400" />
         <h1 className="text-2xl font-bold">

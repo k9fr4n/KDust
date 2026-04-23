@@ -5,17 +5,27 @@ import { getCurrentProjectName } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import { Pagination } from '@/components/Pagination';
+import { ViewportProbe } from '@/components/ViewportProbe';
+import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import { nextRunAt } from '@/lib/cron/validator';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
 
-// Page size for /tasks. Tasks rows are taller than run rows
-// (prompt preview, inline actions) so 30 fits a reasonable screen
-// without a vertical scroll explosion. Paging works against the
-// post-filter, post-sort in-memory array because several filters
-// (status, lastRun) join TaskRun and are applied outside SQL.
-const PAGE_SIZE = 30;
+// Adaptive pagination (Franck 2026-04-23 14:04). Task rows run
+// ~56px each (name + agent + run summary). Reserved \u2248 340px
+// (nav + title + filters row + search form + table header +
+// pagination footer + breathing). Fallback 30 matches the prior
+// fixed value. Paging works against the post-filter, post-sort
+// in-memory array because several filters (status, lastRun) join
+// TaskRun and are applied outside SQL.
+const TASKS_PAGE_SIZE_CFG = {
+  rowPx: 56,
+  reservedPx: 340,
+  fallback: 30,
+  min: 10,
+  max: 80,
+};
 
 /**
  * UI-facing task "kind" filter. This single filter conflates two
@@ -93,6 +103,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
+  const PAGE_SIZE = await getAdaptivePageSize(TASKS_PAGE_SIZE_CFG);
 
   const where: Prisma.TaskWhereInput = {};
   // Cookie-scoped project filter is skipped when the user explicitly
@@ -225,6 +236,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
 
   return (
     <div className="w-full">
+      <ViewportProbe />
       <div className="flex items-center gap-3 mb-4">
         <Clock className="text-slate-400" />
         <h1 className="text-2xl font-bold">

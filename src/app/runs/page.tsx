@@ -16,6 +16,8 @@ import { ClickableRunRow } from '@/components/ClickableRunRow';
 import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import { Pagination } from '@/components/Pagination';
+import { ViewportProbe } from '@/components/ViewportProbe';
+import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -59,9 +61,22 @@ type SearchProps = {
   }>;
 };
 
-// Pagination page size. 50 balances "see enough history on one
-// screen" against "don't nuke SQLite on a wide project".
-const PAGE_SIZE = 50;
+// Adaptive pagination (Franck 2026-04-23 14:04).
+// Row footprint ~40px (single-line table row with status pill).
+// Reserved vertical = header (top nav ~56px) + page title+actions
+// (~64px) + filters/toggles row (~44px) + search form (~48px) +
+// table header (~40px) + pagination footer (~56px) + extra
+// breathing room (~52px) \u2248 360px. Fallback 50 matches the previous
+// fixed value for first-visit parity. Clamp [15, 100] keeps a
+// useful page size on tiny windows and avoids 200+ count-heavy
+// queries on a 4K screen.
+const RUNS_PAGE_SIZE_CFG = {
+  rowPx: 40,
+  reservedPx: 360,
+  fallback: 50,
+  min: 15,
+  max: 100,
+};
 
 /**
  * Small badge showing the run's provenance (who/what launched it).
@@ -128,6 +143,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const taskFilter = sp.task || undefined;
   const q = (sp.q ?? '').trim();
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
+  const PAGE_SIZE = await getAdaptivePageSize(RUNS_PAGE_SIZE_CFG);
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
   // View preference resolution (Franck 2026-04-22 20:48):
@@ -358,6 +374,11 @@ export default async function RunsPage({ searchParams }: SearchProps) {
 
   return (
     <div className="w-full">
+      {/* Viewport probe sets `kdust_vp_h` cookie and triggers a
+          single router.refresh() on mount (and on large resize) so
+          getAdaptivePageSize() sizes the table to the current
+          window. See src/components/ViewportProbe.tsx. */}
+      <ViewportProbe />
       <div className="flex items-center gap-3 mb-4">
         <Clock className="text-slate-400" />
         <h1 className="text-2xl font-bold">Runs</h1>

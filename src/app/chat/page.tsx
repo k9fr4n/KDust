@@ -213,6 +213,26 @@ function ChatPageInner() {
     setVisibleCount((v) => v + VISIBLE_STEP);
   };
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Auto-scroll follow state (Franck 2026-04-23 14:58).
+   *
+   * When a generation is streaming we auto-scroll the viewport to
+   * the latest token. But if the user scrolls UP mid-stream (to
+   * re-read an earlier message or copy something), we should stop
+   * yanking them back down \u2014 until the NEXT generation starts,
+   * at which point follow resumes automatically.
+   *
+   * Implementation:
+   *   - `followStream` (ref, not state) \u2014 true while we are
+   *     allowed to scroll-to-bottom on each token. Starts true.
+   *   - On scroll events within `scrollerRef`, recompute whether
+   *     the user is near the bottom (<= 80px). If they scrolled
+   *     away from it, flip the flag to false.
+   *   - When a new stream begins (streaming transition from false
+   *     to true), flip the flag back to true.\n   *   - Auto-scroll useEffect reads the flag and skips when false.\n   *\n   * A ref, not state, to avoid re-rendering on every scroll tick\n   * (scroll events fire at ~60Hz during fast scrolling). 80px\n   * threshold matches the sticky-bottom convention used in\n   * TaskLiveStatus.tsx.\n   */
+  const followStream = useRef(true);
+  const NEAR_BOTTOM_PX = 80;
   const searchParams = useSearchParams();
 
   const refreshConvs = async () => {
@@ -375,9 +395,42 @@ function ChatPageInner() {
       .catch(() => {});
   }, []);
 
+  // Auto-scroll to bottom on new content \u2014 but only while the
+  // user hasn't manually scrolled up. See the `followStream` ref
+  // definition above for the full state machine.
   useEffect(() => {
+    if (!followStream.current) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamedText]);
+
+  // Watch scroll position on the messages container. Any scroll
+  // that leaves the near-bottom zone disables follow; scrolling
+  // back to the bottom re-enables it (so the user can manually
+  // re-engage follow without waiting for the next generation).
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      followStream.current = distance <= NEAR_BOTTOM_PX;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // On each new streaming session, re-enable follow. Covers both
+  // "send a new message" and "regenerate / continue" flows because
+  // they all flip the `streaming` state false \u2192 true.
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    if (streaming && !prevStreamingRef.current) {
+      followStream.current = true;
+      // Immediate snap on kick-off so the first token is visible
+      // even if the user was previously scrolled up.
+      bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
 
   // When the server reports a stream in progress for the current conv
   // but THIS tab is not the one consuming it (e.g. user reopened the

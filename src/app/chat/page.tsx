@@ -25,6 +25,15 @@ import {
 type Agent = { sId: string; name: string };
 type ConvSummary = {
   id: string;
+  /**
+   * Dust-side conversation sId (e.g. `ZZ4Vo645fo`) \u2014 the short id
+   * visible on dust.tt. Displayed in the /chat header (and used
+   * for copy-to-clipboard) so users can cross-link a KDust
+   * conversation with its Dust counterpart. Nullable because the
+   * local row may exist before the Dust conversation has been
+   * assigned an sId (should be rare; first user message creates it).
+   */
+  dustConversationSId?: string | null;
   title: string;
   agentName: string | null;
   agentSId: string;
@@ -1093,6 +1102,13 @@ function ChatPageInner() {
         */}
         {currentId && (() => {
           const currentConv = convs.find((c) => c.id === currentId);
+          // Prefer the Dust sId (shown on dust.tt as e.g. ZZ4Vo645fo)
+          // over our local cuid \u2014 it's what users recognise and can
+          // paste back into the Dust UI to navigate cross-platform.
+          // Falls back to the local id only while the sId hasn't
+          // been synced yet (pre-first-message race).
+          const displayedId =
+            currentConv?.dustConversationSId ?? currentId;
           return (
             <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 flex items-center gap-3 min-w-0">
               <div className="min-w-0 flex-1">
@@ -1100,10 +1116,22 @@ function ChatPageInner() {
                   {currentConv?.title ?? 'Untitled conversation'}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <code className="font-mono truncate" title={currentId}>
-                    {currentId}
+                  <code className="font-mono truncate" title={displayedId}>
+                    {displayedId}
                   </code>
-                  <CopyIdButton value={currentId} />
+                  <CopyIdButton value={displayedId} />
+                  {currentConv?.dustConversationSId && (
+                    <a
+                      href={`https://dust.tt/w/0/assistant/${currentConv.dustConversationSId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                      title="Open in Dust"
+                    >
+                      {/* same 12px sizing as the copy icon for visual balance */}
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                    </a>
+                  )}
                 </div>
               </div>
             </div>

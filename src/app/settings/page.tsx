@@ -7,6 +7,7 @@ import {
   Bot,
   KeyRound,
 } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,7 +76,7 @@ export default function SettingsIndex() {
 
   return (
     <div className="max-w-3xl space-y-4">
-      <h1 className="text-2xl font-bold">Settings</h1>
+      <PageHeader icon={<SettingsIcon size={20} />} title="Settings" />
       <p className="text-sm text-slate-500">
         Administrative sections. Pick a category to configure or
         inspect KDust.

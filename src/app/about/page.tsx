@@ -1,7 +1,10 @@
+import { Info } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
+
 export default function AboutPage() {
   return (
     <div className="max-w-2xl space-y-4">
-      <h1 className="text-2xl font-bold">About KDust</h1>
+      <PageHeader icon={<Info size={20} />} title="About KDust" />
       <p className="text-sm text-slate-600 dark:text-slate-400">
         KDust is a self-hosted web UI to chat with{' '}
         <a href="https://dust.tt" className="underline" target="_blank" rel="noreferrer">

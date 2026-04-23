@@ -103,11 +103,10 @@ export default function LogsPage() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <ScrollText /> Container logs
-        </h1>
-        <span className="text-xs text-slate-500">
+      <div className="flex items-center gap-3 flex-wrap mb-4">
+        <ScrollText size={20} className="text-slate-400 shrink-0" />
+        <h1 className="text-2xl font-bold">Container logs</h1>
+        <span className="text-sm text-slate-500">
           {filtered.length} / {entries.length} lines
         </span>
 

@@ -78,10 +78,12 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-3">
-          <FolderGit2 className="text-slate-400" />
-          <h1 className="text-2xl font-bold">{current.name}</h1>
-          <span className="text-xs text-slate-500">{current.branch}</span>
-          <div className="ml-auto flex items-center gap-2">
+          <FolderGit2 size={20} className="text-slate-400 shrink-0" />
+          <h1 className="text-2xl font-bold flex items-baseline gap-2 min-w-0">
+            <span className="truncate">{current.name}</span>
+            <span className="text-base font-normal text-slate-500 font-mono">{current.branch}</span>
+          </h1>
+          <div className="ml-auto flex items-center gap-2 shrink-0">
             <SyncProjectButton projectId={current.id} />
             {/* Settings button sits next to \"Sync now\" (Franck
                 2026-04-19 18:29) so the user can jump straight to
@@ -89,7 +91,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
                 see the full identity panel. */}
             <Link
               href={`/settings/projects/${current.id}`}
-              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               title="Edit this project's settings"
             >
               <Settings size={14} />

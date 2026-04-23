@@ -7,6 +7,9 @@ import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
+import { PageHeader } from '@/components/PageHeader';
+import { FilterPill } from '@/components/FilterPill';
+import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import { nextRunAt } from '@/lib/cron/validator';
 import type { Prisma } from '@prisma/client';
@@ -241,26 +244,24 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   return (
     <div className="w-full">
       <ViewportProbe />
-      <div className="flex items-center gap-3 mb-4">
-        <Clock className="text-slate-400" />
-        <h1 className="text-2xl font-bold">
-          Tasks
-          {cookieProject && (
-            <span className="ml-2 text-base font-normal text-slate-500">
-              · {cookieProject}
+      <PageHeader
+        icon={<Clock size={20} />}
+        title="Tasks"
+        scope={cookieProject}
+        right={
+          <>
+            <span className="text-sm text-slate-500">
+              {paged.length} shown · {total.toLocaleString('fr-FR')} total
             </span>
-          )}
-        </h1>
-        <span className="text-sm text-slate-500 ml-auto">
-          {paged.length} shown · {total.toLocaleString('fr-FR')} total
-        </span>
-        <Link
-          href="/tasks/new"
-          className="rounded-md bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700"
-        >
-          + New task
-        </Link>
-      </div>
+            <Link
+              href="/tasks/new"
+              className="inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors"
+            >
+              + New task
+            </Link>
+          </>
+        }
+      />
 
       {/* Live search \u2014 see LiveSearchInput for rationale. Sibling
           filter params (kind/enabled/status/sort/dir) are preserved
@@ -268,14 +269,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
           needed anymore. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search by name…" />
-        {hasActiveFilter && (
-          <Link
-            href="/tasks"
-            className="px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
-          >
-            Clear filters
-          </Link>
-        )}
+        {hasActiveFilter && <ClearFiltersLink href="/tasks" />}
       </div>
 
       {/*
@@ -287,26 +281,26 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       */}
       <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
         <FilterLabel>Kind:</FilterLabel>
-        <Link href={buildHref({ kind: 'all' })} className={pillCls(kind === 'all')}>all</Link>
-        <Link href={buildHref({ kind: 'project' })} className={pillCls(kind === 'project')}>project</Link>
-        <Link href={buildHref({ kind: 'generic' })} className={pillCls(kind === 'generic')}>generic</Link>
+        <FilterPill href={buildHref({ kind: 'all' })} active={kind === 'all'}>all</FilterPill>
+        <FilterPill href={buildHref({ kind: 'project' })} active={kind === 'project'}>project</FilterPill>
+        <FilterPill href={buildHref({ kind: 'generic' })} active={kind === 'generic'}>generic</FilterPill>
 
         <span className="mx-1 h-4 w-px bg-slate-200 dark:bg-slate-700" aria-hidden />
 
         <FilterLabel>Enabled:</FilterLabel>
-        <Link href={buildHref({ enabled: 'all' })} className={pillCls(enabled === 'all')}>all</Link>
-        <Link href={buildHref({ enabled: 'on' })} className={pillCls(enabled === 'on')}>on</Link>
-        <Link href={buildHref({ enabled: 'off' })} className={pillCls(enabled === 'off')}>off</Link>
+        <FilterPill href={buildHref({ enabled: 'all' })} active={enabled === 'all'}>all</FilterPill>
+        <FilterPill href={buildHref({ enabled: 'on' })} active={enabled === 'on'}>on</FilterPill>
+        <FilterPill href={buildHref({ enabled: 'off' })} active={enabled === 'off'}>off</FilterPill>
 
         <span className="mx-1 h-4 w-px bg-slate-200 dark:bg-slate-700" aria-hidden />
 
         <FilterLabel>Last run:</FilterLabel>
-        <Link href={buildHref({ status: 'all' })} className={pillCls(status === 'all')}>all</Link>
-        <Link href={buildHref({ status: 'success' })} className={pillCls(status === 'success')}>success</Link>
-        <Link href={buildHref({ status: 'failed' })} className={pillCls(status === 'failed')}>failed</Link>
-        <Link href={buildHref({ status: 'aborted' })} className={pillCls(status === 'aborted')}>aborted</Link>
-        <Link href={buildHref({ status: 'running' })} className={pillCls(status === 'running')}>running</Link>
-        <Link href={buildHref({ status: 'never' })} className={pillCls(status === 'never')}>never ran</Link>
+        <FilterPill href={buildHref({ status: 'all' })} active={status === 'all'}>all</FilterPill>
+        <FilterPill href={buildHref({ status: 'success' })} active={status === 'success'}>success</FilterPill>
+        <FilterPill href={buildHref({ status: 'failed' })} active={status === 'failed'}>failed</FilterPill>
+        <FilterPill href={buildHref({ status: 'aborted' })} active={status === 'aborted'}>aborted</FilterPill>
+        <FilterPill href={buildHref({ status: 'running' })} active={status === 'running'}>running</FilterPill>
+        <FilterPill href={buildHref({ status: 'never' })} active={status === 'never'}>never ran</FilterPill>
       </div>
 
       {/* Anchor measured by ViewportProbe to size PAGE_SIZE. */}
@@ -459,15 +453,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       />
     </div>
   );
-}
-
-function pillCls(active: boolean) {
-  return [
-    'px-2 py-1 rounded border',
-    active
-      ? 'bg-brand-600 border-brand-600 text-white font-semibold'
-      : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800',
-  ].join(' ');
 }
 
 function FilterLabel({ children }: { children: React.ReactNode }) {

@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { MessageSquare } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName } from '@/lib/current-project';
@@ -9,6 +8,9 @@ import { ConversationCard } from '@/components/ConversationCard';
 import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
+import { PageHeader } from '@/components/PageHeader';
+import { FilterPill } from '@/components/FilterPill';
+import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 
 export const dynamic = 'force-dynamic';
@@ -81,20 +83,16 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   return (
     <div className="w-full">
       <ViewportProbe />
-      <div className="flex items-center gap-3 mb-4">
-        <MessageSquare className="text-slate-400" />
-        <h1 className="text-2xl font-bold">
-          Conversations
-          {cookieProject && (
-            <span className="ml-2 text-base font-normal text-slate-500">
-              · {cookieProject}
-            </span>
-          )}
-        </h1>
-        <span className="text-sm text-slate-500 ml-auto">
-          {conversations.length} shown · {total.toLocaleString('fr-FR')} total
-        </span>
-      </div>
+      <PageHeader
+        icon={<MessageSquare size={20} />}
+        title="Conversations"
+        scope={cookieProject}
+        right={
+          <span className="text-sm text-slate-500">
+            {conversations.length} shown · {total.toLocaleString('fr-FR')} total
+          </span>
+        }
+      />
 
       {/* Live search (Franck 2026-04-23 22:29). Replaces the old
           form + submit button with a debounced input that updates
@@ -106,14 +104,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
           needed anymore. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search by title…" />
-        {(q || agentFilter) && (
-          <Link
-            href="/conversations"
-            className="px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
-          >
-            Clear filters
-          </Link>
-        )}
+        {(q || agentFilter) && <ClearFiltersLink href="/conversations" />}
       </div>
 
       {allAgents.length > 1 && (
@@ -121,22 +112,19 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
           <span className="text-slate-500 self-center">
             Agent: <span className="font-mono text-slate-700 dark:text-slate-300">{agentFilter ?? 'all'}</span>
           </span>
-          <Link
-            href={buildHref({ agent: undefined, q })}
-            className={pillCls(!agentFilter)}
-          >
+          <FilterPill href={buildHref({ agent: undefined, q })} active={!agentFilter}>
             all agents
-          </Link>
+          </FilterPill>
           {allAgents
             .sort((a, b) => (a.agentName ?? '').localeCompare(b.agentName ?? ''))
             .map((a) => (
-              <Link
+              <FilterPill
                 key={a.agentSId}
                 href={buildHref({ agent: a.agentSId, q })}
-                className={pillCls(agentFilter === a.agentSId)}
+                active={agentFilter === a.agentSId}
               >
                 {a.agentName ?? a.agentSId}
-              </Link>
+              </FilterPill>
             ))}
         </div>
       )}
@@ -176,14 +164,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   );
 }
 
-function pillCls(active: boolean) {
-  return [
-    'px-2 py-1 rounded border',
-    active
-      ? 'bg-brand-600 border-brand-600 text-white font-semibold'
-      : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800',
-  ].join(' ');
-}
+
 
 function buildHref({ agent, q, page }: { agent?: string; q?: string; page?: number }) {
   const qs = new URLSearchParams();

@@ -17,6 +17,9 @@ import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import { Pagination } from '@/components/Pagination';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
+import { PageHeader } from '@/components/PageHeader';
+import { FilterPill } from '@/components/FilterPill';
+import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import type { Prisma } from '@prisma/client';
@@ -385,53 +388,36 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           getAdaptivePageSize() sizes the table to the current
           window. See src/components/ViewportProbe.tsx. */}
       <ViewportProbe />
-      <div className="flex items-center gap-3 mb-4">
-        <Clock className="text-slate-400" />
-        <h1 className="text-2xl font-bold">Runs</h1>
-        {currentProject && (
-          <span className="text-base font-normal text-slate-500">· {currentProject}</span>
-        )}
-        <span className="text-sm text-slate-500 ml-auto">
-          {runs.length} shown
-          {view === 'tree' && treeRuns.length > runs.length && (
-            <span className="text-xs text-slate-400">
-              {' '}(+{treeRuns.length - runs.length} ancestor
-              {treeRuns.length - runs.length > 1 ? 's' : ''})
+      <PageHeader
+        icon={<Clock size={20} />}
+        title="Runs"
+        scope={currentProject}
+        right={
+          <>
+            <span className="text-sm text-slate-500">
+              {runs.length} shown
+              {view === 'tree' && treeRuns.length > runs.length && (
+                <span className="text-xs text-slate-400">
+                  {' '}(+{treeRuns.length - runs.length} ancestor
+                  {treeRuns.length - runs.length > 1 ? 's' : ''})
+                </span>
+              )}
             </span>
-          )}
-        </span>
-        {/* View mode toggle (flat list vs run-tree with indentation
-            and parent links). Writes a `kdust_runs_view` cookie so
-            the choice persists when the user navigates back to
-            /runs via the sidebar (which links to a bare /runs path
-            with no query params). The tree view auto-fetches
-            missing ancestors so a child row whose parent was
-            filtered out still renders under its real parent. */}
-        <div className="flex items-center gap-2">
-          {/* Auto-refresh ticks router.refresh() every 5s while the
-              tab is visible. Persisted on/off state in localStorage.
-              See src/components/RunsAutoRefresh.tsx. */}
-          <RunsAutoRefresh />
-          <RunsViewToggle
-            current={view}
-            flatHref={buildHref({ view: 'flat' })}
-            treeHref={buildHref({ view: 'tree' })}
-          />
-        </div>
-      </div>
+            <RunsAutoRefresh />
+            <RunsViewToggle
+              current={view}
+              flatHref={buildHref({ view: 'flat' })}
+              treeHref={buildHref({ view: 'tree' })}
+            />
+          </>
+        }
+      />
 
       {/* Live search \u2014 see LiveSearchInput for rationale. Siblings
           (status/task/sort/dir) are preserved automatically. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search task name, branch, commit, status message…" />
-        {(q || statusFilter || taskFilter) && (
-          <Link
-            href="/runs"
-            className="px-3 py-1.5 rounded border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 text-sm"
-          >
-            Clear filters
-          </Link>
-        )}
+        {(q || statusFilter || taskFilter) && <ClearFiltersLink href="/runs" />}
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4 text-xs">
@@ -442,18 +428,13 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           if (taskFilter) qs.set('task', taskFilter);
           if (q) qs.set('q', q);
           return (
-            <Link
+            <FilterPill
               key={s}
               href={`/runs${qs.toString() ? `?${qs}` : ''}`}
-              className={[
-                'px-2 py-1 rounded border',
-                active
-                  ? 'bg-brand-600 border-brand-600 text-white font-semibold'
-                  : 'border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800',
-              ].join(' ')}
+              active={active}
             >
               {s}
-            </Link>
+            </FilterPill>
           );
         })}
         {taskFilter && (

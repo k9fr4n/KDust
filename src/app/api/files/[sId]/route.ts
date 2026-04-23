@@ -39,8 +39,16 @@ export const runtime = 'nodejs';
 
 type Ctx = { params: Promise<{ sId: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
   const { sId } = await ctx.params;
+  // Force-download mode (Franck 2026-04-23 16:46): when the query
+  // string contains `download=1`, we tell the browser to save the
+  // file instead of rendering it inline. Used by the image viewer's
+  // "download" button. The filename is the sId (we have no nicer
+  // name surfaced in Dust's response body); users can rename on
+  // save.
+  const url = new URL(req.url);
+  const forceDownload = url.searchParams.get('download') === '1';
   if (!/^fil_[A-Za-z0-9_-]+$/.test(sId)) {
     return NextResponse.json({ error: 'invalid_file_id' }, { status: 400 });
   }
@@ -85,15 +93,14 @@ export async function GET(_req: Request, ctx: Ctx) {
       : (hdrs as Record<string, string> | undefined)?.['content-type']) ??
     'application/octet-stream';
 
+  const outHeaders: Record<string, string> = { 'content-type': contentType };
+  if (forceDownload) {
+    outHeaders['content-disposition'] = `attachment; filename="${sId}"`;
+  }
+
   const body = upstream.body;
   if (typeof body === 'string') {
-    return new NextResponse(body, {
-      status: 200,
-      headers: { 'content-type': contentType },
-    });
+    return new NextResponse(body, { status: 200, headers: outHeaders });
   }
-  return new NextResponse(body, {
-    status: 200,
-    headers: { 'content-type': contentType },
-  });
+  return new NextResponse(body, { status: 200, headers: outHeaders });
 }

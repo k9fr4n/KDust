@@ -22,6 +22,7 @@
 'use client';
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { ChatImage } from './ChatImage';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { common as lowlightCommon } from 'lowlight';
@@ -307,39 +308,18 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
           img: ({ src, alt, title }) => {
             if (!src) return null;
             // Rewrite any Dust file reference to our authenticated
-            // proxy (see src/app/api/files/[sId]/route.ts).
-            // Agents return images in several shapes observed in
-            // the wild:
-            //   1. bare id:        `fil_HbVDt...`
-            //   2. origin-resolved: `http://localhost:3000/fil_xxx`
-            //      (bare id that the browser already resolved)
-            //   3. Dust url:        `https://eu.dust.tt/api/.../files/fil_xxx`
-            // All three carry a trailing `fil_<sId>` segment, so
-            // we extract it with a single regex and rebuild the
-            // URL through our proxy. Anything without a fil_ id
-            // passes through untouched (http image, data URI, ...).
+            // proxy. Agents emit images in several shapes:
+            //   1. bare id          fil_HbVDt...
+            //   2. origin-resolved  http://localhost:3000/fil_xxx
+            //   3. Dust url         https://eu.dust.tt/api/.../files/fil_xxx
+            // All carry a trailing `fil_<sId>` segment; extract
+            // and rebuild via /api/files/... URLs without a fil_
+            // id pass through (external http, data: URIs).
             const filMatch = src.match(/(?:^|\/)(fil_[A-Za-z0-9_-]+)(?:[?#].*)?$/);
             const resolvedSrc = filMatch ? `/api/files/${filMatch[1]}` : src;
-            return (
-              <a
-                href={resolvedSrc}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block my-2 max-w-full"
-                title={title ?? alt ?? 'Open image'}
-              >
-                {/* Plain <img>: content comes from our backend /
-                    the agent; we do not need next/image optimization
-                    (would require remote domain allowlisting anyway). */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={resolvedSrc}
-                  alt={alt ?? ''}
-                  className="max-w-full h-auto rounded-md border border-slate-200 dark:border-slate-700"
-                  loading="lazy"
-                />
-              </a>
-            );
+            // <ChatImage /> handles the thumbnail + lightbox +
+            // download UX. See src/components/ChatImage.tsx.
+            return <ChatImage src={resolvedSrc} alt={alt} title={title} />;
           },
         }}
       >

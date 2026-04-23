@@ -1232,14 +1232,18 @@ function ChatPageInner() {
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {currentProject && (
               <span
-                className={`flex items-center gap-1 text-xs px-2 py-1 rounded border ${
+                // Status chip colors pull from the semantic tokens
+                // (danger/success/warning) instead of raw red/green/
+                // amber shades so all status indicators across the
+                // app stay in lockstep with the design system.
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors ${
                   mcpStatus === 'ready'
-                    ? 'border-green-600 text-green-700 dark:text-green-400'
+                    ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
                     : mcpStatus === 'starting'
-                      ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                      ? 'border-amber-300 dark:border-amber-800 text-warning-strong dark:text-amber-400 bg-warning-subtle dark:bg-amber-950/30'
                       : mcpStatus === 'error'
-                        ? 'border-red-500 text-red-600 dark:text-red-400'
-                        : 'border-slate-300 text-slate-500'
+                        ? 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
+                        : 'border-slate-300 dark:border-slate-700 text-slate-500'
                 }`}
                 title={
                   mcpServerId
@@ -1267,7 +1271,7 @@ function ChatPageInner() {
                     onClick={() => void togglePin(currentId, !isPinned)}
                     title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
                     aria-label={isPinned ? 'Unpin conversation' : 'Pin conversation'}
-                    className={`p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                    className={`p-1 rounded-md transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
                       isPinned
                         ? 'text-amber-500'
                         : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
@@ -1280,7 +1284,7 @@ function ChatPageInner() {
                     onClick={() => void removeConv(currentId)}
                     title="Delete conversation"
                     aria-label="Delete conversation"
-                    className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-950 text-slate-400 hover:text-red-500"
+                    className="p-1 rounded-md transition-colors hover:bg-danger-subtle dark:hover:bg-red-950/30 text-slate-400 hover:text-danger-solid dark:hover:text-red-400"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -1385,7 +1389,7 @@ function ChatPageInner() {
 
           {error && (
             <div className="flex justify-start">
-              <p className="text-red-500 text-sm">{error}</p>
+              <p className="text-danger-strong dark:text-red-400 text-sm">{error}</p>
             </div>
           )}
 
@@ -1512,7 +1516,7 @@ function ChatPageInner() {
                   onClick={stopStream}
                   disabled={stopping}
                   title="Stop the agent's reply"
-                  className="inline-flex items-center gap-1 rounded border border-red-400 px-2 py-0.5 text-red-700 hover:bg-red-100 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-900/40 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-md border border-red-300 dark:border-red-800 px-2 py-1 text-xs text-danger-strong dark:text-red-400 hover:bg-danger-subtle dark:hover:bg-red-950/30 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <Square size={12} />
                   {stopping ? 'Stopping…' : 'Stop'}

@@ -139,6 +139,28 @@ export async function getDustClient(): Promise<{
         console.log('[dust/sdk] event stream aborted by caller (cooperative cancel)');
         return;
       }
+      // Dust idle-SSE connection drops (Franck 2026-04-24 09:08).
+      // When a tool call (e.g. task_runner.wait_for_run) blocks
+      // for minutes and Dust/its reverse proxy silently drops the
+      // keep-alive TCP connection, undici surfaces the body read
+      // as `TypeError: terminated` with `cause.code === 'ETIMEDOUT'`.
+      // The SDK logs it via "Failed processing event stream", our
+      // for-await loop upstream catches the iterator rejection and
+      // the unhandledRejection dampener in instrumentation.ts
+      // handles any stray promise. No action required \u2014 just
+      // demote the log from scary [error] to a single [warn] line
+      // so ops dashboards don't raise a false alarm.
+      const isTerminated =
+        errObj?.name === 'TypeError' && /terminated/i.test(String(errObj?.message ?? ''));
+      const isFetchTimeout =
+        errObj?.cause?.code === 'ETIMEDOUT' || errObj?.code === 'ETIMEDOUT';
+      if ((isTerminated || isFetchTimeout) && /event stream/i.test(msg)) {
+        console.warn(
+          `[dust/sdk] event stream dropped by peer (ETIMEDOUT) \u2014 ` +
+            `usually an idle long-poll tool call; will surface as a stream error upstream`,
+        );
+        return;
+      }
     } catch {
       /* fall through to plain error log */
     }

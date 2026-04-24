@@ -1253,31 +1253,122 @@ export async function runTask(
       }
     }
 
+    // [9a] Orchestrator failure propagation (Franck 2026-04-24 22:10).
+    // If this task is an orchestrator (taskRunnerEnabled) and one
+    // or more of its DIRECT children ended in 'failed' / 'aborted',
+    // propagate that failure up the chain: the orchestrator is
+    // marked 'failed' even though its own agent returned cleanly.
+    //
+    // Rationale: without this, an orchestrator's status reflected
+    // only its own agent run. A chain like:
+    //
+    //    orch-A → orch-B → worker-C (failed)
+    //
+    // would show orch-A + orch-B as 'success' and only worker-C as
+    // 'failed', burying the real outcome three clicks deep in the
+    // run tree. Checking only DIRECT children is sufficient for
+    // transitive propagation: each intermediate level flips on its
+    // own children's failures, so a parent sees a failed direct
+    // child and flips in turn.
+    //
+    // Scope: limited to taskRunnerEnabled tasks because those are
+    // the only ones that meaningfully dispatch children via the
+    // MCP run_task. A plain worker that somehow ended up with a
+    // parentRunId pointing elsewhere would not be affected.
+    //
+    // Future escape hatch: if an orchestrator prompt explicitly
+    // treats a child failure as acceptable (retry+succeed, fallback
+    // path), it can expose the "handled" state via a future MCP
+    // tool — kept deliberately simple for now: ANY unhandled
+    // descendant failure = orchestrator failure.
+    let childFailureSummary: string | null = null;
+    if (job.taskRunnerEnabled) {
+      const failedChildren = await db.taskRun.findMany({
+        where: {
+          parentRunId: run.id,
+          status: { in: ['failed', 'aborted'] },
+        },
+        select: {
+          id: true,
+          status: true,
+          error: true,
+          task: { select: { name: true } },
+        },
+        orderBy: { startedAt: 'asc' },
+      });
+      if (failedChildren.length > 0) {
+        childFailureSummary = failedChildren
+          .map((c) => `${c.task.name}[${c.status}]`)
+          .join(', ');
+        console.warn(
+          `[cron] orchestrator "${job.name}" (run ${run.id}) has ` +
+            `${failedChildren.length} failed child run(s): ${childFailureSummary}. ` +
+            `Propagating failure up the chain.`,
+        );
+      }
+    }
+
     const durationMs = Date.now() - startedAt;
-    await db.taskRun.update({
-      where: { id: run.id },
-      data: {
-        status: 'success',
-        phase: 'done',
-        phaseMessage: job.dryRun ? 'Done (dry-run, no push)' : 'Completed successfully',
-        branch,
-        commitSha,
-        filesChanged,
-        linesAdded,
-        linesRemoved,
-        output: agentText,
-        prUrl,
-        prNumber,
-        prState,
-        mergeBackStatus,
-        mergeBackDetails,
-        finishedAt: new Date(),
-      },
-    });
-    await db.task.update({
-      where: { id: job.id },
-      data: { lastRunAt: new Date(), lastStatus: job.dryRun ? 'dry-run' : 'success' },
-    });
+    if (childFailureSummary) {
+      // Failure path: keep all the computed metadata (diff, commit,
+      // branch, merge-back) so /runs/:id remains informative, but
+      // flip status/phase/error/output so the chain reflects the
+      // real outcome. Also explicitly set Task.lastStatus='failed'
+      // so the task list doesn't lie at a glance.
+      await db.taskRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'failed',
+          phase: 'done',
+          phaseMessage: `Failed via child: ${childFailureSummary.slice(0, 100)}`,
+          error:
+            `Orchestrator's own agent completed, but one or more dispatched ` +
+            `children ended in failure/abort: ${childFailureSummary}. ` +
+            `Inspect the failed children's /runs pages for the root cause.`,
+          branch,
+          commitSha,
+          filesChanged,
+          linesAdded,
+          linesRemoved,
+          output: agentText,
+          prUrl,
+          prNumber,
+          prState,
+          mergeBackStatus,
+          mergeBackDetails,
+          finishedAt: new Date(),
+        },
+      });
+      await db.task.update({
+        where: { id: job.id },
+        data: { lastRunAt: new Date(), lastStatus: 'failed' },
+      });
+    } else {
+      await db.taskRun.update({
+        where: { id: run.id },
+        data: {
+          status: 'success',
+          phase: 'done',
+          phaseMessage: job.dryRun ? 'Done (dry-run, no push)' : 'Completed successfully',
+          branch,
+          commitSha,
+          filesChanged,
+          linesAdded,
+          linesRemoved,
+          output: agentText,
+          prUrl,
+          prNumber,
+          prState,
+          mergeBackStatus,
+          mergeBackDetails,
+          finishedAt: new Date(),
+        },
+      });
+      await db.task.update({
+        where: { id: job.id },
+        data: { lastRunAt: new Date(), lastStatus: job.dryRun ? 'dry-run' : 'success' },
+      });
+    }
 
     // [10] Teams report -----------------------------------------------------
     if (webhook) {
@@ -1308,15 +1399,39 @@ export async function runTask(
         { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
         { name: 'Mode', value: job.dryRun ? 'dry-run (no push)' : job.branchMode },
       ];
-      await postToTeams(webhook, {
-        title: `${job.dryRun ? '🧪' : '✅'} KDust cron : ${job.name}`,
-        summary: `${filesChanged} file(s) changed on ${project.name}`,
-        status: 'success',
-        details,
-        facts,
-      });
+      // When orchestrator failure propagation fired, flip the
+      // Teams card to the failure template so operators see the
+      // true outcome in their channel — same branch/diff facts,
+      // but red status + child failure summary as the body.
+      if (childFailureSummary) {
+        await postToTeams(webhook, {
+          title: `❌ KDust cron : ${job.name}`,
+          summary: `Orchestrator failed via child: ${childFailureSummary}`,
+          status: 'failed',
+          details:
+            `One or more dispatched children ended in failure/abort.\n\n` +
+            `Children: ${childFailureSummary}\n\n` +
+            (linkLines.length ? linkLines.join('\n') + '\n\n' : '') +
+            `Agent output:\n${agentText.slice(0, 1500)}${agentText.length > 1500 ? '…' : ''}`,
+          facts,
+        });
+      } else {
+        await postToTeams(webhook, {
+          title: `${job.dryRun ? '🧪' : '✅'} KDust cron : ${job.name}`,
+          summary: `${filesChanged} file(s) changed on ${project.name}`,
+          status: 'success',
+          details,
+          facts,
+        });
+      }
     }
-    console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
+    if (childFailureSummary) {
+      console.warn(
+        `[cron] FAILED (via child) job="${job.name}" duration=${durationMs}ms children=${childFailureSummary}`,
+      );
+    } else {
+      console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
+    }
   } catch (err) {
     const wasAborted = !!(err as { aborted?: boolean })?.aborted;
     const abortReason = (err as { abortReason?: AbortReason })?.abortReason;

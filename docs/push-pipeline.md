@@ -53,6 +53,14 @@ invariants.
   [8b] auto-open PR/MR
        ↓  if project.autoOpenPR and platform configured
        ↓  best-effort: failure doesn't fail the run
+  [8c] B3 auto-merge-back  ← NEW 2026-04-24
+       ↓  only when dispatched via run_task (sync) with a
+       ↓  postMergeTargetBranch (i.e. parent on a work branch)
+       ↓  git checkout <parent-branch>
+       ↓  git merge --ff-only <this-run-branch>
+       ↓  git push origin <parent-branch>
+       ↓  records mergeBackStatus on the TaskRun for the UI;
+       ↓  FF refusals are surfaced, NEVER silently 3-way merged
   [9] persist TaskRun
        ↓  audit trail with branch, commit, PR link, diff stats
   [10] Teams notification
@@ -87,6 +95,21 @@ git clean -fd
 
 Guarantees every run starts from a clean, up-to-date base tree.
 The agent never sees stale state from a previous run.
+
+> **`<baseBranch>` resolution (B1/B2)**. Historically `<baseBranch>`
+> came from `resolveBranchPolicy(task, project)` and was usually
+> `main`. Since 2026-04-24 it can be overridden per-run by the
+> orchestrator dispatching this child via `run_task` / `dispatch_task`:
+>
+> - explicit `base_branch` argument (B1) takes precedence
+> - else auto-inherit from the parent orchestrator's current
+>   branch (B2) — the MCP layer also auto-pushes the parent's
+>   branch to origin so the reset resolves
+> - else falls through to the task/project default
+>
+> The provenance is persisted on `TaskRun.baseBranchSource`
+> (`default | explicit | auto-inherit`) and shown as a pill on
+> `/runs/:id`. Full specification: [`task-runner.md § Base branch & merge-back`](task-runner.md#base-branch--merge-back-b1b2b3).
 
 ### [3] Branch setup
 

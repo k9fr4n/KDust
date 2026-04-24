@@ -19,6 +19,8 @@ qui fait éditer des projets locaux par des agents Dust et poste un rapport Team
 - Authentification WorkOS Device Flow (même mécanisme que le CLI, aucune config redirect URI).
 - Chat persistant multi-conversations avec sélection d'agent, upload de fichiers.
 - Crons : expression cron + agent + prompt + dossier projet monté + webhook Teams.
+- Pipeline push automatisé : branche dédiée par run, commit/push, ouverture PR/MR, Teams report.
+- Orchestration multi-tâches via MCP `run_task` / `dispatch_task` / `wait_for_run`, avec auto-inherit de la branche parent (B2) et auto-merge-back fast-forward (B3).
 - Back-office (`/settings`) pour configurer URL Dust, WorkOS, webhook Teams par défaut.
 - Mono-utilisateur, gate par mot de passe applicatif optionnel (`APP_PASSWORD`).
 

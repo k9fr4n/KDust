@@ -63,6 +63,9 @@ returns `{status:'pending', run_id}` so the caller can continue with
 | `input`       | string   |   | (stored prompt) | Override for the child's stored prompt. |
 | `project`     | string   | ✓ for generic, forbidden for bound | — | Project context for a generic (template) task. |
 | `max_wait_ms` | integer  |   | 45000   | Wait budget in ms. Clamped to `[5000, 55000]` to stay under Dust's 60s MCP timeout. |
+| `base_branch` | string   |   | (auto)  | **B1**. Explicit base branch for the child. Wins over B2 auto-inherit. Must exist on `origin`. See [Base branch & merge-back](#base-branch--merge-back-b1b2b3). |
+| `no_inherit`  | boolean  |   | `false` | **B2 opt-out**. Skip auto-inherit and branch from the task/project default (usually `main`). |
+| `no_merge`    | boolean  |   | `false` | **B3 opt-out**. Skip auto-merge-back — child's commits stay on the child branch only. |
 
 **Returns** (terminal):
 
@@ -78,9 +81,17 @@ returns `{status:'pending', run_id}` so the caller can continue with
   "lines_removed": 7,
   "branch": "kdust/audit-iam/20260422-1930",
   "commit_sha": "a1b2c3d...",
+  "base_branch": "kdust/epic-auth/20260424-2030",
+  "base_branch_source": "auto-inherit",
+  "merge_back_status": "ff",
+  "merge_back_details": "fast-forward merged kdust/audit-iam/... into kdust/epic-auth/...",
   "duration_ms": 12850
 }
 ```
+
+> `base_branch_source` ∈ `default | explicit | auto-inherit`
+> `merge_back_status` ∈ `null | skipped | ff | refused | failed`
+> See [Base branch & merge-back](#base-branch--merge-back-b1b2b3) for the full state machine.
 
 **Returns** (budget expired):
 
@@ -102,11 +113,18 @@ Returns as soon as the child `TaskRun` row exists (<100ms typical).
 The child keeps running in the background; the orchestrator may
 finish before the child does.
 
-| Arg       | Type   | Required | Description |
-|-----------|--------|:-:|-------------|
-| `task`    | string | ✓ | Task id or exact name. |
-| `input`   | string |   | Prompt override. |
-| `project` | string | ✓ for generic, forbidden for bound | Project context. |
+| Arg          | Type    | Required | Description |
+|--------------|---------|:-:|-------------|
+| `task`       | string  | ✓ | Task id or exact name. |
+| `input`      | string  |   | Prompt override. |
+| `project`    | string  | ✓ for generic, forbidden for bound | Project context. |
+| `base_branch`| string  |   | B1 explicit base branch. Same semantics as `run_task`. |
+| `no_inherit` | boolean |   | Disable B2 auto-inherit. |
+
+> **`dispatch_task` does NOT trigger B3 auto-merge**. Parallel fire-
+> and-forget children racing on a shared merge target would produce
+> non-deterministic conflicts. Use `run_task` (sync) if you need
+> merge-back.
 
 **Returns** (normal):
 
@@ -328,6 +346,101 @@ effective user message is visible there.
 
 ---
 
+## Base branch & merge-back (B1/B2/B3)
+
+KDust orchestrators + children share a single working tree per
+project. Without care, a child's `git reset --hard origin/main`
+during its pre-run sync would nuke any commits the orchestrator
+produced on its own branch. Three coordinated mechanisms solve
+this:
+
+| Id | Name | What it does | Default |
+|----|------|--------------|---------|
+| B1 | explicit `base_branch` | caller picks the ref the child branches from | off |
+| B2 | auto-inherit + auto-push | child inherits parent's branch automatically | **on** |
+| B3 | auto-merge-back FF-only | child's commits fast-forward into parent's branch | **on** for `run_task` |
+
+### Decision tree (what child will branch from)
+
+```
+run_task / dispatch_task called
+           │
+           ▼
+ ┌─ base_branch passed? ────────── YES ──► use it        (source='explicit')
+ │  NO
+ ├─ no_inherit: true? ───────────── YES ──► task/project default (source='default')
+ │  NO
+ ├─ parent run has no branch? ───── YES ──► task/project default
+ │  (pushEnabled=false, legacy run…)
+ │  NO
+ ├─ parent on project default? ──── YES ──► task/project default (no-op inherit)
+ │  (e.g. main)
+ │  NO
+ ▼
+ B2 auto-inherit path:
+   1. verify worktree is CLEAN   → else refuse with porcelain dump
+   2. git push origin <parent-branch>   (idempotent)
+   3. child resets to origin/<parent-branch>
+   4. source='auto-inherit'
+```
+
+### B3 merge-back (sync `run_task` only)
+
+After a successful child run on `run_task`, and **before the
+concurrency lock is released**, the runner tries to fast-forward
+merge the child's work branch into the orchestrator's branch:
+
+```
+git checkout <orchestrator-branch>
+git merge --ff-only <child-branch>
+git push origin <orchestrator-branch>
+```
+
+The result is persisted on the child's `TaskRun.mergeBackStatus`:
+
+| Status | Meaning | Operator action |
+|--------|---------|-----------------|
+| `null` | B3 did not fire (dispatch_task, dry-run, parent on default) | — |
+| `skipped` | child made no commits (read-only task) | — |
+| `ff` | fast-forward merged + pushed ✓ | none |
+| `refused` | non-linear history, or target is protected | reconcile manually |
+| `failed` | checkout or push errored (details in `mergeBackDetails`) | inspect logs |
+
+The child run status stays `success` in all cases — only the
+upstream propagation failed. The orchestrator receives the state
+in the `run_task` response so the agent can branch on it.
+
+### Opt-out matrix
+
+| Goal | `base_branch` | `no_inherit` | `no_merge` |
+|------|:---:|:---:|:---:|
+| Default (inherit + merge back) | — | — | — |
+| Independent sub-task (parallel audit, sandbox) | — | `true` | `true` |
+| Branch from a specific ref (retry, cross-branch) | `"kdust/other"` | — | — |
+| Dispatch + review diff before merging | — | — | `true` |
+| Force classic B1 (explicit only, no inherit) | `"kdust/…"` | — | — |
+
+### Why `dispatch_task` skips B3
+
+Fire-and-forget children running in parallel would race on the
+shared merge target (orchestrator's branch). Even when each FF
+would succeed in isolation, ordering is non-deterministic and
+one child's push would invalidate the next child's FF attempt.
+Agents that need merge-back must use the synchronous `run_task`.
+
+### Why FF-only and not 3-way merge
+
+KDust refuses to invent commits. Any divergence — parallel
+children, rebased parent, amended commit — is surfaced as
+`refused` rather than silently 3-way merged, because:
+
+- Textually clean 3-way merges still produce semantic conflicts
+- The orchestrator agent has more context to decide retry vs abort
+- A non-FF merge on the orchestrator's branch would break B3
+  assumptions for any subsequent child dispatched in the same run
+
+---
+
 ## Constraints & invariants
 
 ### Project scope and project-arg contract
@@ -479,6 +592,43 @@ See `docs/tasks.md` (to be written) for the full generic-task
 contract. Short version: generic tasks must have
 `schedule='manual'` and `pushEnabled=false`. `taskRunnerEnabled` is
 fine since 2026-04-22.
+
+### `refused: auto-inherit requires a clean worktree`
+
+B2 tried to auto-inherit the parent orchestrator's branch but the
+shared worktree has uncommitted changes. The error message embeds
+the `git status --porcelain` output so the agent sees exactly
+what's dirty.
+
+Fixes, in decreasing order of preference:
+
+1. Commit (or discard) the pending work from the orchestrator
+   before calling `run_task`. This is the intended flow — an
+   orchestrator should dispatch children at clean checkpoints.
+2. Pass `no_inherit: true` on the single dispatch so the child
+   branches from the project default, ignoring the dirty state.
+   The uncommitted changes remain in the worktree for the
+   orchestrator but are INVISIBLE to the child.
+3. Pass an explicit `base_branch` — same effect as (2) plus full
+   control over the ref.
+
+### `B3: FF-only merge refused` on run_task response
+
+The child ran fine but its commits could not be fast-forwarded
+into the orchestrator's branch because the branches diverged.
+Common causes:
+
+- Two siblings dispatched back-to-back both produced commits
+  targeting the same parent branch
+- Parent's branch was amended/rebased between dispatches
+- An unrelated process pushed to the orchestrator's branch
+
+The agent should either:
+- Abort and let a human reconcile
+- Retry the child on a fresh base (discard the child branch,
+  re-dispatch with `base_branch: "kdust/…refreshed"`)
+- Continue without the merge-back (child's work is still on
+  `origin/<child-branch>`, accessible for later manual merge)
 
 ---
 

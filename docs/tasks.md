@@ -26,6 +26,21 @@ fix") that doesn't know its project until invoked. Generic tasks
 are forbidden from cron (no implicit project context) and from the
 push pipeline (no repo to push to).
 
+### Visual taxonomy on `/tasks`
+
+Task kind is **two-dimensional** and rendered with two independent
+channels on the list:
+
+| Axis | Values | Visual |
+|------|--------|--------|
+| Role | orchestrator (`taskRunnerEnabled=true`) / worker | left-border colour (amber / sky) |
+| Scope | template (generic) / project-bound | violet `TEMPLATE` pill next to the name |
+
+Any of the four combinations is valid: a template orchestrator is
+shown with an amber border **and** a violet pill, a project worker
+has a sky border and no pill. The legend above the list documents
+both axes.
+
 ### Generic-task invariants (enforced in `/api/tasks`)
 
 When `projectPath = null`:

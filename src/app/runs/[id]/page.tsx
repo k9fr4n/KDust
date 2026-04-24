@@ -356,7 +356,36 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <Stat label="Lines −" value={run.linesRemoved} hint="deleted" />
             <Stat label="Output size" value={run.output ? `${run.output.length.toLocaleString('fr-FR')} ch` : null} mono />
             <Stat label="Phase reached" value={run.phase} mono />
-            <Stat label="Base branch" value={run.baseBranch ?? run.task?.baseBranch ?? null} mono />
+            {/* Base branch + provenance pill (B2/B3, Franck
+                2026-04-24 20:47). When the run inherited its
+                base branch from a parent orchestrator or the
+                caller passed an explicit base_branch, surface
+                that here so operators understand why a child
+                isn't on the project default. */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">
+                Base branch
+              </div>
+              <div className="font-mono text-sm flex items-center gap-1.5 flex-wrap">
+                <span>{run.baseBranch ?? run.task?.baseBranch ?? '—'}</span>
+                {run.baseBranchSource === 'auto-inherit' && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold"
+                    title="B2: inherited from the parent orchestrator run's branch"
+                  >
+                    auto-inherit
+                  </span>
+                )}
+                {run.baseBranchSource === 'explicit' && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300 font-semibold"
+                    title="Caller passed an explicit base_branch on run_task/dispatch_task"
+                  >
+                    explicit
+                  </span>
+                )}
+              </div>
+            </div>
             <Stat label="Agent" value={run.task?.agentName ?? run.task?.agentSId ?? null} mono />
             <Stat label="Messages" value={conv ? conv.messages.length : null} hint="in conv" />
             <Stat label="Conv sId" value={run.dustConversationSId ? run.dustConversationSId.slice(0, 10) : null} mono />
@@ -419,6 +448,49 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                   <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">
                     🚀 Open MR / PR
                   </a>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* B3 merge-back indicator (Franck 2026-04-24 20:47).
+              Visible only when the run was dispatched with an
+              auto-merge target. Four possible statuses each mapped
+              to a distinct colour + explanation so operators can
+              tell success / no-op / refused / error apart without
+              clicking through. Refused is the most important case
+              to spot: the child's work landed on its own branch but
+              did NOT propagate to the orchestrator's branch, so the
+              agent likely needs to reconcile manually. */}
+          {run.mergeBackStatus && (
+            <section className="mb-6 rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
+              <h2 className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                Merge-back into orchestrator branch
+              </h2>
+              <div className="flex items-start gap-2">
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wide font-semibold ${
+                    run.mergeBackStatus === 'ff'
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
+                      : run.mergeBackStatus === 'skipped'
+                      ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                      : run.mergeBackStatus === 'refused'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                      : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+                  }`}
+                >
+                  {run.mergeBackStatus === 'ff'
+                    ? '✓ fast-forward'
+                    : run.mergeBackStatus === 'skipped'
+                    ? '— skipped'
+                    : run.mergeBackStatus === 'refused'
+                    ? '⚠ refused'
+                    : '✗ failed'}
+                </span>
+                {run.mergeBackDetails && (
+                  <span className="text-xs text-slate-600 dark:text-slate-400 flex-1">
+                    {run.mergeBackDetails}
+                  </span>
                 )}
               </div>
             </section>

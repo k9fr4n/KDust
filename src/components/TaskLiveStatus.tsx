@@ -16,6 +16,10 @@ type Run = {
   linesRemoved: number | null;
   dryRun: boolean;
   output: string | null;
+  // Chain-of-thought stream surfaced live while the agent is
+  // running (Franck 2026-04-24 18:51). Populated by the runner on
+  // every cot token, throttled alongside `output` to ~500ms.
+  thinkingOutput: string | null;
 };
 
 const PHASES: { key: string; label: string }[] = [
@@ -156,6 +160,23 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
         <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 font-mono">
           branch: {run.branch}
         </p>
+      )}
+
+      {/* Live chain-of-thought (Franck 2026-04-24 18:51).
+          Rendered BEFORE the main output so users watching a
+          long-running agent see the reasoning stream before the
+          final answer lands. Collapsed by default because it can
+          be noisy — the label shows the char count as a
+          live-updating teaser to hint there's activity. */}
+      {run.thinkingOutput && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-semibold text-purple-700 dark:text-purple-300 hover:text-purple-900">
+            🧠 Live thinking ({run.thinkingOutput.length.toLocaleString('fr-FR')} chars)
+          </summary>
+          <pre className="mt-1 whitespace-pre-wrap text-xs max-h-96 overflow-auto bg-purple-50 dark:bg-purple-950/30 rounded border border-purple-200 dark:border-purple-900 p-2 font-mono">
+            {run.thinkingOutput}
+          </pre>
+        </details>
       )}
 
       {/* Live agent output */}

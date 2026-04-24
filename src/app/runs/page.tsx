@@ -19,6 +19,7 @@ import { Pagination } from '@/components/Pagination';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { RunActions } from '@/components/RunActions';
 import { PageHeader } from '@/components/PageHeader';
+import { LiveDuration } from '@/components/LiveDuration';
 import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { ViewportProbe } from '@/components/ViewportProbe';
@@ -482,9 +483,9 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           </thead>
           <tbody>
             {rendered.map((r) => {
-              const dur = r.finishedAt
-                ? Math.round((r.finishedAt.getTime() - r.startedAt.getTime()) / 1000)
-                : null;
+              // Duration was previously computed server-side; now
+              // LiveDuration ticks client-side so it keeps growing
+              // during running. Server code no longer needs `dur`.
               const statusCls = STATUS_CLASS[r.status] ?? 'bg-slate-100 text-slate-600';
               return (
                 <ClickableRunRow
@@ -551,7 +552,16 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                     {/* Plain text \u2014 row is now clickable (Franck 2026-04-19 13:10). */}
                     {new Date(r.startedAt).toLocaleString('fr-FR')}
                   </td>
-                  <td className="text-xs font-mono">{dur !== null ? `${dur}s` : '-'}</td>
+                  <td className="text-xs font-mono">
+                    {/* LiveDuration ticks every second while the run
+                        is in flight (Franck 2026-04-24 18:51).
+                        Once r.finishedAt is set the ticker stops
+                        and the final wall-clock renders static. */}
+                    <LiveDuration
+                      startedAt={r.startedAt.toISOString()}
+                      finishedAt={r.finishedAt ? r.finishedAt.toISOString() : null}
+                    />
+                  </td>
                   <td className="text-xs font-mono">
                     {r.filesChanged !== null && r.filesChanged !== undefined
                       ? `${r.filesChanged}f +${r.linesAdded ?? 0}/-${r.linesRemoved ?? 0}`

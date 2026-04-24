@@ -279,7 +279,13 @@ model TaskRun {
   finishedAt DateTime?
   status     String    // 'running' | 'success' | 'no-op' | 'skipped' | 'aborted' | 'failed'
   output     String?
-  error      String?
+  // Chain-of-thought / reasoning stream (Franck 2026-04-24 18:51).
+  // Dust streams reasoning tokens as generation_tokens events with
+  // classification='chain_of_thought'; previously dropped on the
+  // floor, now persisted so the run detail page can surface the
+  // agent's hidden thinking in a collapsible section.
+  thinkingOutput String?
+  error     String?
   task       Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   // --- push metadata ---

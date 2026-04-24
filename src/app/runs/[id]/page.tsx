@@ -29,6 +29,7 @@ import { ArrowLeft, MessageCircle, Settings } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
+import { LiveDuration } from '@/components/LiveDuration';
 import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
@@ -198,6 +199,15 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                 finished {new Date(run.finishedAt).toLocaleString('fr-FR')}
               </>
             )}
+            {' · '}
+            {/* LiveDuration: ticks every second while running,
+                stops when finishedAt is set. Replaces the old
+                behaviour where the header had no elapsed-time
+                indicator during a long run. */}
+            <LiveDuration
+              startedAt={run.startedAt.toISOString()}
+              finishedAt={run.finishedAt ? run.finishedAt.toISOString() : null}
+            />
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -323,6 +333,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             linesRemoved: run.linesRemoved,
             dryRun: run.dryRun,
             output: run.output,
+            thinkingOutput: run.thinkingOutput,
           }}
         />
       ) : (
@@ -498,6 +509,27 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                   );
                 })}
               </div>
+            </section>
+          )}
+
+          {/* Agent reasoning / chain-of-thought stream
+              (Franck 2026-04-24 18:51). Dust streams reasoning
+              tokens separately from the visible final output; they
+              were previously dropped by the runner. Now persisted
+              to TaskRun.thinkingOutput and surfaced here in a
+              collapsible section so it doesn't overwhelm the
+              default view but is one click away when debugging
+              agent behaviour. */}
+          {run.thinkingOutput && (
+            <section className="mb-6">
+              <details className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-purple-800 dark:text-purple-300 select-none">
+                  🧠 Agent thinking ({run.thinkingOutput.length.toLocaleString('fr-FR')} chars)
+                </summary>
+                <pre className="whitespace-pre-wrap px-3 py-2 border-t border-purple-200 dark:border-purple-900 text-xs max-h-[600px] overflow-auto">
+                  {run.thinkingOutput}
+                </pre>
+              </details>
             </section>
           )}
 

@@ -675,6 +675,38 @@ export async function runTask(
         data: { dustConversationSId: conv.dustConversationSId },
       })
       .catch(() => {});
+    // Create the local Conversation row early (Franck 2026-04-24
+    // 18:51). Previously this happened only AFTER the agent stream
+    // completed (~1-10 min later), so the /runs/:id "Open chat"
+    // button was hidden for the entire duration of the run. Now we
+    // persist the conv + user message immediately; the agent
+    // message is appended at the end of the stream. If the run
+    // aborts mid-stream, the conversation still shows the user
+    // prompt + whatever partial context existed — consistent with
+    // what the user sees in Dust directly. Fire-and-forget by
+    // design: any DB hiccup here must not block the run.
+    db.conversation
+      .upsert({
+        where: { dustConversationSId: conv.dustConversationSId },
+        create: {
+          dustConversationSId: conv.dustConversationSId,
+          agentSId: job.agentSId,
+          agentName: job.agentName ?? null,
+          title: convTitle,
+          projectName: project.name,
+          messages: { create: [{ role: 'user', content: agentPrompt }] },
+        },
+        update: {
+          // Same conv re-used across multi-turn task is not our
+          // current model, but be idempotent anyway.
+          agentName: job.agentName ?? undefined,
+          title: convTitle,
+          projectName: project.name,
+        },
+      })
+      .catch((e) => {
+        console.warn(`[runner] early conversation upsert failed: ${e}`);
+      });
     const ac = new AbortController();
     // Register so the HTTP cancel endpoint can abort from outside this scope.
     activeRuns.set(run.id, ac);
@@ -725,11 +757,27 @@ export async function runTask(
     // Periodically flush the partial agent output to DB so the /tasks/:id
     // page can show real-time streaming text (without needing an SSE route
     // of its own). Throttled to ~500ms to avoid hammering SQLite.
+    //
+    // Thinking capture (Franck 2026-04-24 18:51): Dust streams chain-
+    // of-thought tokens as generation_tokens with
+    // classification='chain_of_thought'. They're delivered through
+    // the same onEvent callback under kind='cot'. We accumulate
+    // them in `thinking` and flush alongside `partial` so the /runs
+    // detail page can surface the reasoning in a collapsible
+    // section. Same 500ms throttle; a single flush writes both
+    // columns to minimise SQLite write amplification.
     let partial = '';
+    let thinking = '';
     let lastFlush = Date.now();
     const flushPartial = () => {
       db.taskRun
-        .update({ where: { id: run.id }, data: { output: partial } })
+        .update({
+          where: { id: run.id },
+          data: {
+            output: partial,
+            thinkingOutput: thinking ? thinking : null,
+          },
+        })
         .catch(() => { /* ignore */ });
     };
     let agentStats2: import('../dust/chat').StreamStats | null = null;
@@ -742,6 +790,16 @@ export async function runTask(
           if (kind === 'error') streamErr = String(payload);
           if (kind === 'token') {
             partial += payload;
+            const now = Date.now();
+            if (now - lastFlush > 500) {
+              lastFlush = now;
+              flushPartial();
+            }
+          } else if (kind === 'cot') {
+            // Chain-of-thought fragment. Same throttled-flush
+            // policy as regular tokens — not worth a separate
+            // timer since both columns share one DB row.
+            thinking += payload;
             const now = Date.now();
             if (now - lastFlush > 500) {
               lastFlush = now;
@@ -769,23 +827,52 @@ export async function runTask(
     if (streamErr) throw new Error(`agent stream error: ${streamErr}`);
     if (!agentText.trim()) agentText = '(agent returned an empty response)';
 
-    // Persist conversation (audit trail)
+    // Persist conversation (audit trail).
+    //
+    // The Conversation row + user message were created at the
+    // BEGINNING of the Dust call (Franck 2026-04-24 18:51) so the
+    // "Open chat" button on /runs/:id is live from second one. Here
+    // we only need to append the agent message with the final
+    // content and the stream stats. Kept robust against the rare
+    // case where the early upsert failed (e.g. DB hiccup): we
+    // upsert again with just the conv fields, then append the
+    // agent message either way.
     try {
-      await db.conversation.create({
-        data: {
+      await db.conversation.upsert({
+        where: { dustConversationSId: conv.dustConversationSId },
+        create: {
           dustConversationSId: conv.dustConversationSId,
           agentSId: job.agentSId,
           agentName: job.agentName ?? null,
           title: convTitle,
           projectName: project.name,
+          // If we land here via the "create" branch, the early
+          // upsert didn't happen — recreate the user message so
+          // the audit trail still shows both sides of the
+          // exchange.
           messages: {
             create: [
-              // Persist the FULL prompt we actually sent to the
-              // agent (user prompt + automation-context footer when
-              // pushEnabled). Keeps the audit trail faithful to what
-              // the agent saw, and makes re-opening the conv in
-              // /chat show the context the agent had.
               { role: 'user', content: agentPrompt },
+              {
+                role: 'agent',
+                content: agentText,
+                streamStats: agentStats2
+                  ? JSON.stringify(agentStats2.eventCounts)
+                  : null,
+                toolCalls: agentStats2?.toolCalls ?? 0,
+                toolNames: JSON.stringify(agentStats2?.toolNames ?? []),
+                durationMs: agentStats2?.durationMs ?? null,
+              },
+            ],
+          },
+        },
+        update: {
+          // Normal path: row already exists with the user message.
+          // Just append the agent message. We don't guard against
+          // duplicate agent messages because a given run only
+          // appends once here (no retry loop at this layer).
+          messages: {
+            create: [
               {
                 role: 'agent',
                 content: agentText,

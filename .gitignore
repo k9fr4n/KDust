@@ -21,3 +21,4 @@ prisma/prisma/
 
 prisma/kdust.db*
 prisma/tmp-migrate.db*
+prisma/dev-migrate.db

@@ -42,6 +42,11 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
   const [now, setNow] = useState(() => Date.now());
   const outputRef = useRef<HTMLPreElement>(null);
   const shouldAutoScroll = useRef(true);
+  // Independent auto-scroll state for the thinking pane (Franck
+  // 2026-04-24 20:27). Shares the same pattern as the output
+  // pane: follow the tail unless the user scrolled up manually.
+  const thinkingRef = useRef<HTMLPreElement>(null);
+  const shouldAutoScrollThinking = useRef(true);
 
   // Poll run state every 1.5s while running.
   useEffect(() => {
@@ -77,6 +82,15 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
     if (!el) return;
     if (shouldAutoScroll.current) el.scrollTop = el.scrollHeight;
   }, [run.output]);
+
+  // Same tail-following behaviour for the thinking pane (Franck
+  // 2026-04-24 20:27). Chain-of-thought is often long, so users
+  // want the latest reasoning visible without manual scrolling.
+  useEffect(() => {
+    const el = thinkingRef.current;
+    if (!el) return;
+    if (shouldAutoScrollThinking.current) el.scrollTop = el.scrollHeight;
+  }, [run.thinkingOutput]);
 
   async function onCancel() {
     if (!confirm('Cancel the running job? Any uncommitted changes will remain in /projects for inspection, nothing will be pushed.')) return;
@@ -169,11 +183,27 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
           be noisy — the label shows the char count as a
           live-updating teaser to hint there's activity. */}
       {run.thinkingOutput && (
-        <details className="mt-3">
+        // Open by default (Franck 2026-04-24 20:27): the thinking
+        // stream is the most informative signal during a long
+        // agent run, and hiding it behind a click defeated its
+        // purpose. Users can still collapse manually if they
+        // want a denser view.
+        <details className="mt-3" open>
           <summary className="cursor-pointer text-xs font-semibold text-purple-700 dark:text-purple-300 hover:text-purple-900">
             🧠 Live thinking ({run.thinkingOutput.length.toLocaleString('fr-FR')} chars)
           </summary>
-          <pre className="mt-1 whitespace-pre-wrap text-xs max-h-96 overflow-auto bg-purple-50 dark:bg-purple-950/30 rounded border border-purple-200 dark:border-purple-900 p-2 font-mono">
+          <pre
+            ref={thinkingRef}
+            onScroll={(e) => {
+              // Follow tail unless the user scrolled away from the
+              // bottom. 30px threshold matches the output pane's
+              // behaviour so both feel the same.
+              const el = e.currentTarget;
+              shouldAutoScrollThinking.current =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+            }}
+            className="mt-1 whitespace-pre-wrap text-xs max-h-96 overflow-auto bg-purple-50 dark:bg-purple-950/30 rounded border border-purple-200 dark:border-purple-900 p-2 font-mono"
+          >
             {run.thinkingOutput}
           </pre>
         </details>

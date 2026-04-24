@@ -31,6 +31,54 @@ export function toText(text: string, isError = false) {
   return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) };
 }
 
+/**
+ * MCP tool-output size budget (Franck 2026-04-24 09:25).
+ *
+ * Dust rejects agent turns whose cumulative context exceeds the
+ * model's window with:
+ *   "Your message or retrieved data is too large. Break your
+ *    request into smaller parts or reduce agent output."
+ *
+ * Every tool result is injected verbatim into the next turn's
+ * prompt, so an unrestricted `read_file` on a 500 KB file or a
+ * `run_command` that prints 2 MB of build log is enough to push
+ * the conversation past the limit after a handful of turns.
+ *
+ * We cap each tool's text payload at OUTPUT_MAX_BYTES (default
+ * 48 KB, overridable via KDUST_MCP_TOOL_OUTPUT_MAX_BYTES). When a
+ * payload exceeds the budget we keep the first half and the last
+ * half separated by a machine-readable truncation marker the
+ * agent can detect and act on (retry with offset/limit, grep
+ * narrower, etc.).
+ *
+ * Floor/ceiling: 8 KB \u2192 512 KB. Going below 8 KB starves even
+ * trivial reads; above 512 KB, single tool calls can still
+ * saturate the context alone.
+ */
+const OUTPUT_MAX_BYTES = Math.min(
+  512 * 1024,
+  Math.max(
+    8 * 1024,
+    Number(process.env.KDUST_MCP_TOOL_OUTPUT_MAX_BYTES ?? 48 * 1024),
+  ),
+);
+
+function truncateForMcp(text: string, kind: string): string {
+  // Byte length (UTF-8), not code-point count: Dust counts bytes
+  // on the wire. utf-8 byte length \u2260 text.length for non-ASCII.
+  const bytes = Buffer.byteLength(text, 'utf-8');
+  if (bytes <= OUTPUT_MAX_BYTES) return text;
+  // Keep head + tail, drop the middle. Half budget on each side,
+  // minus a small overhead for the marker line itself.
+  const half = Math.floor(OUTPUT_MAX_BYTES / 2) - 128;
+  const head = Buffer.from(text, 'utf-8').subarray(0, half).toString('utf-8');
+  const tail = Buffer.from(text, 'utf-8').subarray(bytes - half).toString('utf-8');
+  const marker =
+    `\n\n[... ${kind} truncated by KDust: kept ${half}B head + ${half}B tail, ` +
+    `original was ${bytes}B. Use offset/limit or narrow your search to get the full data. ...]\n\n`;
+  return head + marker + tail;
+}
+
 const IGNORE = [
   '**/node_modules/**',
   '**/.git/**',
@@ -59,9 +107,11 @@ export const readFile = {
         const lines = buf.split('\n');
         const start = args.offset ?? 0;
         const end = args.limit ? Math.min(lines.length, start + args.limit) : lines.length;
-        return toText(lines.slice(start, end).join('\n'));
+        // Still truncate: a paginated read can still exceed the
+        // byte budget if a single line is huge (minified js, etc).
+        return toText(truncateForMcp(lines.slice(start, end).join('\n'), 'read_file'));
       }
-      return toText(buf);
+      return toText(truncateForMcp(buf, 'read_file'));
     } catch (e: any) {
       return toText(`Error: ${e.message}`, true);
     }
@@ -180,8 +230,13 @@ export const searchContent = {
       const out = (stdout as string).trim();
       if (!out) return toText(`No matches found for: ${pattern}`);
       const lines = out.split('\n').slice(0, 500);
+      // Extra byte-cap on top of the 500-line cap: long matched
+      // lines (e.g. minified assets) can still blow the budget.
       return toText(
-        `Found ${lines.length} matches for "${pattern}" in the following files:\n\n${lines.join('\n')}`,
+        truncateForMcp(
+          `Found ${lines.length} matches for "${pattern}" in the following files:\n\n${lines.join('\n')}`,
+          'search_content',
+        ),
       );
     } catch (e: any) {
       return toText(`Error: ${e.message}`, true);
@@ -216,8 +271,14 @@ export const runCommand = {
             `\n\nError: Command failed with exit code ${err.code ?? 'unknown'}`,
         };
       });
+      // Truncate stdout/stderr INDEPENDENTLY so a 2 MB stdout
+      // doesn't wipe out the stderr tail the agent needs to see
+      // the actual error message. Each stream gets its own head/
+      // tail split.
       return toText(
-        `Command: ${args.command} ${(args.args ?? []).join(' ')}\nCwd: ${cwd}\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`,
+        `Command: ${args.command} ${(args.args ?? []).join(' ')}\nCwd: ${cwd}\n\n` +
+          `STDOUT:\n${truncateForMcp(String(stdout ?? ''), 'stdout')}\n\n` +
+          `STDERR:\n${truncateForMcp(String(stderr ?? ''), 'stderr')}`,
       );
     } catch (e: any) {
       return toText(`Error: ${e.message}`, true);

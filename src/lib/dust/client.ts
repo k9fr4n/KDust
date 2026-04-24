@@ -134,7 +134,15 @@ export async function getDustClient(): Promise<{
       const isAbort =
         errObj?.name === 'AbortError' ||
         errObj?.code === 20 ||
-        /aborted/i.test(String(errObj?.message ?? ''));
+        /aborted/i.test(String(errObj?.message ?? '')) ||
+        // Dust SDK cooperative-cancel shape (Franck 2026-04-24 22:30):
+        // when the user clicks Stop and /api/taskruns/:id/cancel
+        // fires, the SDK surfaces a Dust-typed error `{kind:'user'}`
+        // (distinct from the raw AbortError above) before the SSE
+        // loop notices `signal.aborted`. Same expected path, same
+        // demotion to a single info line rather than a scary
+        // [error] that operators read as a crash.
+        errObj?.kind === 'user';
       if (isAbort && /event stream/i.test(msg)) {
         console.log('[dust/sdk] event stream aborted by caller (cooperative cancel)');
         return;

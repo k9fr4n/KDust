@@ -292,6 +292,28 @@ model TaskRun {
   branch        String?
   baseBranch    String?
   commitSha     String?
+
+  // --- B2/B3 orchestrator ↔ child plumbing (Franck 2026-04-24 20:47) ---
+  // baseBranchSource identifies WHERE the effective baseBranch for
+  // this run came from:
+  //   - 'default'      : resolveBranchPolicy (task+project), no override
+  //   - 'explicit'     : caller passed base_branch on run_task/dispatch_task
+  //   - 'auto-inherit' : B2 auto-inherit kicked in because parentRun
+  //                      had a non-default branch
+  // Surfaced on /runs/:id as a small pill next to the base branch
+  // name so operators can tell at a glance whether a run inherited
+  // from its parent or not.
+  baseBranchSource String?
+  // mergeBackStatus traces the auto-merge back into the parent's
+  // branch attempted by B3 at the end of a successful run_task
+  // dispatch. One of:
+  //   NULL             : not a child run, or B3 disabled by the caller
+  //   'skipped'        : child made no commits (nothing to merge)
+  //   'ff'             : fast-forward merge succeeded + pushed
+  //   'refused'        : non-linear history, merge refused
+  //   'failed'         : merge/push errored (see mergeBackDetails)
+  mergeBackStatus  String?
+  mergeBackDetails String?
   filesChanged  Int?
   linesAdded    Int?
   linesRemoved  Int?

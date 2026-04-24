@@ -51,6 +51,12 @@ import { DustMcpServerTransport } from '@dust-tt/client';
 import { z } from 'zod';
 import { getDustClient } from '../dust/client';
 import { db } from '../db';
+import {
+  isWorktreeClean,
+  pushBranch,
+  branchExistsOnOrigin,
+} from '../git';
+import { resolveBranchPolicy } from '../branch-policy';
 
 export interface TaskRunnerHandle {
   orchestratorRunId: string;
@@ -121,6 +127,160 @@ async function resolveTaskForProject(
   if (generic) return { ...generic, isGeneric: true };
 
   return null;
+}
+
+/**
+ * B2 / B3 resolver (Franck 2026-04-24 20:47).
+ *
+ * Given the orchestrator's run id, the current project and the
+ * caller-supplied arguments, decide:
+ *
+ *   - effective base branch for the child (explicit > auto-inherit
+ *     from parent > task/project default, which is encoded as
+ *     `undefined` so runner.ts uses resolveBranchPolicy() for it)
+ *   - provenance tag for the UI badge
+ *   - whether to set `postMergeTargetBranch` so B3 fires at the end
+ *     of the child run
+ *
+ * Side effects when B2 auto-inherit kicks in:
+ *
+ *   - isWorktreeClean() is called; a dirty worktree triggers a
+ *     hard refusal rather than silent data loss during the child's
+ *     resetToBase(). The orchestrator agent is expected to commit
+ *     (or discard) its changes before dispatching a child.
+ *   - pushBranch() is called on the parent's branch so the child's
+ *     `git reset --hard origin/<parent-branch>` can resolve. Push
+ *     is idempotent; it's still called unconditionally because the
+ *     parent may have produced local commits since its own push.
+ *
+ * When auto-inherit is disabled (noInherit=true, parent on default
+ * branch, parent run has no branch because pushEnabled=false, …)
+ * this function degrades silently to {baseBranchOverride: undefined,
+ * postMergeTargetBranch: undefined} and the caller gets historical
+ * behaviour for free.
+ */
+export async function resolveB2B3(
+  orchestratorRunId: string,
+  projectName: string,
+  explicitBaseBranch: string | undefined,
+  opts: { noInherit: boolean; noMerge: boolean },
+): Promise<
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      baseBranchOverride: string | undefined;
+      baseBranchOverrideSource: 'explicit' | 'auto-inherit' | undefined;
+      postMergeTargetBranch: string | undefined;
+    }
+> {
+  // Fast path 1: caller passed an explicit branch → B1 behaviour,
+  // no inspection of the parent needed. B3 still kicks in against
+  // the orchestrator's branch if the agent expects its commits to
+  // flow back (unless no_merge is set). Note: if the explicit
+  // branch differs from the orchestrator's own branch, the merge
+  // target remains the orchestrator's branch — we merge back into
+  // the agent's current working branch, not into the arbitrary ref
+  // they chose as base.
+  const parentRun = await db.taskRun.findUnique({
+    where: { id: orchestratorRunId },
+    select: { branch: true, task: { select: { projectPath: true, baseBranch: true } } },
+  });
+  const parentBranch = parentRun?.branch ?? null;
+
+  // Resolve project defaults to spot "parent is already on default"
+  // cases where auto-inherit would be a no-op.
+  const project = await db.project.findFirst({ where: { name: projectName } });
+  let projectDefaultBase = 'main';
+  if (project) {
+    const policy = resolveBranchPolicy(
+      {
+        baseBranch: parentRun?.task?.baseBranch ?? null,
+        branchPrefix: null,
+        protectedBranches: null,
+      },
+      project,
+    );
+    projectDefaultBase = policy.baseBranch;
+  }
+
+  // Merge target: always the parent's current working branch, when
+  // it has one. If parent is on the default branch (or has no
+  // branch at all — pushEnabled=false), there's no useful target.
+  const mergeTarget =
+    !opts.noMerge && parentBranch && parentBranch !== projectDefaultBase
+      ? parentBranch
+      : undefined;
+
+  if (explicitBaseBranch) {
+    return {
+      ok: true,
+      baseBranchOverride: explicitBaseBranch,
+      baseBranchOverrideSource: 'explicit',
+      postMergeTargetBranch: mergeTarget,
+    };
+  }
+
+  // Fast path 2: caller opted out of auto-inherit.
+  if (opts.noInherit) {
+    return {
+      ok: true,
+      baseBranchOverride: undefined,
+      baseBranchOverrideSource: undefined,
+      postMergeTargetBranch: mergeTarget,
+    };
+  }
+
+  // Auto-inherit path.
+  if (!parentBranch || parentBranch === projectDefaultBase) {
+    // Parent is on the project default (or has no branch at all):
+    // auto-inherit is a no-op. Fall through to task/project defaults.
+    return {
+      ok: true,
+      baseBranchOverride: undefined,
+      baseBranchOverrideSource: undefined,
+      postMergeTargetBranch: undefined,
+    };
+  }
+
+  // Parent is on a work branch. Verify the shared worktree is
+  // clean BEFORE touching git, because the child's resetToBase()
+  // will nuke any uncommitted changes.
+  const clean = await isWorktreeClean(projectName);
+  if (!clean.clean) {
+    return {
+      ok: false,
+      error:
+        `refused: auto-inherit requires a clean worktree on project "${projectName}", ` +
+        `but there are uncommitted changes:\n${clean.porcelain.slice(0, 800)}\n\n` +
+        `Either commit them from the orchestrator, pass no_inherit=true to bypass ` +
+        `auto-inherit (child will branch from "${projectDefaultBase}" and ignore ` +
+        `the dirty state), or pass an explicit base_branch.`,
+    };
+  }
+
+  // Push parent's branch so `origin/<parentBranch>` is up to date
+  // for the child's resetToBase(). Idempotent. Logged for audit.
+  const alreadyOnOrigin = await branchExistsOnOrigin(projectName, parentBranch);
+  const push = await pushBranch(projectName, parentBranch, false);
+  if (!push.ok) {
+    return {
+      ok: false,
+      error:
+        `refused: auto-inherit needs to push parent branch "${parentBranch}" to ` +
+        `origin but the push failed. ${push.error}\n\n${push.output.slice(-800)}`,
+    };
+  }
+  console.log(
+    `[mcp/task-runner] B2 auto-inherit: parentBranch="${parentBranch}" ` +
+      `existsOnOrigin=${alreadyOnOrigin} push.ok=${push.ok}`,
+  );
+
+  return {
+    ok: true,
+    baseBranchOverride: parentBranch,
+    baseBranchOverrideSource: 'auto-inherit',
+    postMergeTargetBranch: mergeTarget,
+  };
 }
 
 export async function startTaskRunnerServer(
@@ -368,15 +528,33 @@ export async function startTaskRunnerServer(
           })
           .optional()
           .describe(
-            'OPTIONAL base branch for the child run. REPLACES the default ' +
-              '(usually "main") for this single dispatch so the child worktree ' +
-              'is fetched + hard-reset onto `origin/<base_branch>` before the ' +
-              'agent starts. Use this when an orchestrator has produced commits ' +
-              'on a work branch and needs the next step to see them — pass the ' +
-              'orchestrator\'s branch here. The branch MUST already exist on ' +
-              '`origin` (local-only branches will fail the pre-run sync). ' +
-              'Leave unset to inherit the task/project default, which is the ' +
-              'safe behaviour for independent sub-tasks.',
+            'OPTIONAL explicit base branch for the child run. Takes ' +
+              'precedence over B2 auto-inherit. Use when you need to ' +
+              'branch from a ref OTHER than the parent\'s current branch ' +
+              '(cross-branch delegation, retry from a different ref). The ' +
+              'branch MUST already exist on `origin`.',
+          ),
+        no_inherit: z
+          .boolean()
+          .optional()
+          .describe(
+            'Set to true to DISABLE B2 auto-inherit for this single ' +
+              'dispatch. The child will branch from the task/project ' +
+              'default (usually main) even though the parent is on a ' +
+              'non-default branch. Use for independent sub-tasks that ' +
+              'must not see the orchestrator\'s in-flight work ' +
+              '(parallel audits, fresh-clone validators, …).',
+          ),
+        no_merge: z
+          .boolean()
+          .optional()
+          .describe(
+            'Set to true to DISABLE B3 auto-merge-back for this single ' +
+              'dispatch. The child\'s commits stay on the child\'s own ' +
+              'branch; the orchestrator\'s branch is NOT fast-forwarded. ' +
+              'Use for dry-runs, exploratory work, or when the ' +
+              'orchestrator wants to review the child\'s diff before ' +
+              'merging manually.',
           ),
       },
     },
@@ -384,10 +562,13 @@ export async function startTaskRunnerServer(
       const taskRef = args.task as string;
       const promptOverride = (args.input as string | undefined) ?? undefined;
       const projectArg = (args.project as string | undefined)?.trim() || undefined;
-      // B1 base-branch override (Franck 2026-04-24 20:38). Validated
-      // by zod above; we still defensively trim to strip whitespace.
-      const baseBranchOverride =
+      // B1 base-branch explicit override (Franck 2026-04-24 20:38).
+      const explicitBaseBranch =
         (args.base_branch as string | undefined)?.trim() || undefined;
+      // B2 auto-inherit opt-out (Franck 2026-04-24 20:47).
+      const noInherit = args.no_inherit === true;
+      // B3 auto-merge opt-out (Franck 2026-04-24 20:47).
+      const noMerge = args.no_merge === true;
 
       // MCP progress heartbeat (Franck 2026-04-22 19:25).
       // Dust's MCP client has a 60s DEFAULT_REQUEST_TIMEOUT_MSEC; long
@@ -459,12 +640,47 @@ export async function startTaskRunnerServer(
       // "mcp by <parentTaskName>" at a glance.
       const parentTaskName = await getParentTaskName();
 
+      // B2 / B3 resolver (Franck 2026-04-24 20:47) ------------------
+      // Compute:
+      //   - the effective base_branch for the child (explicit arg,
+      //     auto-inherited from parent, or falls through to the
+      //     task/project default)
+      //   - the post-merge target for B3 (the orchestrator's branch,
+      //     so the child's commits can be FF-merged back when the
+      //     child finishes)
+      //
+      // Why do the B2 work here instead of inside runTask: we need
+      // to (a) inspect the parent run's branch, (b) verify the
+      // worktree is clean before auto-pushing, (c) actually push
+      // the parent's branch to origin so the child's resetToBase
+      // can succeed. All of this is MCP-layer concern (orchestrator
+      // bookkeeping) rather than generic run-the-task concern.
+      const b2 = await resolveB2B3(
+        orchestratorRunId,
+        projectName,
+        explicitBaseBranch,
+        { noInherit, noMerge },
+      );
+      if (!b2.ok) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ status: 'failure', error: b2.error }),
+            },
+          ],
+          isError: true as const,
+        };
+      }
+
       const childFinished = runTask(child.id, {
         parentRunId: orchestratorRunId,
         runDepth: nextDepth,
         promptOverride,
         projectOverride,
-        baseBranchOverride,
+        baseBranchOverride: b2.baseBranchOverride,
+        baseBranchOverrideSource: b2.baseBranchOverrideSource,
+        postMergeTargetBranch: b2.postMergeTargetBranch,
         trigger: 'mcp',
         triggeredBy: parentTaskName,
         onRunCreated: (id) => {
@@ -772,11 +988,14 @@ export async function startTaskRunnerServer(
           })
           .optional()
           .describe(
-            'OPTIONAL base branch for the child run. Same semantics as ' +
-              'run_task.base_branch: replaces the default base branch for ' +
-              'this single dispatch so the child is reset onto ' +
-              '`origin/<base_branch>` before its agent starts. Must exist ' +
-              'on origin.',
+            'OPTIONAL explicit base branch. Takes precedence over B2 ' +
+              'auto-inherit. Must exist on origin.',
+          ),
+        no_inherit: z
+          .boolean()
+          .optional()
+          .describe(
+            'Disable B2 auto-inherit for this dispatch. See run_task for full semantics.',
           ),
       },
     },
@@ -784,8 +1003,27 @@ export async function startTaskRunnerServer(
       const taskRef = args.task as string;
       const promptOverride = (args.input as string | undefined) ?? undefined;
       const projectArg = (args.project as string | undefined)?.trim() || undefined;
-      const baseBranchOverride =
+      const explicitBaseBranch =
         (args.base_branch as string | undefined)?.trim() || undefined;
+      const noInherit = args.no_inherit === true;
+
+      // B2 resolution for fire-and-forget dispatches (Franck
+      // 2026-04-24 20:47). B3 is deliberately disabled for
+      // dispatch_task — parallel children racing on the merge
+      // would produce non-deterministic conflicts. Agents that
+      // want merge-back must use run_task (sync) instead.
+      const b2 = await resolveB2B3(orchestratorRunId, projectName, explicitBaseBranch, {
+        noInherit,
+        noMerge: true,
+      });
+      if (!b2.ok) {
+        return {
+          content: [
+            { type: 'text' as const, text: JSON.stringify({ status: 'failure', error: b2.error }) },
+          ],
+          isError: true as const,
+        };
+      }
 
       const { runTask } = await import('../cron/runner');
 
@@ -809,7 +1047,9 @@ export async function startTaskRunnerServer(
         runDepth: nextDepth,
         promptOverride,
         projectOverride,
-        baseBranchOverride,
+        baseBranchOverride: b2.baseBranchOverride,
+        baseBranchOverrideSource: b2.baseBranchOverrideSource,
+        // B3 intentionally skipped on dispatch_task (see above).
         trigger: 'mcp',
         triggeredBy: parentTaskName,
         onRunCreated: (id) => {

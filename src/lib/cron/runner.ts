@@ -18,6 +18,8 @@ import {
   diffStatFromHead,
   commitAll,
   pushBranch,
+  checkoutExistingBranch,
+  mergeFastForward,
 } from '../git';
 
 /**
@@ -379,12 +381,43 @@ export interface RunTaskOptions {
    *     git.ts already quotes arguments.
    *   - Exposed via the MCP run_task tool as `base_branch`;
    *     dispatch_task forwards the same value.
-   *   - Never auto-inherited from the parent run in this patch
-   *     — the orchestrator must pass it explicitly. Auto-inherit
-   *     is a future iteration (requires pushing the parent's
-   *     work branch to origin first).
+   *   - B2 (2026-04-24 20:47): the MCP run_task layer now also
+   *     resolves auto-inherit (child branches from the parent run's
+   *     branch when that branch differs from the project default).
+   *     Both paths end up here in `baseBranchOverride`; the source
+   *     is signalled via `baseBranchOverrideSource`.
    */
   baseBranchOverride?: string;
+  /**
+   * Provenance of `baseBranchOverride`. Persisted on TaskRun
+   * (baseBranchSource column) so the /runs UI can display a pill
+   * next to the base branch name ("auto-inherit" / "explicit").
+   * Ignored when `baseBranchOverride` is unset.
+   */
+  baseBranchOverrideSource?: 'explicit' | 'auto-inherit';
+  /**
+   * B3 auto-merge-back (Franck 2026-04-24 20:47).
+   *
+   * When set, after a successful push this run will:
+   *   1. Checkout `postMergeTargetBranch` in the worktree
+   *   2. Attempt `git merge --ff-only <this-run-branch>`
+   *   3. If FF succeeds, `git push origin <target>`
+   *   4. Record mergeBackStatus + details on the TaskRun for UI
+   *
+   * The merge runs BEFORE the concurrency lock is released so
+   * no sibling run can grab the worktree mid-merge. FF-only is
+   * deliberate: non-linear histories (parallel children, rebase)
+   * are refused and surfaced to the orchestrator instead of
+   * silently 3-way merged.
+   *
+   * Only the synchronous run_task dispatch sets this — fire-and-
+   * forget `dispatch_task` deliberately skips B3 because parallel
+   * children would race on the merge and conflicts would be
+   * non-deterministic.
+   *
+   * Unset / null (the common case) = historical behaviour.
+   */
+  postMergeTargetBranch?: string;
 }
 
 /** Defend in depth against shell-injection via branch names even
@@ -527,10 +560,11 @@ export async function runTask(
         source: { baseBranch: 'task', branchPrefix: 'task', protectedBranches: 'task' },
       };
 
-  // B1 override (Franck 2026-04-24 20:38): apply opts.baseBranchOverride
+  // B1/B2 override (Franck 2026-04-24): apply opts.baseBranchOverride
   // AFTER the policy has been resolved so the override always wins
   // over task + project defaults. Reject invalid branch names
   // early rather than deferring to git's error surface.
+  let baseBranchSource: 'default' | 'explicit' | 'auto-inherit' = 'default';
   if (opts?.baseBranchOverride) {
     const override = opts.baseBranchOverride.trim();
     if (!BRANCH_NAME_RE.test(override)) {
@@ -539,9 +573,10 @@ export async function runTask(
           `Allowed chars are letters, digits, dot, underscore, slash, dash.`,
       );
     }
+    baseBranchSource = opts.baseBranchOverrideSource ?? 'explicit';
     console.log(
       `[cron] base branch override: "${policy.baseBranch}" \u2192 "${override}" ` +
-        `(via run_task MCP, parentRunId=${opts.parentRunId ?? 'none'})`,
+        `(source=${baseBranchSource}, parentRunId=${opts.parentRunId ?? 'none'})`,
     );
     policy.baseBranch = override;
     // Flag the source so downstream consumers (Teams card,
@@ -555,6 +590,11 @@ export async function runTask(
       status: 'running',
       dryRun: job.dryRun,
       baseBranch: policy.baseBranch,
+      // B2 provenance (Franck 2026-04-24 20:47): 'default' when the
+      // resolved base branch is the task/project default, else
+      // 'explicit' (caller passed base_branch) or 'auto-inherit'
+      // (MCP layer propagated from parent run).
+      baseBranchSource,
       phase: 'queued',
       phaseMessage: 'Starting',
       parentRunId: opts?.parentRunId ?? null,
@@ -1140,6 +1180,79 @@ export async function runTask(
       }
     }
 
+    // [8c] B3 auto-merge-back into parent (Franck 2026-04-24 20:47) --------
+    // When this run was dispatched via run_task (sync path) with a
+    // postMergeTargetBranch, we now fast-forward-merge this run's
+    // branch into the orchestrator's branch and push it. Running
+    // BEFORE the concurrency lock is released guarantees no sibling
+    // run can grab the worktree mid-merge.
+    //
+    // Preconditions for B3 to fire:
+    //   - caller requested it (opts.postMergeTargetBranch)
+    //   - we actually produced commits on a pushed branch
+    //   - not a dry-run (dry-run = no branch, no push, nothing to merge)
+    //   - target differs from this run's branch (no-op otherwise)
+    //
+    // Edge cases explicitly handled:
+    //   - no commits     → status 'skipped', nothing to do
+    //   - non-FF history → status 'refused', don't force, don't 3-way merge
+    //   - push fails     → status 'failed', log details for the UI
+    //
+    // In all non-ok cases the run itself remains 'success' — the
+    // child's own work was valid; only the upstream propagation
+    // failed and the orchestrator is expected to react (abort,
+    // retry, merge manually).
+    let mergeBackStatus: 'skipped' | 'ff' | 'refused' | 'failed' | null = null;
+    let mergeBackDetails: string | null = null;
+    const mergeTarget = opts?.postMergeTargetBranch?.trim();
+    if (mergeTarget && !job.dryRun && branch && project) {
+      if (!commitSha) {
+        mergeBackStatus = 'skipped';
+        mergeBackDetails = 'child produced no commits; nothing to merge back';
+        console.log(`[cron] B3: ${mergeBackDetails}`);
+      } else if (mergeTarget === branch) {
+        mergeBackStatus = 'skipped';
+        mergeBackDetails = `merge target equals run branch (${branch}); no-op`;
+        console.log(`[cron] B3: ${mergeBackDetails}`);
+      } else if (protectedList.includes(mergeTarget)) {
+        // Defence-in-depth: refuse to fast-forward-push over a
+        // protected branch even if the caller asked us to. The
+        // orchestrator should use the PR flow for those.
+        mergeBackStatus = 'refused';
+        mergeBackDetails = `merge target "${mergeTarget}" is protected; B3 will not push`;
+        console.warn(`[cron] B3: ${mergeBackDetails}`);
+      } else {
+        await setPhase('merging', `FF-merging ${branch} into ${mergeTarget}`);
+        console.log(`[cron] B3: checkout ${mergeTarget} + ff-merge ${branch}`);
+        const co = await checkoutExistingBranch(project.name, mergeTarget);
+        if (!co.ok) {
+          mergeBackStatus = 'failed';
+          mergeBackDetails = `checkout ${mergeTarget} failed: ${co.error}\n${co.output}`;
+          console.warn(`[cron] B3: ${mergeBackDetails}`);
+        } else {
+          const merge = await mergeFastForward(project.name, branch);
+          if (!merge.ok) {
+            mergeBackStatus = 'refused';
+            mergeBackDetails =
+              `FF-only merge refused (non-linear history or divergent ` +
+              `commits). Orchestrator must reconcile manually. Git output:\n${merge.output}`;
+            console.warn(`[cron] B3: ${mergeBackDetails}`);
+          } else {
+            const pushBack = await pushBranch(project.name, mergeTarget, false);
+            if (!pushBack.ok) {
+              mergeBackStatus = 'failed';
+              mergeBackDetails = `push ${mergeTarget} failed: ${pushBack.error}\n${pushBack.output}`;
+              console.warn(`[cron] B3: ${mergeBackDetails}`);
+            } else {
+              mergeBackStatus = 'ff';
+              mergeBackDetails = `fast-forward merged ${branch} into ${mergeTarget} and pushed`;
+              console.log(`[cron] B3: ${mergeBackDetails}`);
+            }
+          }
+        }
+      }
+    }
+
     const durationMs = Date.now() - startedAt;
     await db.taskRun.update({
       where: { id: run.id },
@@ -1156,6 +1269,8 @@ export async function runTask(
         prUrl,
         prNumber,
         prState,
+        mergeBackStatus,
+        mergeBackDetails,
         finishedAt: new Date(),
       },
     });

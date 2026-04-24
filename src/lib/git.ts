@@ -379,3 +379,108 @@ export async function pushBranch(
     error: r.code === 0 ? undefined : `git push exited ${r.code}`,
   };
 }
+
+/* ---------------------------------------------------------------
+ * Orchestrator ↔ child primitives (B2/B3, Franck 2026-04-24 20:47)
+ * -------------------------------------------------------------- */
+
+/**
+ * Returns true when the working tree has no staged, unstaged or
+ * untracked changes (safe to switch branches / merge without risk
+ * of silent data loss).
+ *
+ * Used by B2 (auto-inherit + auto-push): we refuse to auto-push
+ * the parent's branch when the orchestrator has uncommitted work,
+ * because otherwise the child run's resetToBase() on the shared
+ * worktree would nuke that work. Clean error > silent loss.
+ */
+export async function isWorktreeClean(projectName: string): Promise<{
+  clean: boolean;
+  porcelain: string;
+}> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  const r = await runGit(['status', '--porcelain'], cwd);
+  const porcelain = r.out.trim();
+  return { clean: r.code === 0 && porcelain.length === 0, porcelain };
+}
+
+/**
+ * Returns the current branch name, or null on detached HEAD / error.
+ * Not strictly required for B2/B3 (we already track branch names in
+ * TaskRun.branch), but handy when we need to know where the worktree
+ * actually sits vs. what the DB says — the two can drift if a run
+ * crashed mid-checkout. Used only for diagnostic messages for now.
+ */
+export async function getCurrentBranch(projectName: string): Promise<string | null> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  const r = await runGit(['branch', '--show-current'], cwd);
+  if (r.code !== 0) return null;
+  const name = r.out.trim();
+  return name.length > 0 ? name : null;
+}
+
+/**
+ * Check out an EXISTING local branch (no `-B`, no creation). Used
+ * by B3 at the end of `run_task` to return the worktree to the
+ * orchestrator's branch before attempting the fast-forward merge.
+ */
+export async function checkoutExistingBranch(
+  projectName: string,
+  branch: string,
+): Promise<GitSyncResult> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  const r = await runGit(['checkout', branch], cwd);
+  return {
+    ok: r.code === 0,
+    output: r.out,
+    error: r.code === 0 ? undefined : `git checkout ${branch} exited ${r.code}`,
+  };
+}
+
+/**
+ * Fast-forward-only merge. Succeeds iff the target branch is a
+ * strict ancestor of `fromBranch`. Any divergence — parallel
+ * work, rebase, amended commit — triggers a refusal rather than
+ * a 3-way merge. This is deliberate for B3:
+ *
+ *   - Parallel children would diverge; silently merging them is
+ *     a foot-gun even when textually clean.
+ *   - A refused FF surfaces to the orchestrator via the run_task
+ *     response payload, letting the agent reason about whether
+ *     to abort, retry on a clean base, or escalate.
+ *
+ * Assumes the caller has already checked out the target branch
+ * (the "base" of the FF). `fromBranch` is looked up locally; the
+ * caller must ensure it exists (usually because the child just
+ * finished and created it).
+ */
+export async function mergeFastForward(
+  projectName: string,
+  fromBranch: string,
+): Promise<GitSyncResult> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  const r = await runGit(['merge', '--ff-only', fromBranch], cwd);
+  return {
+    ok: r.code === 0,
+    output: r.out,
+    error:
+      r.code === 0
+        ? undefined
+        : `git merge --ff-only ${fromBranch} failed (non-linear history, divergent commits, or branch missing)`,
+  };
+}
+
+/**
+ * `git ls-remote origin <branch>` returns a non-empty SHA line when
+ * the branch exists on origin. Used by B2's auto-push step to skip
+ * re-pushing an already-synced ref (informational; push itself is
+ * idempotent, but skipping the network round-trip is a small win).
+ */
+export async function branchExistsOnOrigin(
+  projectName: string,
+  branch: string,
+): Promise<boolean> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  const r = await runGit(['ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`], cwd);
+  return r.code === 0;
+}

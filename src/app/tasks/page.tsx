@@ -12,6 +12,8 @@ import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import { nextRunAt } from '@/lib/cron/validator';
+import { getAppTimezone } from '@/lib/config';
+import { formatDateTime } from '@/lib/format';
 import type { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -102,6 +104,7 @@ function normaliseSort(raw?: string): SortKey {
  */
 export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
+  const tz = await getAppTimezone();
   const cookieProject = await getCurrentProjectName();
   const q = (sp.q ?? '').trim();
   const kind: UiKind = normaliseKind(sp.kind);
@@ -414,9 +417,9 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                   </td>
                   <td className="text-xs text-slate-500 whitespace-nowrap">
                     {last?.finishedAt
-                      ? new Date(last.finishedAt).toLocaleString('fr-FR')
+                      ? formatDateTime(last.finishedAt, tz)
                       : last?.startedAt
-                      ? new Date(last.startedAt).toLocaleString('fr-FR')
+                      ? formatDateTime(last.startedAt, tz)
                       : '—'}
                   </td>
                   <td className="text-xs whitespace-nowrap">
@@ -426,7 +429,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                       </span>
                     ) : next ? (
                       <span className="text-slate-500" title={next.toISOString()}>
-                        {next.toLocaleString('fr-FR')}
+                        {formatDateTime(next, tz)}
                       </span>
                     ) : (
                       <span className="text-slate-400" title="cron expression did not parse">

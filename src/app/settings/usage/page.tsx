@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { resolveRange, type RangeKey } from '@/lib/usage/range';
+import { getAppTimezone } from '@/lib/config';
+import { formatDate } from '@/lib/format';
 import { TimeRangeSelector } from '@/components/TimeRangeSelector';
 import {
   ArrowLeft,
@@ -63,6 +65,7 @@ export default async function UsagePage({
   // Next.js 15: searchParams is always a Promise in server components.
   searchParams: Promise<{ range?: string }>;
 }) {
+  const tz = await getAppTimezone();
   // Grafana-style window: default 30d, URL-driven via ?range=.
   // thirtyDaysAgo / "30d" are retained as legacy variable names below
   // for minimal-diff reasons but now resolve to the user's selection.
@@ -821,7 +824,7 @@ export default async function UsagePage({
                             : '—'}
                         </td>
                         <td className="py-1 text-right text-[10px] text-slate-400">
-                          {new Date(m.createdAt).toLocaleDateString('fr-FR')}
+                          {formatDate(m.createdAt, tz)}
                         </td>
                       </tr>
                     ))}
@@ -876,7 +879,7 @@ export default async function UsagePage({
                           {m.toolCalls}
                         </td>
                         <td className="py-1 text-right text-[10px] text-slate-400">
-                          {new Date(m.createdAt).toLocaleDateString('fr-FR')}
+                          {formatDate(m.createdAt, tz)}
                         </td>
                       </tr>
                     ))}
@@ -1029,7 +1032,7 @@ export default async function UsagePage({
                     {b._count._all}
                   </td>
                   <td className="py-1 text-right text-xs text-slate-500">
-                    {c.createdAt.toLocaleDateString('fr-FR')}
+                    {formatDate(c.createdAt, tz)}
                   </td>
                 </tr>
               );

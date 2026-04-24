@@ -14,6 +14,8 @@ import {
   Settings,
 } from 'lucide-react';
 import { db } from '@/lib/db';
+import { getAppTimezone } from '@/lib/config';
+import { formatDateTime } from '@/lib/format';
 
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
@@ -39,6 +41,7 @@ function fmtRel(d: Date) {
 export default async function Dashboard({ searchParams }: DashboardProps) {
   const sp = (await searchParams) ?? {};
   const reason = sp.reason;
+  const tz = await getAppTimezone();
   const current = await getCurrentProject();
 
   if (current) {
@@ -112,7 +115,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             Last sync:{' '}
             {current.lastSyncAt ? (
               <>
-                {new Date(current.lastSyncAt).toLocaleString('fr-FR')} ·{' '}
+                {formatDateTime(current.lastSyncAt, tz)} ·{' '}
                 <span
                   className={
                     current.lastSyncStatus === 'success' ? 'text-green-600' : 'text-red-500'

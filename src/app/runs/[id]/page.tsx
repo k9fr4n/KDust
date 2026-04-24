@@ -30,6 +30,8 @@ import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { LiveDuration } from '@/components/LiveDuration';
+import { getAppTimezone } from '@/lib/config';
+import { formatDateTime } from '@/lib/format';
 import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
@@ -80,6 +82,10 @@ function safeParseJson<T>(s: string | null | undefined, fallback: T): T {
 
 export default async function RunDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // AppConfig.timezone drives all human-facing timestamp formatting
+  // on this page (Franck 2026-04-24 19:16). Resolved once at the
+  // top; call-sites pass it into formatDateTime().
+  const tz = await getAppTimezone();
   const run = await db.taskRun.findUnique({
     where: { id },
     include: { task: true },
@@ -192,11 +198,11 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           <p className="text-sm text-slate-500">
             {run.task ? run.task.name : '(task deleted)'}
             {' · '}
-            started {new Date(run.startedAt).toLocaleString('fr-FR')}
+            started {formatDateTime(run.startedAt, tz)}
             {run.finishedAt && (
               <>
                 {' · '}
-                finished {new Date(run.finishedAt).toLocaleString('fr-FR')}
+                finished {formatDateTime(run.finishedAt, tz)}
               </>
             )}
             {' · '}

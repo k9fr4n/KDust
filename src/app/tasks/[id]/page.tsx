@@ -14,11 +14,14 @@ import { db } from '@/lib/db';
 import { TaskDeleteButton } from '@/components/TaskDeleteButton';
 import { TaskRunButton } from '@/components/TaskRunButton';
 import { resolveBranchPolicy } from '@/lib/branch-policy';
+import { getAppTimezone } from '@/lib/config';
+import { formatDateTime } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CronDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const tz = await getAppTimezone();
   const cron = await db.task.findUnique({
     where: { id },
     include: {
@@ -245,16 +248,16 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
         <div className="col-span-full pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           <div>
             <span className="text-slate-500">Created:</span>{' '}
-            <span className="font-mono">{cron.createdAt.toLocaleString('fr-FR')}</span>
+            <span className="font-mono">{formatDateTime(cron.createdAt, tz)}</span>
           </div>
           <div>
             <span className="text-slate-500">Updated:</span>{' '}
-            <span className="font-mono">{cron.updatedAt.toLocaleString('fr-FR')}</span>
+            <span className="font-mono">{formatDateTime(cron.updatedAt, tz)}</span>
           </div>
           <div>
             <span className="text-slate-500">Last run:</span>{' '}
             <span className="font-mono">
-              {cron.lastRunAt ? cron.lastRunAt.toLocaleString('fr-FR') : '\u2014 never'}
+              {cron.lastRunAt ? formatDateTime(cron.lastRunAt, tz) : '\u2014 never'}
             </span>
           </div>
         </div>

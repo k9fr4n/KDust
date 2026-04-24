@@ -20,6 +20,8 @@ import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { RunActions } from '@/components/RunActions';
 import { PageHeader } from '@/components/PageHeader';
 import { LiveDuration } from '@/components/LiveDuration';
+import { getAppTimezone } from '@/lib/config';
+import { formatDateTime } from '@/lib/format';
 import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { ViewportProbe } from '@/components/ViewportProbe';
@@ -150,6 +152,11 @@ function TriggerBadge({
 
 export default async function RunsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
+  // App-level timezone resolved once per render (cached 60s
+  // inside getAppTimezone). All date columns go through
+  // formatDateTime() with this value, fixing the "Started column
+  // shows UTC" issue reported on 2026-04-24 19:16.
+  const tz = await getAppTimezone();
   const statusFilter = sp.status && sp.status !== 'all' ? sp.status : undefined;
   const taskFilter = sp.task || undefined;
   const q = (sp.q ?? '').trim();
@@ -550,7 +557,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                         single timestamp link per Franck 2026-04-19
                         12:58. */}
                     {/* Plain text \u2014 row is now clickable (Franck 2026-04-19 13:10). */}
-                    {new Date(r.startedAt).toLocaleString('fr-FR')}
+                    {formatDateTime(r.startedAt, tz)}
                   </td>
                   <td className="text-xs font-mono">
                     {/* LiveDuration ticks every second while the run

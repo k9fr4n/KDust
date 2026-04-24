@@ -28,6 +28,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, MessageCircle, Settings } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
+import { CommandsLive } from '@/components/CommandsLive';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
@@ -516,79 +517,34 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               via native <details>. Shows status, exit code, duration and
               head of stdout/stderr (full content in DB, already truncated
               to KDUST_CMD_OUTPUT_MAX_BYTES at write-time). */}
-          {commands.length > 0 && (
-            <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm">
-                Commands ({commands.length})
-              </h2>
-              <div className="space-y-2">
-                {commands.map((c) => {
-                  const argv = (() => {
-                    try { return JSON.parse(c.args) as string[]; } catch { return []; }
-                  })();
-                  const argvStr = argv.map((a) => /[\s"']/.test(a) ? JSON.stringify(a) : a).join(' ');
-                  const ok = c.status === 'success';
-                  const deniedOrTimeout = c.status === 'denied' || c.status === 'timeout' || c.status === 'killed';
-                  const badgeClass = ok
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
-                    : deniedOrTimeout
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                    : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300';
-                  return (
-                    <details key={c.id} className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30">
-                      <summary className="cursor-pointer px-3 py-2 text-xs font-mono flex items-center gap-2 select-none">
-                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold ${badgeClass}`}>
-                          {c.status}
-                        </span>
-                        <span className="flex-1 truncate">
-                          <span className="font-semibold">{c.command}</span>
-                          {argvStr ? ` ${argvStr}` : ''}
-                        </span>
-                        <span className="text-slate-500 text-[10px] whitespace-nowrap">
-                          {c.exitCode !== null ? `exit=${c.exitCode}` : ''}
-                          {c.durationMs !== null && c.durationMs !== undefined ? ` · ${c.durationMs}ms` : ''}
-                        </span>
-                      </summary>
-                      <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 space-y-2 text-xs">
-                        {c.cwd && (
-                          <div className="text-slate-500">
-                            <span className="font-semibold">cwd:</span> <code className="font-mono">{c.cwd}</code>
-                          </div>
-                        )}
-                        {c.errorMessage && (
-                          <div className="text-red-600 dark:text-red-400">
-                            <span className="font-semibold">error:</span> {c.errorMessage}
-                          </div>
-                        )}
-                        {c.stdout && (
-                          <div>
-                            <div className="text-slate-500 font-semibold mb-1">
-                              stdout ({(c.stdoutBytes ?? c.stdout.length).toLocaleString('fr-FR')} bytes
-                              {c.stdoutBytes && c.stdoutBytes > c.stdout.length ? ' · truncated' : ''})
-                            </div>
-                            <pre className="whitespace-pre-wrap rounded bg-slate-100 dark:bg-slate-950 p-2 max-h-60 overflow-auto">
-                              {c.stdout}
-                            </pre>
-                          </div>
-                        )}
-                        {c.stderr && (
-                          <div>
-                            <div className="text-slate-500 font-semibold mb-1">
-                              stderr ({(c.stderrBytes ?? c.stderr.length).toLocaleString('fr-FR')} bytes
-                              {c.stderrBytes && c.stderrBytes > c.stderr.length ? ' · truncated' : ''})
-                            </div>
-                            <pre className="whitespace-pre-wrap rounded bg-slate-100 dark:bg-slate-950 p-2 max-h-60 overflow-auto">
-                              {c.stderr}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
-                    </details>
-                  );
-                })}
-              </div>
-            </section>
-          )}
+          {/* Commands section \u2014 rendered by the CommandsLive client
+              component so that in-flight runs get a live-updating
+              list (polled at 2s via /api/taskruns/:id/commands).
+              initialCommands is hydrated server-side so completed
+              runs render instantly without a round-trip. Franck
+              2026-04-24 22:39. */}
+          <CommandsLive
+            runId={run.id}
+            initialRunStatus={run.status}
+            // Map the server-side shape to the client component's
+            // expected JSON-serialisable type: Date \u2192 ISO string,
+            // everything else is already primitive.
+            initialCommands={commands.map((c) => ({
+              id: c.id,
+              command: c.command,
+              args: c.args,
+              cwd: c.cwd,
+              status: c.status,
+              exitCode: c.exitCode,
+              durationMs: c.durationMs,
+              startedAt: c.startedAt.toISOString(),
+              stdout: c.stdout,
+              stderr: c.stderr,
+              stdoutBytes: c.stdoutBytes,
+              stderrBytes: c.stderrBytes,
+              errorMessage: c.errorMessage,
+            }))}
+          />
 
           {/* Agent reasoning / chain-of-thought stream
               (Franck 2026-04-24 18:51). Dust streams reasoning

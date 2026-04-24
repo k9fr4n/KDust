@@ -60,7 +60,12 @@ export type CronFormValues = {
   branchMode: 'timestamped' | 'stable';
   branchPrefix: string | null;
   dryRun: boolean;
-  maxDiffLines: number;
+  // Stored as `number | null` so the user can fully clear the
+  // numeric input (null = blank field) without the field snapping
+  // back to a default on every keystroke. On submit, a null value
+  // is replaced with the default 2000 (see handleSubmit below).
+  // Franck 2026-04-24 22:00.
+  maxDiffLines: number | null;
   protectedBranches: string | null;
   /**
    * Wall-clock runtime cap in ms (Franck 2026-04-23 00:23). Null =
@@ -165,6 +170,11 @@ export function TaskForm({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...form,
+        // A blank maxDiffLines field (null in state) is a transient
+        // edit state — persist the historical default so the API,
+        // which still requires a positive integer, never sees null.
+        // Franck 2026-04-24 22:00.
+        maxDiffLines: form.maxDiffLines ?? 2000,
         agentName,
         teamsWebhook: form.teamsWebhook || null,
       }),
@@ -643,7 +653,26 @@ export function TaskForm({
                 </label>
                 <label className="block">
                   <span className="text-sm">Max diff lines (abort if exceeded)</span>
-                  <input type="number" min={1} className={field} value={form.maxDiffLines} onChange={(e) => setForm({ ...form, maxDiffLines: parseInt(e.target.value, 10) || 2000 })} required />
+                  <input
+                    type="number"
+                    min={1}
+                    className={field}
+                    // value='' when state is null: lets the user
+                    // fully clear the field and type a new number
+                    // without the default snapping back on every
+                    // empty keystroke. Franck 2026-04-24 22:00.
+                    value={form.maxDiffLines ?? ''}
+                    placeholder="2000"
+                    onChange={(e) => {
+                      const v = e.target.value.trim();
+                      if (!v) {
+                        setForm({ ...form, maxDiffLines: null });
+                        return;
+                      }
+                      const n = parseInt(v, 10);
+                      setForm({ ...form, maxDiffLines: Number.isFinite(n) && n > 0 ? n : null });
+                    }}
+                  />
                 </label>
               </div>
 

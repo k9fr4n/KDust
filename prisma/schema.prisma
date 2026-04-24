@@ -23,6 +23,13 @@ model AppConfig {
   leafRunTimeoutMs         Int @default(1800000)   // 30 min
   orchestratorRunTimeoutMs Int @default(3600000)   // 60 min
 
+  // Default timezone for schedules and human-facing timestamps
+  // (Franck 2026-04-24 17:07). IANA name (e.g. "Europe/Paris",
+  // "America/New_York", "Asia/Tokyo"). Per-task Task.timezone
+  // still wins when set; this is the fallback used by scheduler
+  // and Dust chat user-context.
+  timezone            String   @default("Europe/Paris")
+
   updatedAt           DateTime @updatedAt
 }
 

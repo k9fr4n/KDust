@@ -59,13 +59,24 @@ function safeOrigin(o: string | undefined | null): NonBilledOrigin {
   return 'cli';
 }
 
-function userContext(
+// Timezone is resolved from AppConfig (Franck 2026-04-24 17:07)
+// with a safe fallback to Europe/Paris. The helper is cached
+// 60s in config.ts so calling this on every chat turn is cheap.
+async function userContext(
   mcpServerIds?: string[] | null,
   origin: NonBilledOrigin = 'cli',
 ) {
+  let timezone = 'Europe/Paris';
+  try {
+    const { getAppTimezone } = await import('@/lib/config');
+    timezone = await getAppTimezone();
+  } catch {
+    /* degrade gracefully; AppConfig lookup is not on the
+       critical path for a chat turn */
+  }
   return {
     username: 'kdust',
-    timezone: 'Europe/Paris',
+    timezone,
     email: null,
     fullName: 'KDust',
     profilePictureUrl: null,
@@ -138,7 +149,7 @@ export async function createDustConversation(
     message: {
       content,
       mentions: [{ configurationId: agentSId }],
-      context: userContext(mcpServerIds, origin),
+      context: await userContext(mcpServerIds, origin),
     },
     contentFragments,
     blocking: false,
@@ -195,7 +206,7 @@ export async function postUserMessage(
     message: {
       content,
       mentions: [{ configurationId: agentSId }],
-      context: userContext(mcpServerIds, origin),
+      context: await userContext(mcpServerIds, origin),
     },
   });
   if (res.isErr()) throw new Error(`Dust postUserMessage: ${res.error.message}`);

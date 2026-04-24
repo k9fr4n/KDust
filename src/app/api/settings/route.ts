@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getAppConfig, updateAppConfig } from '@/lib/config';
+import {
+  getAppConfig,
+  updateAppConfig,
+  isValidTimezone,
+  invalidateAppTimezoneCache,
+} from '@/lib/config';
 export const runtime = 'nodejs';
 
 // Wall-clock runtime caps: [30s, 6h] clamp (matches runner.ts).
@@ -24,6 +29,15 @@ const Patch = z.object({
   defaultTeamsWebhook: z.string().url().nullable().optional(),
   leafRunTimeoutMs: timeoutMs,
   orchestratorRunTimeoutMs: timeoutMs,
+  // IANA timezone validated against Node's Intl database. Refuse
+  // typos at the boundary rather than silently saving a value
+  // that would later break Cron scheduling with an obscure error.
+  timezone: z
+    .string()
+    .refine(isValidTimezone, {
+      message: 'Must be a valid IANA timezone (e.g. "Europe/Paris").',
+    })
+    .optional(),
 });
 
 export async function GET() {
@@ -33,5 +47,9 @@ export async function PATCH(req: Request) {
   const parsed = Patch.safeParse(await req.json());
   if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
   const updated = await updateAppConfig(parsed.data);
+  // Flush the timezone cache so the new value takes effect
+  // immediately on the scheduler and chat hot paths, without
+  // waiting for the 60s TTL to expire.
+  if (parsed.data.timezone !== undefined) invalidateAppTimezoneCache();
   return NextResponse.json({ config: updated });
 }

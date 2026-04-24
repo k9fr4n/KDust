@@ -50,6 +50,18 @@ export async function reloadScheduler(): Promise<void> {
     where: { enabled: true },
     select: { id: true, name: true, schedule: true, timezone: true },
   });
+  // Resolve the app-level default timezone once per reload
+  // (Franck 2026-04-24 17:07): previously hardcoded to
+  // Europe/Paris, now comes from AppConfig so a user with a
+  // different locale can change it globally without editing
+  // every task individually.
+  let appTz = 'Europe/Paris';
+  try {
+    const { getAppTimezone } = await import('@/lib/config');
+    appTz = await getAppTimezone();
+  } catch {
+    /* keep the hardcoded fallback on DB errors */
+  }
   let registered = 0;
   let skipped = 0;
   for (const t of tasks) {
@@ -64,7 +76,7 @@ export async function reloadScheduler(): Promise<void> {
     try {
       const c = new Cron(
         t.schedule,
-        { timezone: t.timezone || 'Europe/Paris', name: t.id, protect: true },
+        { timezone: t.timezone || appTz, name: t.id, protect: true },
         async () => {
           // SCHEDULER-CONCURRENCY: skip if a previous run for this
           // very task is still in flight. `protect: true` already

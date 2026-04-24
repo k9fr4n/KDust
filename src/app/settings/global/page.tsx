@@ -83,6 +83,41 @@ export default function GlobalSettingsPage() {
             <input className={field} type="url" {...bind('defaultTeamsWebhook')} />
           </label>
 
+          {/* --- Default timezone (Franck 2026-04-24 17:07) ---
+              IANA identifier applied as fallback when a Task has
+              no per-task timezone set. Used by the cron scheduler
+              and injected into the Dust chat userContext so the
+              agent reports times in the user's locale. The list
+              is populated from Intl.supportedValuesOf('timeZone')
+              when the browser supports it (all evergreen browsers
+              do); a free-text <input> is the fallback so legacy
+              runtimes can still type a valid IANA name. */}
+          <label className="block">
+            <span className="text-sm">Default timezone</span>
+            {typeof (Intl as any).supportedValuesOf === 'function' ? (
+              <select className={field} {...bind('timezone')}>
+                {(Intl as any)
+                  .supportedValuesOf('timeZone')
+                  .map((tz: string) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <input
+                className={field}
+                placeholder="Europe/Paris"
+                {...bind('timezone')}
+              />
+            )}
+            <span className="block mt-1 text-[11px] text-slate-500">
+              Applied when a Task does not set its own timezone.
+              Also injected into Dust chat user-context so agents
+              report local time.
+            </span>
+          </label>
+
           {/* --- Runtime caps (Franck 2026-04-23) ----------------
               Wall-clock kill-timer applied to every task run when
               Task.maxRuntimeMs is not set. Stored as ms in DB, shown

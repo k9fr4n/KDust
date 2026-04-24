@@ -70,9 +70,33 @@ if (!g.__kdustFsSweeper) {
  * Get or start the MCP fs server for a given project.
  * Each project has a dedicated MCP server chrooted to /projects/{name}.
  */
+/**
+ * Bump the last-used timestamp for a project so the idle sweeper
+ * does not release an actively-used fs-server (Franck 2026-04-24
+ * 11:14). Previously only getFsServerId() bumped the timestamp,
+ * which misses the critical case: once Dust has the serverId,
+ * the agent fires tools/call events directly onto the live SSE
+ * transport WITHOUT ever calling back into getFsServerId(). A run
+ * that spans 30+ minutes with no re-ensure would have the
+ * timestamp frozen at the initial registration, the sweeper
+ * would release the handle mid-run, and Dust next tools/call
+ * against the now-dead serverId would fail with
+ * multi_actions_error -- cascading a failure into every child
+ * run spawned by the orchestrator.
+ *
+ * Invoked from the fs-server transport.onmessage hook so every
+ * inbound message (initialize, tools/list, tools/call,
+ * notifications) keeps the handle warm.
+ */
+export function touchFsServer(projectName: string): void {
+  lastUsedByProject.set(projectName, Date.now());
+}
+
 export async function getFsServerId(projectName: string): Promise<string> {
   // Bump lastUsedAt regardless of cache hit/miss so an active project
-  // can\u0027t be swept while it\u0027s in use.
+  // cannot be swept while it is in use. See touchFsServer() above for
+  // the live-traffic path that keeps the timestamp fresh during a
+  // long-running conversation.
   lastUsedByProject.set(projectName, Date.now());
 
   const existing = cache.get(projectName);

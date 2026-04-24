@@ -205,6 +205,15 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
         // McpServer sets transport.onmessage during connect; we wrap it to trace.
         const origOnMessage = transport.onmessage;
         transport.onmessage = (m: any) => {
+          // Bump the registry's last-used timestamp on every
+          // inbound SSE frame so the idle sweeper doesn't release
+          // an actively-used handle mid-run. Late-imported to
+          // keep this module import-cycle-free (registry ->
+          // fs-server -> registry). See touchFsServer docblock
+          // in registry.ts for the full incident context.
+          import('./registry')
+            .then((r) => r.touchFsServer(projectName))
+            .catch(() => { /* never block message dispatch */ });
           try {
             console.log(
               `[mcp/fs-server] <- project=${projectName} method=${m?.method ?? '?'} id=${m?.id ?? '?'} params=${JSON.stringify(m?.params ?? {}).slice(0, 200)}`,

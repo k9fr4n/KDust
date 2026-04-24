@@ -357,7 +357,40 @@ export interface RunTaskOptions {
    * continues regardless.
    */
   onRunCreated?: (runId: string) => void;
+  /**
+   * Base branch override for this single invocation (B1, Franck
+   * 2026-04-24 20:38). When set, REPLACES the resolved
+   * policy.baseBranch for this run only — project + task rows
+   * are unchanged.
+   *
+   * Use case: an orchestrator task has produced commits on a
+   * work branch and needs to dispatch a child (lint, test, …)
+   * that branches from THAT branch instead of origin/main.
+   * Without this override, children re-sync from main and lose
+   * the orchestrator's in-flight work, forcing every sub-step
+   * to re-apply the parent's diff.
+   *
+   * Contract:
+   *   - Must reference a branch that exists on `origin` —
+   *     resetToBase() runs `git fetch + reset --hard
+   *     origin/<branch>`. A local-only branch will fail the sync.
+   *   - Allowed chars: [A-Za-z0-9._/-]. Rejected at runner entry
+   *     to defend in depth against shell injection even though
+   *     git.ts already quotes arguments.
+   *   - Exposed via the MCP run_task tool as `base_branch`;
+   *     dispatch_task forwards the same value.
+   *   - Never auto-inherited from the parent run in this patch
+   *     — the orchestrator must pass it explicitly. Auto-inherit
+   *     is a future iteration (requires pushing the parent's
+   *     work branch to origin first).
+   */
+  baseBranchOverride?: string;
 }
+
+/** Defend in depth against shell-injection via branch names even
+ * though git.ts already quotes arguments. Only allow the subset
+ * of characters git itself considers legal for branch refs. */
+const BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/;
 
 /**
  * Walk the parentRunId chain and return the list of ancestor run IDs
@@ -493,6 +526,28 @@ export async function runTask(
         protectedBranches: job.protectedBranches ?? 'main,master,develop,production,prod',
         source: { baseBranch: 'task', branchPrefix: 'task', protectedBranches: 'task' },
       };
+
+  // B1 override (Franck 2026-04-24 20:38): apply opts.baseBranchOverride
+  // AFTER the policy has been resolved so the override always wins
+  // over task + project defaults. Reject invalid branch names
+  // early rather than deferring to git's error surface.
+  if (opts?.baseBranchOverride) {
+    const override = opts.baseBranchOverride.trim();
+    if (!BRANCH_NAME_RE.test(override)) {
+      throw new Error(
+        `invalid baseBranchOverride "${override}": must match ${BRANCH_NAME_RE}. ` +
+          `Allowed chars are letters, digits, dot, underscore, slash, dash.`,
+      );
+    }
+    console.log(
+      `[cron] base branch override: "${policy.baseBranch}" \u2192 "${override}" ` +
+        `(via run_task MCP, parentRunId=${opts.parentRunId ?? 'none'})`,
+    );
+    policy.baseBranch = override;
+    // Flag the source so downstream consumers (Teams card,
+    // /runs detail) can spot the override at a glance.
+    policy.source.baseBranch = 'task';
+  }
 
   const run = await db.taskRun.create({
     data: {

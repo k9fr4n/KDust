@@ -307,6 +307,12 @@ export async function startTaskRunnerServer(
         `{{PROJECT}} substitution in the prompt). A project-bound task MUST ` +
         `NOT receive "project" — it runs on its own project. ` +
         `\n\n` +
+        `BASE BRANCH (B1, 2026-04-24): pass \`base_branch\` to make the ` +
+        `child branch from that ref instead of the default (usually main). ` +
+        `Use this when an orchestrator has committed work on its own branch ` +
+        `and the next step must see those commits. The branch must exist on ` +
+        `origin. Omit \`base_branch\` for independent sub-tasks (safer). ` +
+        `\n\n` +
         `CONSTRAINTS: the child task must not itself have task-runner enabled ` +
         `(single orchestrator layer). One call at a time — do not attempt ` +
         `parallel calls.`,
@@ -353,12 +359,35 @@ export async function startTaskRunnerServer(
               '— the child keeps running in the background and can be awaited ' +
               'by calling wait_for_run({ run_id }).',
           ),
+        base_branch: z
+          .string()
+          .min(1)
+          .regex(/^[A-Za-z0-9._/-]+$/, {
+            message:
+              'Invalid branch name. Allowed chars: letters, digits, dot, underscore, slash, dash.',
+          })
+          .optional()
+          .describe(
+            'OPTIONAL base branch for the child run. REPLACES the default ' +
+              '(usually "main") for this single dispatch so the child worktree ' +
+              'is fetched + hard-reset onto `origin/<base_branch>` before the ' +
+              'agent starts. Use this when an orchestrator has produced commits ' +
+              'on a work branch and needs the next step to see them — pass the ' +
+              'orchestrator\'s branch here. The branch MUST already exist on ' +
+              '`origin` (local-only branches will fail the pre-run sync). ' +
+              'Leave unset to inherit the task/project default, which is the ' +
+              'safe behaviour for independent sub-tasks.',
+          ),
       },
     },
     async (args, extra) => {
       const taskRef = args.task as string;
       const promptOverride = (args.input as string | undefined) ?? undefined;
       const projectArg = (args.project as string | undefined)?.trim() || undefined;
+      // B1 base-branch override (Franck 2026-04-24 20:38). Validated
+      // by zod above; we still defensively trim to strip whitespace.
+      const baseBranchOverride =
+        (args.base_branch as string | undefined)?.trim() || undefined;
 
       // MCP progress heartbeat (Franck 2026-04-22 19:25).
       // Dust's MCP client has a 60s DEFAULT_REQUEST_TIMEOUT_MSEC; long
@@ -435,6 +464,7 @@ export async function startTaskRunnerServer(
         runDepth: nextDepth,
         promptOverride,
         projectOverride,
+        baseBranchOverride,
         trigger: 'mcp',
         triggeredBy: parentTaskName,
         onRunCreated: (id) => {
@@ -733,12 +763,29 @@ export async function startTaskRunnerServer(
           .describe(
             'Project context override. REQUIRED for generic tasks, REJECTED for project-bound tasks (same contract as run_task).',
           ),
+        base_branch: z
+          .string()
+          .min(1)
+          .regex(/^[A-Za-z0-9._/-]+$/, {
+            message:
+              'Invalid branch name. Allowed chars: letters, digits, dot, underscore, slash, dash.',
+          })
+          .optional()
+          .describe(
+            'OPTIONAL base branch for the child run. Same semantics as ' +
+              'run_task.base_branch: replaces the default base branch for ' +
+              'this single dispatch so the child is reset onto ' +
+              '`origin/<base_branch>` before its agent starts. Must exist ' +
+              'on origin.',
+          ),
       },
     },
     async (args) => {
       const taskRef = args.task as string;
       const promptOverride = (args.input as string | undefined) ?? undefined;
       const projectArg = (args.project as string | undefined)?.trim() || undefined;
+      const baseBranchOverride =
+        (args.base_branch as string | undefined)?.trim() || undefined;
 
       const { runTask } = await import('../cron/runner');
 
@@ -762,6 +809,7 @@ export async function startTaskRunnerServer(
         runDepth: nextDepth,
         promptOverride,
         projectOverride,
+        baseBranchOverride,
         trigger: 'mcp',
         triggeredBy: parentTaskName,
         onRunCreated: (id) => {

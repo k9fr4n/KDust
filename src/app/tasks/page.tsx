@@ -306,11 +306,12 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <FilterPill href={buildHref({ status: 'never' })} active={status === 'never'}>never ran</FilterPill>
       </div>
 
-      {/* Kind legend (Franck 2026-04-24 19:54). Tiny line that
-          documents what the colored left borders on the rows
-          mean. Kept inline (not a separate Help modal) so it's
-          discoverable without any interaction — new users grasp
-          the three categories on first sight. */}
+      {/* Kind legend (Franck 2026-04-24 19:58). Two independent
+          dimensions: role (border color) and scope (pill). A task
+          can be any combination, e.g. a template orchestrator is
+          shown with an amber border AND a violet "template" pill
+          next to its name. Keeping the legend inline ensures
+          users can learn both axes without leaving the page. */}
       <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 mb-2">
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-1 h-3.5 bg-amber-400 rounded-sm" aria-hidden />
@@ -320,12 +321,14 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-1 h-3.5 bg-sky-400 rounded-sm" aria-hidden />
           worker
-          <span className="text-slate-400">(leaf, project-scoped)</span>
+          <span className="text-slate-400">(leaf, executes directly)</span>
         </span>
+        <span className="mx-1 h-3.5 w-px bg-slate-300 dark:bg-slate-700" aria-hidden />
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-1 h-3.5 bg-violet-400 rounded-sm" aria-hidden />
-          template
-          <span className="text-slate-400">(generic, reusable)</span>
+          <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 font-semibold">
+            template
+          </span>
+          <span className="text-slate-400">(generic, not bound to a project)</span>
         </span>
       </div>
 
@@ -375,28 +378,50 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               // project-bound tasks get sky. The historical amber
               // audit colour was retired when the audit pipeline
               // was removed (Franck 2026-04-22).
-              // Orchestrator vs worker distinction (Franck
-              // 2026-04-24 19:54): project-bound tasks with
-              // taskRunnerEnabled=true can invoke run_task and
-              // spawn sub-runs, so they deserve their own colour
-              // to be identifiable at a glance. Workers (leaves)
-              // keep the historical sky; orchestrators switch to
-              // amber; templates stay violet.
-              const isOrchestrator = !isGeneric && c.taskRunnerEnabled;
-              const kindBorder = isGeneric
-                ? 'border-l-4 border-l-violet-400 dark:border-l-violet-500'
-                : isOrchestrator
+              // Kind signalling is 2-dimensional (Franck 2026-04-24
+              // 19:58): a task has a ROLE (orchestrator / worker)
+              // and a SCOPE (template / project). Templates can be
+              // EITHER orchestrators or workers, so mapping both
+              // dimensions onto the single left-border colour was
+              // ambiguous. Split:
+              //   - border colour  = role (amber orch, sky worker)
+              //   - violet pill    = scope (shown only on templates)
+              // Role is the more operationally important bit (can
+              // the task fan out into sub-runs?) so it gets the
+              // dominant visual channel.
+              const isOrchestrator = c.taskRunnerEnabled;
+              const kindBorder = isOrchestrator
                 ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
                 : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
               return (
                 <ClickableTaskRow key={c.id} taskId={c.id} className={kindBorder}>
-                  {/* Name cell: just the name. Category/mand
-                      badges removed 2026-04-19 13:48 as duplicates
-                      of the left-border color and the task title. */}
-                  <td className="py-2 font-medium">{c.name}</td>
+                  {/* Name cell. 2026-04-24 19:58: a compact
+                      violet pill marks templates, since the left
+                      border now encodes role (orch/worker) only.
+                      The pill is rendered inline rather than in
+                      a dedicated column to keep the table narrow
+                      on small viewports — one of the few places
+                      where mixing label + badge in the same cell
+                      is justified. */}
+                  <td className="py-2 font-medium">
+                    <span>{c.name}</span>
+                    {isGeneric && (
+                      <span
+                        className="ml-2 inline-block align-middle px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 font-semibold"
+                        title="Generic / reusable task template (no project bound)"
+                      >
+                        template
+                      </span>
+                    )}
+                  </td>
                   <td className="text-xs">
+                    {/* Project cell: templates have no project
+                        by definition; the "template" pill on the
+                        name cell conveys that now, so we just
+                        render a muted dash here instead of
+                        repeating the word. */}
                     {c.projectPath ?? (
-                      <span className="italic text-slate-400">— template —</span>
+                      <span className="text-slate-400">—</span>
                     )}
                   </td>
                   <td className="text-xs">{c.agentName ?? c.agentSId}</td>

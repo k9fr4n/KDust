@@ -80,6 +80,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     streamingSince: active?.startedAt ?? null,
     streamContent: active?.contentBuffer ?? '',
     streamCot: active?.cotBuffer ?? '',
+    // Raw JSON payloads ('{tool, params}') in invocation order;
+    // the client formats them identically to the live SSE path
+    // so the displayed pills don't shift when reattaching.
+    streamToolCalls: active?.toolCalls ?? [],
   });
 }
 

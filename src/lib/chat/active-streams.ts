@@ -32,6 +32,15 @@ export type ActiveStream = {
    */
   contentBuffer: string;
   cotBuffer: string;
+  /**
+   * Tool-call replay buffer (Franck 2026-04-25 19:45). One entry per
+   * tool invocation in order of execution. Stores the raw JSON
+   * payload as emitted by streamAgentReply ('{tool, params}'); the
+   * passive client parses + formats it the same way the live SSE
+   * consumer does, so the displayed pill list is byte-identical to
+   * what the original tab sees.
+   */
+  toolCalls: string[];
 };
 
 const active = new Map<string, ActiveStream>();
@@ -42,6 +51,7 @@ export function markStreamStart(conversationId: string, userMessageSId: string) 
     userMessageSId,
     contentBuffer: '',
     cotBuffer: '',
+    toolCalls: [],
   });
 }
 
@@ -66,6 +76,18 @@ export function appendStreamContent(conversationId: string, chunk: string) {
 export function appendStreamCot(conversationId: string, chunk: string) {
   const s = active.get(conversationId);
   if (s) s.cotBuffer += chunk;
+}
+
+/**
+ * Append a tool-call payload (JSON-encoded {tool, params}) to the
+ * replay buffer. The string is stored verbatim because the
+ * downstream consumer (live SSE handler in _ChatClient) already
+ * knows how to JSON-parse and pretty-print it; keeping the wire
+ * format identical avoids drift between live and replayed views.
+ */
+export function appendStreamToolCall(conversationId: string, payload: string) {
+  const s = active.get(conversationId);
+  if (s) s.toolCalls.push(payload);
 }
 
 export function markStreamAgentMessage(conversationId: string, agentMessageSId: string) {

@@ -7,6 +7,7 @@ import {
   markStreamAgentMessage,
   appendStreamContent,
   appendStreamCot,
+  appendStreamToolCall,
   isStreaming,
 } from '@/lib/chat/active-streams';
 
@@ -81,10 +82,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
               markStreamAgentMessage(id, data);
             } else if (kind === 'token') {
               // Mirror the live event into the replay buffer so a
-              // passive observer (other tab, reopened chat) can\n              // still see the running reply (Franck 2026-04-25 19:36).
+              // passive observer (other tab, reopened chat) can
+              // still see the running reply (Franck 2026-04-25 19:36).
               appendStreamContent(id, data);
             } else if (kind === 'cot') {
               appendStreamCot(id, data);
+            } else if (kind === 'tool_call') {
+              // Same rationale, extended to tool invocations
+              // (Franck 2026-04-25 19:45). Pills shown by the live
+              // and passive consumers are then byte-identical.
+              appendStreamToolCall(id, data);
             }
             send(kind, data);
           },

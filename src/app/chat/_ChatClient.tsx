@@ -251,6 +251,22 @@ function ChatPageInner({
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [cotText, setCotText] = useState('');
+  // Format a raw 'tool_call' SSE payload into the pill text shown
+  // in the running-reply UI. Extracted as a const-defined helper
+  // (Franck 2026-04-25 19:45) so the live SSE path AND the
+  // passive replay path (loadConv + polling) produce byte-identical
+  // strings \u2014 otherwise reattaching to a stream would visually
+  // \"snap\" the tool list as the consumer changed.
+  const formatToolCallPayload = (data: string): string => {
+    try {
+      const p = JSON.parse(data);
+      return `${p.tool}(${
+        p.params ? JSON.stringify(p.params).slice(0, 140) : ''
+      })`;
+    } catch {
+      return data;
+    }
+  };
   const [toolCalls, setToolCalls] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<string | null>(null);
@@ -413,9 +429,15 @@ function ChatPageInner({
     if (j.streaming) {
       setStreamedText(j.streamContent ?? '');
       setCotText(j.streamCot ?? '');
+      setToolCalls(
+        Array.isArray(j.streamToolCalls)
+          ? j.streamToolCalls.map(formatToolCallPayload)
+          : [],
+      );
     } else {
       setStreamedText('');
       setCotText('');
+      setToolCalls([]);
     }
     // An open conversation \"owns\" the agent choice \u2014 beats project
     // default and beats list[0] fallback.
@@ -660,6 +682,7 @@ function ChatPageInner({
           setMessages(j.conversation?.messages ?? []);
           setStreamedText('');
           setCotText('');
+          setToolCalls([]);
           setServerStreaming(false);
           setServerStreamingSince(null);
         } else {
@@ -670,6 +693,13 @@ function ChatPageInner({
           // so a plain assignment is correct (no diff math needed).
           setStreamedText(j.streamContent ?? '');
           setCotText(j.streamCot ?? '');
+          // Tool-call pills (Franck 2026-04-25 19:45) \u2014 same
+          // formatter as the live SSE path, see formatToolCallPayload.
+          setToolCalls(
+            Array.isArray(j.streamToolCalls)
+              ? j.streamToolCalls.map(formatToolCallPayload)
+              : [],
+          );
         }
       } catch {
         /* transient */
@@ -728,15 +758,7 @@ function ChatPageInner({
             // We receive it purely for forward-compat / debugging.
           }
           else if (ev === 'tool_call') {
-            try {
-              const p = JSON.parse(data);
-              const summary = `${p.tool}(${
-                p.params ? JSON.stringify(p.params).slice(0, 140) : ''
-              })`;
-              setToolCalls((arr) => [...arr, summary]);
-            } catch {
-              setToolCalls((arr) => [...arr, data]);
-            }
+            setToolCalls((arr) => [...arr, formatToolCallPayload(data)]);
           } else if (ev === 'error') setError(data);
           else if (ev === 'done') {
             setStreamedText('');

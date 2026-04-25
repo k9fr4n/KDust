@@ -50,6 +50,41 @@ chain is walkable in the DB and visualised as an indented tree on
 
 ## Tools reference
 
+### `list_tasks` — discover dispatchable tasks
+
+Use this when your orchestrator prompt doesn't hard-code child
+task names, or when running in chat mode and the agent needs to
+introspect the catalogue. Returns enabled tasks only.
+
+| Arg       | Type                                | Required | Default | Description |
+|-----------|-------------------------------------|:-:|---------|-------------|
+| `scope`   | `'all' \| 'bound' \| 'generic'`     |   | `all`   | Filter by task scope. |
+| `project` | string                              |   | —       | Project name. With `scope=all`, returns bound tasks for this project **+** all generics (generics are project-agnostic). |
+
+Output:
+
+```json
+{
+  "tasks": [
+    {
+      "id": "cmoxxxx",
+      "name": "audit-iam",
+      "scope": "generic",
+      "project_path": null,
+      "agent_name": "Coder",
+      "is_orchestrator": false,
+      "push_enabled": false,
+      "prompt_preview": "Audit IAM policies in {{PROJECT}} and produce…"
+    }
+  ]
+}
+```
+
+> The calling orchestrator appears in its own list. Self-redispatch
+> is allowed by design (different input, same agent); runaway
+> recursion is bounded by the existing `runDepth` guard, not by
+> filtering here.
+
 ### `run_task` — synchronous dispatch
 
 Blocks the orchestrator until the child finishes or `max_wait_ms`

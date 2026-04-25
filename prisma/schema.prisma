@@ -79,6 +79,16 @@ model TelegramBinding {
   // Sticky agent for this chat. Survives across `/new`. Falls
   // back to AppConfig.telegramDefaultAgentSId when null.
   agentSId       String?
+  // Sticky project tenant for this chat (Franck 2026-04-25 22:30).
+  // Survives `/new`. Drives:
+  //   1. Conversation.projectName on new conversations
+  //      (so the web UI routes them under the right tenant).
+  //   2. fs-cli + task-runner MCP server ensure() so the agent
+  //      gets read/write tools chrooted on /projects/<name> on
+  //      every turn.
+  // null = "global" / no project context (fs-cli not wired,
+  // agent runs against its own configured tools only).
+  projectName    String?
   // Last user/agent message timestamp, for housekeeping.
   lastActivityAt DateTime @default(now())
   createdAt      DateTime @default(now())

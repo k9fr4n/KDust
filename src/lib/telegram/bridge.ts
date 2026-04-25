@@ -36,6 +36,11 @@ import {
   streamAgentReply,
 } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
+import { listProjects } from '@/lib/projects';
+import {
+  getFsServerId,
+  getChatTaskRunnerServerId,
+} from '@/lib/mcp/registry';
 import {
   sendMessage,
   editMessageText,
@@ -45,6 +50,15 @@ import {
 
 // ---- per-chat in-flight stream registry ----
 const inFlight = new Map<string, AbortController>();
+
+// ---- per-chat pending project choice ----
+// Set when the user runs `/project <name>` BEFORE a binding
+// exists (no conversation has been created yet on this chat).
+// Consumed once on the next createBinding() call. Process-local
+// only \u2014 a restart resets pending choices, the user just re-runs
+// /project. Acceptable because the moment they send a real
+// message the choice is persisted onto TelegramBinding.
+const pendingProject = new Map<string, string>();
 
 // ---- throttle config ----
 // Telegram per-chat rate limit is ~1 msg/s; we edit at 900ms so
@@ -76,17 +90,59 @@ async function dropBinding(chatId: string): Promise<void> {
   await db.telegramBinding.deleteMany({ where: { chatId } });
 }
 
+/**
+ * Resolve the MCP serverIds to wire on a turn for this project.
+ * Mirrors the chat client's behaviour (/api/mcp/ensure +
+ * /api/mcp/task-runner-ensure): one fs-cli handle chrooted to
+ * /projects/<name>, plus a task-runner-chat handle so the agent
+ * can list_tasks / run_task / dispatch_task. Returns null when
+ * no project is selected (agent uses its own configured tools
+ * only \u2014 same as a chat with no project picker on the web UI).
+ *
+ * Failures are non-fatal: if either ensure throws (Dust offline,
+ * registry hiccup), we still send the user message; the agent
+ * will simply not have those tools on this turn. Logged as a
+ * warning so the operator can investigate via /logs.
+ */
+async function resolveMcpServerIds(
+  projectName: string | null,
+): Promise<string[] | null> {
+  if (!projectName) return null;
+  const ids: string[] = [];
+  try {
+    ids.push(await getFsServerId(projectName));
+  } catch (e) {
+    console.warn(
+      `[telegram] fs-cli ensure failed for project=${projectName}: ${
+        e instanceof Error ? e.message : e
+      }`,
+    );
+  }
+  try {
+    ids.push(await getChatTaskRunnerServerId(projectName));
+  } catch (e) {
+    console.warn(
+      `[telegram] task-runner ensure failed for project=${projectName}: ${
+        e instanceof Error ? e.message : e
+      }`,
+    );
+  }
+  return ids.length > 0 ? ids : null;
+}
+
 async function createBinding(
   chatId: string,
   agentSId: string,
   agentName: string | null,
   firstUserContent: string,
+  projectName: string | null,
+  mcpServerIds: string[] | null,
 ) {
   const dust = await createDustConversation(
     agentSId,
     firstUserContent,
     null,
-    null,
+    mcpServerIds,
     'cli',
   );
   const conv = await db.conversation.create({
@@ -97,14 +153,15 @@ async function createBinding(
       title:
         firstUserContent.slice(0, 80).replace(/\s+/g, ' ').trim() ||
         'Telegram chat',
-      // Telegram-initiated convs are global (no project tenant).
-      // The user can move them later via the web UI.
-      projectName: null,
+      // Tenant: when the user has selected a project via /project,
+      // the conversation belongs to that tenant and shows up in
+      // the web UI under the right project filter.
+      projectName,
       messages: { create: [{ role: 'user', content: firstUserContent }] },
     },
   });
   await db.telegramBinding.create({
-    data: { chatId, conversationId: conv.id, agentSId },
+    data: { chatId, conversationId: conv.id, agentSId, projectName },
   });
   return { conv, userMessageSId: dust.userMessageSId, dustConversation: dust.conversation };
 }
@@ -123,12 +180,72 @@ async function handleCommand(
         [
           'KDust bot — type a message to chat with your Dust agent.',
           '',
-          '/new          start a fresh conversation',
-          '/agent <sId>  switch agent (also starts a fresh conversation)',
-          '/whoami       show chat id + bound conversation',
-          '/stop         abort the current streaming reply',
-          '/help         this message',
+          '/new            start a fresh conversation',
+          '/agent <sId>    switch agent (also resets the conversation)',
+          '/projects       list available projects',
+          '/project <name> set the project context (fs tools chroot here)',
+          '/project        clear project (global mode, no fs tools)',
+          '/whoami         show chat id, agent, project, bound conv',
+          '/stop           abort the current streaming reply',
+          '/help           this message',
         ].join('\n'),
+      );
+      return true;
+    }
+    case '/projects': {
+      const projects = await listProjects();
+      if (projects.length === 0) {
+        await sendMessage(chatId, 'No projects under /projects yet.');
+        return true;
+      }
+      const binding = await resolveBinding(chatId);
+      const lines = projects.map((p) =>
+        binding?.projectName === p.name ? `• ${p.name}  (current)` : `• ${p.name}`,
+      );
+      await sendMessage(
+        chatId,
+        ['Projects:', ...lines, '', 'Use /project <name> to switch.'].join('\n'),
+      );
+      return true;
+    }
+    case '/project': {
+      const requested = args.trim();
+      if (requested === '') {
+        // Clear: drop binding + pending choice. Next message
+        // starts in global mode (no fs tools).
+        await dropBinding(chatId);
+        pendingProject.delete(chatId);
+        await sendMessage(
+          chatId,
+          '\u2705 Project cleared. The next message starts a fresh conversation in global mode (no fs tools).',
+        );
+        return true;
+      }
+      const projects = await listProjects();
+      const match = projects.find((p) => p.name === requested);
+      if (!match) {
+        await sendMessage(
+          chatId,
+          `\u274c Project "${requested}" not found. Run /projects for the list.`,
+        );
+        return true;
+      }
+      // Switching project resets the conversation: a fresh fs-cli
+      // chroot makes any reuse of the previous Dust conv tool
+      // history misleading (paths from the old project would
+      // still be in context). The binding row will be recreated
+      // on the next real user message; until then we remember
+      // the project choice in the in-memory pending map so
+      // createBinding() picks it up. The map is process-local
+      // (not persisted) which is fine: on a restart the user can
+      // simply re-run /project. Persisting it would require a
+      // schema change since TelegramBinding has a mandatory
+      // conversationId FK.
+      await dropBinding(chatId);
+      pendingProject.set(chatId, match.name);
+      await sendMessage(
+        chatId,
+        `\u2705 Project set to ${match.name}. The next message starts a fresh conversation with fs tools chrooted on /projects/${match.name}.`,
       );
       return true;
     }
@@ -180,13 +297,18 @@ async function handleCommand(
     case '/whoami': {
       const binding = await resolveBinding(chatId);
       const cfg = await getAppConfig();
+      const project =
+        binding?.projectName ?? pendingProject.get(chatId) ?? null;
       await sendMessage(
         chatId,
         [
           `chat_id   : ${chatId}`,
-          `agent     : ${binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? '—'}`,
-          `conv      : ${binding?.conversationId ?? '— (will be created on next message)'}`,
-          `dust sId  : ${binding?.conversation?.dustConversationSId ?? '—'}`,
+          `agent     : ${binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? '\u2014'}`,
+          `project   : ${project ?? '\u2014 (global)'}${
+            !binding && project ? '  [pending]' : ''
+          }`,
+          `conv      : ${binding?.conversationId ?? '\u2014 (will be created on next message)'}`,
+          `dust sId  : ${binding?.conversation?.dustConversationSId ?? '\u2014'}`,
         ].join('\n'),
       );
       return true;
@@ -257,10 +379,28 @@ export async function handleTelegramMessage(msg: TgMessage): Promise<void> {
     /* non-fatal */
   });
 
+  // Resolve project context (sticky on the binding, falling back
+  // to the pending choice from a `/project` issued before any
+  // conversation existed). Then ensure the per-project MCP
+  // servers (fs-cli + task-runner-chat) so the agent gets its
+  // file system / orchestration tools on this turn.
+  const projectName =
+    binding?.projectName ?? pendingProject.get(chatId) ?? null;
+  const mcpServerIds = await resolveMcpServerIds(projectName);
+
   try {
     let stream: { conversation: unknown; userMessageSId: string; conversationId: string };
     if (!binding) {
-      const created = await createBinding(chatId, agentSId, null, text);
+      const created = await createBinding(
+        chatId,
+        agentSId,
+        null,
+        text,
+        projectName,
+        mcpServerIds,
+      );
+      // Pending choice consumed; the binding row now carries it.
+      pendingProject.delete(chatId);
       stream = {
         conversation: created.dustConversation,
         userMessageSId: created.userMessageSId,
@@ -276,14 +416,28 @@ export async function handleTelegramMessage(msg: TgMessage): Promise<void> {
         // Defensive: a binding should always reference a Dust
         // conv. Drop and retry as a fresh binding.
         await dropBinding(chatId);
-        const created = await createBinding(chatId, agentSId, null, text);
+        const created = await createBinding(
+          chatId,
+          agentSId,
+          null,
+          text,
+          projectName,
+          mcpServerIds,
+        );
+        pendingProject.delete(chatId);
         stream = {
           conversation: created.dustConversation,
           userMessageSId: created.userMessageSId,
           conversationId: created.conv.id,
         };
       } else {
-        const r = await postUserMessage(dustConvSId, agentSId, text, null, 'cli');
+        const r = await postUserMessage(
+          dustConvSId,
+          agentSId,
+          text,
+          mcpServerIds,
+          'cli',
+        );
         await db.message.create({
           data: {
             conversationId: binding.conversationId,

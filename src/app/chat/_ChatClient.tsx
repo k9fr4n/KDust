@@ -1391,12 +1391,38 @@ function ChatPageInner({
               >
                 <Wrench size={12} />
                 {mcpStatus === 'ready'
-                  ? `fs \u00b7 ${currentProject}`
+                  ? `fs · ${currentProject}`
                   : mcpStatus === 'starting'
-                    ? `starting\u2026`
+                    ? `starting…`
                     : mcpStatus === 'error'
                       ? 'fs error'
                       : `fs idle`}
+              </span>
+            )}
+            {/*
+              Task-runner MCP status chip (Franck 2026-04-25 11:51).
+              Mirrors the fs-cli chip so the user can see at a glance
+              whether list_tasks / run_task / dispatch_task are
+              actually exposed to the agent. Two states only \u2014 either
+              a serverId is registered ("ready") or it isn't
+              ("inactive"). No "starting" because the parallel ensure
+              completes before the chat is interactive.
+            */}
+            {currentProject && (
+              <span
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors ${
+                  taskRunnerServerId
+                    ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
+                    : 'border-slate-300 dark:border-slate-700 text-slate-500'
+                }`}
+                title={
+                  taskRunnerServerId
+                    ? `KDust task-runner MCP active (serverId=${taskRunnerServerId}) — list_tasks / run_task / dispatch_task / wait_for_run available`
+                    : 'KDust task-runner MCP inactive — agent cannot dispatch tasks from chat'
+                }
+              >
+                <Wrench size={12} />
+                {taskRunnerServerId ? 'tasks · ready' : 'tasks · off'}
               </span>
             )}
             {currentId && (() => {

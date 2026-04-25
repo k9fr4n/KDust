@@ -723,6 +723,19 @@ export async function runTask(
       const co = await checkoutWorkingBranch(project.name, branch);
       if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
       console.log(`[cron] branch=${branch}`);
+      // Persist the working branch IMMEDIATELY (Franck 2026-04-25
+      // 11:14). Critical for B2 auto-inherit chaining: when this
+      // run is an orchestrator that will dispatch children, the
+      // MCP run_task layer reads `parentRun.branch` from DB to
+      // decide whether to auto-inherit. Before this update, the
+      // branch was only written at terminal points (no-op /
+      // success / failed) \u2014 which meant children dispatched MID-
+      // run saw parentBranch=null in the DB and fell back to
+      // branching from main, breaking the entire orchestration
+      // chain. Symptom: orchestrator branch stays at base SHA,
+      // children's commits land on independent fan-out branches,
+      // quality-gate runs on an empty tree.
+      await db.taskRun.update({ where: { id: run.id }, data: { branch } });
     } else {
       console.log(`[cron] pushEnabled=false \u2192 skipping branch setup, running on ${policy.baseBranch}`);
     }

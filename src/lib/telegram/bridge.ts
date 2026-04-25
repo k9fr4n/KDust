@@ -135,6 +135,104 @@ async function resolveMcpServerIds(
 }
 
 /**
+ * Fetch the visible agents from Dust and render them as an
+ * inline keyboard so the user can switch with one tap. Mirrors
+ * the /projects picker UX. Bound by Telegram's 64-byte
+ * callback_data cap, but agent sIds are well under that.
+ *
+ * Best-effort: if Dust is unreachable we surface a plain text
+ * error instead of leaving the user with no feedback.
+ */
+async function sendAgentPicker(chatId: string): Promise<void> {
+  let agents: Array<{ sId: string; name: string }> = [];
+  try {
+    const ctx = await getDustClient();
+    if (!ctx) throw new Error('Dust not connected');
+    const r = await ctx.client.getAgentConfigurations({});
+    if (r.isErr()) throw new Error(r.error.message);
+    agents = r.value as Array<{ sId: string; name: string }>;
+  } catch (e) {
+    await sendMessage(
+      chatId,
+      `\u274c Could not list agents: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+    return;
+  }
+  if (agents.length === 0) {
+    await sendMessage(chatId, 'No agents visible to this user.');
+    return;
+  }
+  // Sort alphabetically for stable, predictable order.
+  agents.sort((a, b) =>
+    a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+  );
+  const cfg = await getAppConfig();
+  const binding = await resolveBinding(chatId);
+  const currentSId =
+    binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? null;
+  // 1 column, mark the current selection with a check.
+  // Telegram caps inline_keyboard payloads at ~10kB; well under
+  // for typical workspaces. If a workspace has >100 agents we
+  // would need pagination \u2014 out of scope for v1.
+  const buttons = agents.map((a) => [
+    {
+      text:
+        (currentSId === a.sId ? '\u2705 ' : '') +
+        (a.name.length > 50 ? a.name.slice(0, 47) + '\u2026' : a.name),
+      callback_data: `agent:${a.sId}`.slice(0, 64),
+    },
+  ]);
+  await sendMessage(chatId, 'Pick an agent:', {
+    inline_keyboard: buttons,
+  });
+}
+
+/**
+ * Validate + apply an agent change. Used by both the
+ * `/agent <sId>` slash command and the inline-keyboard
+ * callback. Mirrors applyProjectChoice() to keep both code
+ * paths behaviourally identical.
+ */
+async function applyAgentChoice(
+  chatId: string,
+  sId: string,
+): Promise<{ ok: boolean; message: string; agentName?: string }> {
+  let agentName: string | null = null;
+  try {
+    const ctx = await getDustClient();
+    if (!ctx) throw new Error('Dust not connected');
+    const r = await ctx.client.getAgentConfigurations({});
+    if (r.isErr()) throw new Error(r.error.message);
+    const list = r.value as Array<{ sId: string; name: string }>;
+    const match = list.find((a) => a.sId === sId);
+    if (!match) throw new Error('agent sId not visible to this user');
+    agentName = match.name;
+  } catch (e) {
+    return {
+      ok: false,
+      message: `\u274c Agent ${sId} not found: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    };
+  }
+  await dropBinding(chatId);
+  await db.appConfig.update({
+    where: { id: 1 },
+    data: { telegramDefaultAgentSId: sId },
+  });
+  return {
+    ok: true,
+    agentName: agentName ?? undefined,
+    message:
+      `\u2705 Agent set to ${agentName ?? sId}` +
+      (agentName ? ` (${sId})` : '') +
+      `. The next message starts a fresh conversation with this agent.`,
+  };
+}
+
+/**
  * Apply a project change for a given chat. Used by both the
  * `/project <name>` slash command and the inline-keyboard
  * callback fired from `/projects` button taps. Centralising the
@@ -245,6 +343,18 @@ export async function handleTelegramCallback(
       return;
     }
 
+    if (data.startsWith('agent:')) {
+      const sId = data.slice('agent:'.length);
+      const result = await applyAgentChoice(chatId, sId);
+      await answerCallbackQuery(cq.id, {
+        text: result.ok
+          ? `Agent: ${result.agentName ?? sId}`
+          : 'Agent not found',
+      });
+      await sendMessage(chatId, result.message);
+      return;
+    }
+
     console.warn(`[telegram] unknown callback_data: ${data}`);
     await answerCallbackQuery(cq.id);
   } catch (e) {
@@ -309,8 +419,9 @@ async function handleCommand(
           'KDust bot — type a message to chat with your Dust agent.',
           '',
           '/new            start a fresh conversation',
-          '/agent <sId>    switch agent (also resets the conversation)',
-          '/projects       list available projects',
+          '/agents         pick an agent (clickable list)',
+          '/agent <sId>    switch agent directly (also resets the conversation)',
+          '/projects       pick a project (clickable list)',
           '/project <name> set the project context (fs tools chroot here)',
           '/project        clear project (global mode, no fs tools)',
           '/whoami         show chat id, agent, project, bound conv',
@@ -366,47 +477,18 @@ async function handleCommand(
       await sendMessage(chatId, '✅ New conversation. Send your message.');
       return true;
     }
+    case '/agents':
     case '/agent': {
       const sId = args.trim().split(/\s+/)[0];
       if (!sId) {
-        await sendMessage(chatId, 'Usage: /agent <agent_sId>');
+        // No arg: render a clickable picker, same UX as
+        // /projects. Tap a button \u2192 callback fires
+        // applyAgentChoice() with the chosen sId.
+        await sendAgentPicker(chatId);
         return true;
       }
-      // Validate via Dust; cheap guard against typos.
-      let agentName: string | null = null;
-      try {
-        const ctx = await getDustClient();
-        if (!ctx) throw new Error('Dust not connected');
-        // Validate the sId against the visible agent list. Cheaper
-        // than calling a single-agent endpoint AND avoids drift
-        // when the SDK renames it between versions.
-        const r = await ctx.client.getAgentConfigurations({});
-        if (r.isErr()) throw new Error(r.error.message);
-        const list = r.value as Array<{ sId: string; name: string }>;
-        const match = list.find((a) => a.sId === sId);
-        if (!match) {
-          throw new Error('agent sId not visible to this user');
-        }
-        agentName = match.name;
-      } catch (e) {
-        await sendMessage(
-          chatId,
-          `\u274c Agent ${sId} not found: ${e instanceof Error ? e.message : String(e)}`,
-        );
-        return true;
-      }
-      await dropBinding(chatId);
-      // Stash the chosen agent on a fresh placeholder binding so
-      // the next user message picks it up. Conversation row is
-      // created lazily on first real message (no Dust call yet).
-      await db.appConfig.update({
-        where: { id: 1 },
-        data: { telegramDefaultAgentSId: sId },
-      });
-      await sendMessage(
-        chatId,
-        `\u2705 Agent set to ${agentName ?? sId}${agentName ? ` (${sId})` : ''}. The next message starts a fresh conversation with this agent.`,
-      );
+      const result = await applyAgentChoice(chatId, sId);
+      await sendMessage(chatId, result.message);
       return true;
     }
     case '/whoami': {

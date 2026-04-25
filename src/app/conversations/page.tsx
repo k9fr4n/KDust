@@ -85,7 +85,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
       <ViewportProbe />
       <PageHeader
         icon={<MessageSquare size={20} />}
-        title="Conversations"
+        title="Conversation"
         scope={cookieProject}
         right={
           <span className="text-sm text-slate-500">

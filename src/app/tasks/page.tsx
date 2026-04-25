@@ -249,7 +249,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       <ViewportProbe />
       <PageHeader
         icon={<Clock size={20} />}
-        title="Tasks"
+        title="Task"
         scope={cookieProject}
         right={
           <>

@@ -399,7 +399,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       <ViewportProbe />
       <PageHeader
         icon={<Clock size={20} />}
-        title="Runs"
+        title="Run"
         scope={currentProject}
         right={
           <>

@@ -544,7 +544,7 @@ export default async function UsagePage({
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <KPI
           icon={<MessageSquare size={14} />}
-          label="Conversations"
+          label="Conversation"
           value={totalConvs}
           sub={`${recentConvs} in ${rangeLabel}`}
         />
@@ -569,7 +569,7 @@ export default async function UsagePage({
         />
         <KPI
           icon={<Activity size={14} />}
-          label="Tasks"
+          label="Task"
           value={totalTasks}
           sub={`${enabledTasks} enabled`}
         />

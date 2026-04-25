@@ -33,6 +33,20 @@ const Patch = z.object({
   // returns 400 with a clear error if the chat_id is bad, and the
   // runner already swallows that with a console.warn.
   defaultTelegramChatId: z.string().nullable().optional(),
+  // Interactive Telegram chat bridge (Franck 2026-04-25 22:00).
+  // - telegramChatEnabled toggles the long-poll loop in
+  //   instrumentation.ts. We don't auto-(re)start the loop from
+  //   the PATCH handler: a server restart, or a deliberate call
+  //   to startTelegramBridge() from the settings UI's API
+  //   endpoint, is required. Keeps the responsibility tree
+  //   shallow (one boot path, in instrumentation.ts).
+  // - allowed chat ids: free-form CSV; empty = no one is allowed
+  //   (fail-closed).
+  // - default agent sId: lightly validated (sId pattern), the
+  //   bridge re-validates against Dust on /agent.
+  telegramChatEnabled: z.boolean().optional(),
+  telegramAllowedChatIds: z.string().nullable().optional(),
+  telegramDefaultAgentSId: z.string().nullable().optional(),
   leafRunTimeoutMs: timeoutMs,
   orchestratorRunTimeoutMs: timeoutMs,
   // IANA timezone validated against Node's Intl database. Refuse
@@ -57,5 +71,25 @@ export async function PATCH(req: Request) {
   // immediately on the scheduler and chat hot paths, without
   // waiting for the 60s TTL to expire.
   if (parsed.data.timezone !== undefined) invalidateAppTimezoneCache();
+  // Reflect Telegram toggle changes immediately: enabling starts
+  // the long-poll loop right now, disabling aborts the in-flight
+  // getUpdates and lets the loop exit on its next iteration.
+  // Both helpers are idempotent / no-op when called in the wrong
+  // state, so we can call them unconditionally.
+  if (parsed.data.telegramChatEnabled !== undefined) {
+    try {
+      const { startTelegramBridge, stopTelegramBridge } = await import(
+        '@/lib/telegram'
+      );
+      if (parsed.data.telegramChatEnabled) await startTelegramBridge();
+      else stopTelegramBridge();
+    } catch (e) {
+      console.warn(
+        `[settings] telegram bridge toggle failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
   return NextResponse.json({ config: updated });
 }

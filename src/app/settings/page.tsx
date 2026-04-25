@@ -6,6 +6,7 @@ import {
   FolderGit2,
   Bot,
   KeyRound,
+  MessageCircle,
 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 
@@ -63,6 +64,17 @@ export default function SettingsIndex() {
         'Encrypted credentials injected as environment variables into command-runner tasks (GitHub tokens, cloud creds, ...). Values never reach the LLM.',
       icon: <KeyRound size={18} />,
       accent: 'text-rose-600 dark:text-rose-400',
+    },
+    {
+      // Telegram chat bridge (Franck 2026-04-25 22:00). Long-poll
+      // loop on api.telegram.org; outbound-only, no exposure of
+      // KDust required.
+      href: '/settings/telegram',
+      title: 'Telegram chat',
+      description:
+        'Talk to your Dust agents through a Telegram bot (long-polling, fully outbound \u2014 no inbound port).',
+      icon: <MessageCircle size={18} />,
+      accent: 'text-sky-600 dark:text-sky-400',
     },
     {
       href: '/settings/usage',

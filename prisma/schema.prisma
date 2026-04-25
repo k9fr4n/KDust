@@ -37,7 +37,52 @@ model AppConfig {
   // and Dust chat user-context.
   timezone            String   @default("Europe/Paris")
 
+  // ---- Interactive Telegram chat bridge (Franck 2026-04-25 22:00) ----
+  // Master switch: when false, the long-polling loop in
+  // src/lib/telegram/poller.ts is not started by instrumentation.ts.
+  // Default OFF so an upgrade can't accidentally start eating
+  // /getUpdates traffic before the operator has whitelisted a
+  // chat_id. Independent from the *notification* flow which is
+  // gated only by KDUST_TELEGRAM_BOT_TOKEN + a chat_id.
+  telegramChatEnabled    Boolean  @default(false)
+  // CSV whitelist of chat_ids allowed to interact with the bot.
+  // Empty/null = NO chat is allowed (fail-closed). KDust is
+  // mono-user so this is normally a single id matching
+  // defaultTelegramChatId, but we keep the column distinct so
+  // notifications and chat permissions don't have to coincide.
+  telegramAllowedChatIds String?
+  // Default Dust agent sId for new Telegram-initiated conversations.
+  // When unset the bot replies with a /agent <sId> hint on first
+  // contact instead of failing.
+  telegramDefaultAgentSId String?
+  // getUpdates long-poll cursor. Persisted across restarts so we
+  // don't re-deliver pending Telegram messages on a redeploy.
+  // Stored as last_update_id + 1 (the value to pass back as
+  // ?offset=).
+  telegramUpdateOffset   Int      @default(0)
+
   updatedAt           DateTime @updatedAt
+}
+
+// Persistent mapping between a Telegram chat and a KDust
+// Conversation row (Franck 2026-04-25 22:00). One binding per
+// chat_id; replacing it with `/new` deletes-and-recreates so
+// the unique constraint is honored. The bound Conversation owns
+// its dustConversationSId, message history, etc. — i.e. a
+// Telegram session is just a regular KDust conversation behind
+// the scenes, also visible in /conversation in the web UI.
+model TelegramBinding {
+  // chat_id is a string here for the same reason as
+  // AppConfig.defaultTelegramChatId: supergroups exceed Int32.
+  chatId         String   @id
+  conversationId String   @unique
+  // Sticky agent for this chat. Survives across `/new`. Falls
+  // back to AppConfig.telegramDefaultAgentSId when null.
+  agentSId       String?
+  // Last user/agent message timestamp, for housekeeping.
+  lastActivityAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 }
 
 // Singleton Dust session (mono-user)
@@ -62,6 +107,7 @@ model Conversation {
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   messages             Message[]
+  telegramBinding      TelegramBinding?
 
   @@index([projectName])
   @@index([pinned])

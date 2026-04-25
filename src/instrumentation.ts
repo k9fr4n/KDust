@@ -66,6 +66,22 @@ export async function register() {
       console.error(`[instrumentation] scheduler boot failed: ${(e as Error).message}`);
     }
 
+    // Boot the Telegram chat bridge (Franck 2026-04-25 22:00).
+    // No-op if AppConfig.telegramChatEnabled=false OR
+    // KDUST_TELEGRAM_BOT_TOKEN is unset \u2014 see poller.ts. The
+    // long-poll loop runs detached, fully outbound (api.telegram.
+    // org), so KDust never needs an inbound HTTPS port. Toggling
+    // /settings/telegram from the UI calls startTelegramBridge()
+    // again at runtime, so a missed boot here is fully recoverable.
+    try {
+      const { startTelegramBridge } = await import('./lib/telegram');
+      await startTelegramBridge();
+    } catch (e) {
+      console.error(
+        `[instrumentation] telegram bridge boot failed: ${(e as Error).message}`,
+      );
+    }
+
     // Note: a one-shot cleanup of legacy mandatory audit tasks used
     // to live here (Franck 2026-04-22 audit nuke). It was removed the
     // same day because `prisma db push --accept-data-loss` in

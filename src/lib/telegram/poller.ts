@@ -1,0 +1,177 @@
+/**
+ * Telegram long-poll loop (Franck 2026-04-25 22:00).
+ *
+ * Strategy:
+ *  - Long-poll getUpdates with a 25s server-side wait. Telegram
+ *    holds the connection until either an update arrives or the
+ *    timeout elapses, so the loop is mostly idle (zero CPU).
+ *  - The persisted offset (AppConfig.telegramUpdateOffset) is
+ *    advanced ONLY after the message handler has returned. If
+ *    the process crashes mid-handle, Telegram will redeliver the
+ *    update on the next boot (at-least-once). The bridge is
+ *    idempotent enough for that to be acceptable: a duplicate
+ *    user turn would just generate a duplicate agent reply
+ *    (visible in /conversation, easy to clean up manually).
+ *  - On error: exponential backoff capped at 60s. 401/404 (bad
+ *    or revoked token) stops the loop and logs once — retrying
+ *    a 401 forever just spams api.telegram.org.
+ *  - The whole loop is wrapped in a `started` boolean guard so
+ *    instrumentation.ts can be called twice (e.g. Next.js HMR)
+ *    without spawning duplicate pollers (which would cause
+ *    Telegram 409 Conflict on parallel getUpdates).
+ */
+
+import { getAppConfig, getTelegramOffset, setTelegramOffset } from '@/lib/config';
+import { getUpdates, getMe, isTelegramConfigured } from './api';
+import { handleTelegramMessage } from './bridge';
+
+let started = false;
+let stopRequested = false;
+let currentAbort: AbortController | null = null;
+
+const LONG_POLL_TIMEOUT_SEC = 25;
+const MAX_BACKOFF_MS = 60_000;
+
+async function loop(): Promise<void> {
+  let backoff = 1_000;
+  let consecutiveAuthFailures = 0;
+
+  while (!stopRequested) {
+    // Re-read the master switch every iteration so the operator
+    // can toggle the bridge on/off from /settings/telegram
+    // without restarting the server. When disabled mid-flight
+    // we exit the loop cleanly (started flag flipped in stop()).
+    const cfg = await getAppConfig().catch(() => null);
+    if (!cfg?.telegramChatEnabled) {
+      console.log('[telegram] disabled — poller exiting');
+      break;
+    }
+    if (!isTelegramConfigured()) {
+      console.warn('[telegram] KDUST_TELEGRAM_BOT_TOKEN missing — sleeping 30s');
+      await sleep(30_000);
+      continue;
+    }
+
+    const offset = await getTelegramOffset();
+    currentAbort = new AbortController();
+    try {
+      const updates = await getUpdates(
+        offset,
+        LONG_POLL_TIMEOUT_SEC,
+        currentAbort.signal,
+      );
+      backoff = 1_000;
+      consecutiveAuthFailures = 0;
+
+      if (updates.length === 0) continue;
+
+      // Process sequentially: KDust is mono-user and a single
+      // chat will rarely have parallel turns, so serial keeps
+      // the code simple and avoids racing edits on the same
+      // placeholder message.
+      let maxId = offset - 1;
+      for (const u of updates) {
+        maxId = Math.max(maxId, u.update_id);
+        const msg = u.message ?? u.edited_message;
+        if (!msg) continue;
+        try {
+          await handleTelegramMessage(msg);
+        } catch (e) {
+          console.error(
+            `[telegram] handler threw for update_id=${u.update_id}: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+        }
+      }
+      // Persist offset only AFTER the full batch has been
+      // processed; on crash we'll re-deliver but never lose.
+      await setTelegramOffset(maxId + 1);
+    } catch (err) {
+      if ((err as { name?: string }).name === 'AbortError') break;
+      const code = (err as { code?: number }).code;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (code === 401 || code === 404) {
+        consecutiveAuthFailures++;
+        console.error(
+          `[telegram] auth failure (${code}); check KDUST_TELEGRAM_BOT_TOKEN — ${msg}`,
+        );
+        if (consecutiveAuthFailures >= 3) {
+          console.error('[telegram] giving up after 3 auth failures');
+          break;
+        }
+      } else {
+        console.warn(`[telegram] getUpdates error, backing off ${backoff}ms: ${msg}`);
+      }
+      await sleep(backoff);
+      backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+    } finally {
+      currentAbort = null;
+    }
+  }
+  started = false;
+  stopRequested = false;
+  console.log('[telegram] poller stopped');
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Boot the long-poll loop if (and only if) it is currently
+ * disabled. Safe to call multiple times: a guard ensures only one
+ * loop is in flight per process. Returns immediately; the loop
+ * runs in the background.
+ */
+export async function startTelegramBridge(): Promise<void> {
+  if (started) return;
+  const cfg = await getAppConfig().catch(() => null);
+  if (!cfg?.telegramChatEnabled) {
+    console.log('[telegram] bridge disabled in AppConfig — not starting');
+    return;
+  }
+  if (!isTelegramConfigured()) {
+    console.warn(
+      '[telegram] bridge enabled but KDUST_TELEGRAM_BOT_TOKEN is missing',
+    );
+    return;
+  }
+  // One-shot identity check so we surface a clear error in /logs
+  // before the first getUpdates would have. Non-blocking on
+  // failure: getMe failing usually means the token is wrong, but
+  // we still let the main loop's auth-failure path handle it so
+  // the behaviour is uniform.
+  try {
+    const me = await getMe();
+    console.log(
+      `[telegram] bridge starting as @${me.username ?? me.first_name} (id=${me.id})`,
+    );
+  } catch (e) {
+    console.warn(
+      `[telegram] getMe at boot failed: ${e instanceof Error ? e.message : e}`,
+    );
+  }
+  started = true;
+  stopRequested = false;
+  // Detached: the loop runs forever (or until stopTelegramBridge
+  // is called). We DO NOT await here — instrumentation.register()
+  // must return promptly to let Next.js complete startup.
+  void loop().catch((e) => {
+    started = false;
+    console.error(
+      `[telegram] poller crashed: ${e instanceof Error ? e.stack ?? e.message : e}`,
+    );
+  });
+}
+
+/**
+ * Request the loop to stop. Aborts the current getUpdates if any
+ * (so we don't have to wait the full long-poll timeout). The
+ * `started` flag is reset by the loop itself when it returns.
+ */
+export function stopTelegramBridge(): void {
+  if (!started) return;
+  stopRequested = true;
+  currentAbort?.abort();
+}

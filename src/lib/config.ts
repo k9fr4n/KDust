@@ -17,6 +17,14 @@ export interface AppConfigData {
   // the scheduler when Task.timezone is null and by the Dust
   // chat userContext so agents report local time correctly.
   timezone: string;
+  // Interactive Telegram chat bridge (Franck 2026-04-25 22:00).
+  telegramChatEnabled: boolean;
+  telegramAllowedChatIds: string | null;
+  telegramDefaultAgentSId: string | null;
+  // Note: telegramUpdateOffset is NOT exposed here. It's a
+  // runtime cursor read/written directly from the poller via
+  // dedicated helpers (getTelegramOffset / setTelegramOffset)
+  // — leaking it through the settings API would be a footgun.
 }
 
 export async function getAppConfig(): Promise<AppConfigData> {
@@ -32,6 +40,9 @@ export async function getAppConfig(): Promise<AppConfigData> {
       leafRunTimeoutMs: existing.leafRunTimeoutMs,
       orchestratorRunTimeoutMs: existing.orchestratorRunTimeoutMs,
       timezone: existing.timezone,
+      telegramChatEnabled: existing.telegramChatEnabled,
+      telegramAllowedChatIds: existing.telegramAllowedChatIds,
+      telegramDefaultAgentSId: existing.telegramDefaultAgentSId,
     };
   }
   // bootstrap from env (one-shot, first boot only)
@@ -57,7 +68,47 @@ export async function getAppConfig(): Promise<AppConfigData> {
     leafRunTimeoutMs: created.leafRunTimeoutMs,
     orchestratorRunTimeoutMs: created.orchestratorRunTimeoutMs,
     timezone: created.timezone,
+    telegramChatEnabled: created.telegramChatEnabled,
+    telegramAllowedChatIds: created.telegramAllowedChatIds,
+    telegramDefaultAgentSId: created.telegramDefaultAgentSId,
   };
+}
+
+// ---------------------------------------------------------------
+// Telegram long-poll cursor helpers (Franck 2026-04-25 22:00).
+//
+// The cursor is stored on the singleton AppConfig row to avoid
+// adding yet another singleton table. Reads happen on every
+// successful getUpdates batch (cheap, sub-ms on SQLite); writes
+// are debounced by the poller to once per non-empty batch.
+// Both helpers swallow Prisma errors and return safe defaults so
+// a transient DB hiccup never crashes the long-poll loop.
+// ---------------------------------------------------------------
+export async function getTelegramOffset(): Promise<number> {
+  try {
+    const cfg = await db.appConfig.findUnique({
+      where: { id: 1 },
+      select: { telegramUpdateOffset: true },
+    });
+    return cfg?.telegramUpdateOffset ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function setTelegramOffset(offset: number): Promise<void> {
+  try {
+    await db.appConfig.update({
+      where: { id: 1 },
+      data: { telegramUpdateOffset: offset },
+    });
+  } catch (e) {
+    console.warn(
+      `[telegram] failed to persist update offset=${offset}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 export async function updateAppConfig(patch: Partial<AppConfigData>) {

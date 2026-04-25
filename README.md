@@ -22,6 +22,7 @@ qui fait éditer des projets locaux par des agents Dust et poste un rapport Team
 - Pipeline push automatisé : branche dédiée par run, commit/push, ouverture PR/MR, Teams report.
 - Orchestration multi-tâches via MCP `run_task` / `dispatch_task` / `wait_for_run`, avec auto-inherit de la branche parent (B2) et auto-merge-back fast-forward (B3).
 - Back-office (`/settings`) pour configurer URL Dust, WorkOS, webhook Teams par défaut.
+- **Bridge Telegram** (`/settings/telegram`) : chat interactif avec un agent Dust depuis l'app Telegram, en long-polling sortant — KDust n'est jamais exposé sur Internet.
 - Mono-utilisateur, gate par mot de passe applicatif optionnel (`APP_PASSWORD`).
 
 ## Démarrage rapide
@@ -47,3 +48,29 @@ Ouvrir http://localhost:3000, se connecter (mot de passe applicatif), puis
 - Les tokens OAuth sont chiffrés AES-256-GCM avec `APP_ENCRYPTION_KEY`.
 - Aucune clé n'est committée. Rotation : changer `APP_ENCRYPTION_KEY` **invalide la session Dust** (relogin nécessaire).
 - Le port 3000 ne doit **jamais** être exposé sur Internet sans reverse-proxy TLS + auth.
+
+## ADR — Telegram chat bridge (long-polling, in-process)
+
+Status   : Accepted (Franck 2026-04-25)
+Context  : L'utilisateur veut pouvoir discuter avec un agent Dust
+           depuis Telegram sans exposer KDust à Internet (pas de
+           webhook, pas de reverse-proxy public, pas de tunnel).
+Decision : Long-polling de `api.telegram.org/getUpdates` depuis le
+           process Next.js, démarré par `instrumentation.ts`. Code
+           dans `src/lib/telegram/{api,bridge,poller}.ts`. La
+           binding `chat_id ↔ Conversation` est persistée en base
+           (`TelegramBinding`) ; chaque session Telegram est une
+           Conversation KDust régulière, visible aussi dans
+           `/conversation` côté web.
+Consequences :
+  + Aucun port entrant. Tout le trafic est sortant HTTPS.
+  + Réutilisation directe de `streamAgentReply`, du Secret
+    Manager, du redactor, du buffer de logs.
+  + Logs unifiés dans `/logs` ; bouton on/off live dans
+    `/settings/telegram`.
+  - `editMessageText` est rate-limité par Telegram (~1/s par
+    chat) → le streaming n'est pas token-par-token mais en
+    rafales d'environ 1 update/seconde.
+  - Une seule instance KDust à la fois peut long-poll un même
+    bot (Telegram renvoie 409 sur deux `getUpdates` parallèles).
+    Acceptable : KDust est mono-instance par design.

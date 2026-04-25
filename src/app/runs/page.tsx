@@ -484,7 +484,12 @@ export default async function RunsPage({ searchParams }: SearchProps) {
               <SortableTh col="duration" sort={sort} dir={dir} href={sortHref('duration')}>Duration</SortableTh>
               <SortableTh col="diff"     sort={sort} dir={dir} href={sortHref('diff')}>Diff</SortableTh>
               <SortableTh col="branch"   sort={sort} dir={dir} href={sortHref('branch')}>Branch</SortableTh>
-              <th className="py-2">Chat</th>
+              {/*
+                The standalone "Chat" column was folded into Actions
+                (Franck 2026-04-25 15:53). Open-chat now renders as
+                an icon-only chip alongside Stop/Rerun/Delete, freeing
+                up horizontal space for the wider Branch column.
+              */}
               <th className="py-2 text-right pr-2">Actions</th>
             </tr>
           </thead>
@@ -575,65 +580,53 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       : '-'}
                   </td>
                   <td className="text-xs font-mono truncate max-w-[240px]">{r.branch ?? '-'}</td>
-                  <td className="text-center">
-                    {(() => {
-                      // Priority: local Conversation row. We route to
-                      // /chat/<localId> (not /conversations/:id)
-                      // because /chat is the interactive view with
-                      // streaming, sidebar, composer, etc. \u2014 the
-                      // legacy /conversations/:id page is read-only
-                      // and Franck asked explicitly for the /chat
-                      // link (2026-04-18 23:41).
-                      // /chat's ChatPageInner reads `id` from the
-                      // query string and calls loadConv() on mount.
-                      const localId = r.dustConversationSId
-                        ? convIdBySId.get(r.dustConversationSId)
-                        : undefined;
-                      // Visual upgrade 2026-04-18: the previous tiny
-                      // "open" text was easy to miss. We now render a
-                      // full button-like chip with clear affordance.
-                      // <OpenConversationLink> POSTs to
-                      // /api/conversations/:id/open first \u2014 that
-                      // route sets CURRENT_PROJECT_COOKIE to the
-                      // run's project BEFORE the navigation. Without
-                      // this step, opening a run from the "All
-                      // Projects" selector hits the /chat guard:
-                      // "Chat is project-scoped. Pick a project from
-                      // the top selector..." (Franck 2026-04-19 00:23).
-                      if (localId) {
-                        return (
-                          <OpenConversationLink
-                            conversationId={localId}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-xs font-medium"
-                          >
-                            <MessageCircle size={12} />
-                            Open chat
-                          </OpenConversationLink>
-                        );
-                      }
-                      if (r.dustConversationSId) {
-                        return (
-                          <span
-                            title={`Dust sId ${r.dustConversationSId} — no local Conversation row (stream likely crashed before persistence)`}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-slate-400 text-xs"
-                          >
-                            <MessageCircle size={12} /> orphan
-                          </span>
-                        );
-                      }
-                      return <span className="text-slate-300 text-xs">—</span>;
-                    })()}
-                  </td>
                   <td className="text-right pr-2">
-                    {/* Per-row actions: Stop (if running) or Rerun
-                        (if finished), plus Delete. Full behaviour
-                        and click-event stopPropagation lives in
-                        <RunActions/>. */}
-                    <RunActions
-                      runId={r.id}
-                      taskId={r.task?.id ?? null}
-                      status={r.status}
-                    />
+                    {/*
+                      Action cluster: [Open chat] + [Stop|Rerun] + [Delete].
+                      Open-chat moved into this cell on 2026-04-25 15:53
+                      (Franck) so the row's actionable items live in one
+                      place. Same priority logic as before:
+                        - local Conversation row    \u2192 active chat icon
+                        - dustConversationSId only  \u2192 disabled "orphan" icon
+                        - no conversation linked    \u2192 nothing (just RunActions)
+                      <OpenConversationLink> still POSTs to
+                      /api/conversations/:id/open first to set the project
+                      cookie before navigating, otherwise the /chat guard
+                      bounces the user when coming from "All Projects".
+                    */}
+                    <div className="inline-flex items-center gap-1">
+                      {(() => {
+                        const localId = r.dustConversationSId
+                          ? convIdBySId.get(r.dustConversationSId)
+                          : undefined;
+                        if (localId) {
+                          return (
+                            <OpenConversationLink
+                              conversationId={localId}
+                              className="inline-flex items-center justify-center p-1 rounded-md border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 transition-colors"
+                            >
+                              <MessageCircle size={14} aria-label="Open chat" />
+                            </OpenConversationLink>
+                          );
+                        }
+                        if (r.dustConversationSId) {
+                          return (
+                            <span
+                              title={`Dust sId ${r.dustConversationSId} — no local Conversation row (stream likely crashed before persistence)`}
+                              className="inline-flex items-center justify-center p-1 rounded-md border border-slate-300 dark:border-slate-700 text-slate-400 cursor-not-allowed"
+                            >
+                              <MessageCircle size={14} aria-label="No chat available" />
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                      <RunActions
+                        runId={r.id}
+                        taskId={r.task?.id ?? null}
+                        status={r.status}
+                      />
+                    </div>
                   </td>
                 </ClickableRunRow>
               );

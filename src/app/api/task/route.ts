@@ -52,6 +52,11 @@ const TaskInput = z.object({
   teamsWebhook: z.string().url().optional().nullable(),
   // See settings/route.ts for the rationale on free-text validation.
   telegramChatId: z.string().optional().nullable(),
+  // Notification toggles default to true server-side (Prisma
+  // schema DEFAULT) so omitting them on POST keeps the
+  // notify-when-target-resolvable behaviour.
+  teamsNotifyEnabled: z.boolean().optional(),
+  telegramNotifyEnabled: z.boolean().optional(),
   enabled: z.boolean().default(true),
   // automation-push settings
   pushEnabled: z.boolean().default(true),

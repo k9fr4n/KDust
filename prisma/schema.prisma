@@ -202,6 +202,16 @@ model Task {
   // OR env.KDUST_TELEGRAM_BOT_TOKEN is missing. Same string-not-int
   // rationale as the AppConfig field.
   telegramChatId String?
+  // Notification kill-switches per transport (Franck 2026-04-25
+  // 18:50). Independent of the chat_id / webhook resolution: a
+  // task can have a resolved Telegram chat_id (via global default)
+  // but be opted out of Telegram pings via telegramNotifyEnabled=
+  // false. Default true so adding a global default Telegram /
+  // Teams target retroactively turns notifications ON for all
+  // existing tasks (the expected UX for "I just added a default,
+  // start notifying").
+  teamsNotifyEnabled    Boolean @default(true)
+  telegramNotifyEnabled Boolean @default(true)
   enabled        Boolean   @default(true)
   lastRunAt      DateTime?
   lastStatus     String?

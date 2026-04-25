@@ -672,13 +672,17 @@ export async function runTask(
     db.taskRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
 
   const appCfg = await getAppConfig();
-  const webhook = job.teamsWebhook || appCfg.defaultTeamsWebhook;
-  // Telegram chat_id resolution mirrors the Teams webhook pattern
-  // (Franck 2026-04-25 18:14). Per-task value wins, app default
-  // is the fallback. postToTelegram() itself short-circuits to a
-  // no-op if either chatId is empty OR the bot token env is unset,
-  // so we don't need to guard the call sites separately.
-  const telegramChatId = job.telegramChatId || appCfg.defaultTelegramChatId;
+  // Resolve targets first, THEN apply the per-task toggles. The
+  // toggles are independent of resolution so a user can keep
+  // their per-task chat_id / webhook override stored while
+  // temporarily silencing notifications for that task (Franck
+  // 2026-04-25 18:50). nullish-coalescing on the toggles to
+  // tolerate older rows that pre-date the migration \u2014 those
+  // default to true (notify), matching the column DEFAULT.
+  const teamsTarget = job.teamsWebhook || appCfg.defaultTeamsWebhook;
+  const telegramTarget = job.telegramChatId || appCfg.defaultTelegramChatId;
+  const webhook = (job.teamsNotifyEnabled ?? true) ? teamsTarget : null;
+  const telegramChatId = (job.telegramNotifyEnabled ?? true) ? telegramTarget : null;
   // Tiny helper: fan-out the same report payload to both transports
   // without duplicating the title/summary/facts construction at
   // every call site. Errors on either side are logged and

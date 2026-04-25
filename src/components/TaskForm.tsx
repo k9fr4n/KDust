@@ -21,8 +21,13 @@ export type CronFormValues = {
   teamsWebhook: string;
   // Per-task Telegram chat_id (Franck 2026-04-25 18:14). Free-text;
   // negative numbers (groups/channels) and supergroup IDs (-100...)
-  // are valid. Empty string \u2192 fall back to AppConfig.defaultTelegramChatId.
+  // are valid. Empty string → fall back to AppConfig.defaultTelegramChatId.
   telegramChatId: string;
+  // Notification toggles (Franck 2026-04-25 18:50). Independent
+  // of chat_id / webhook resolution: a user can keep an override
+  // stored but pause notifications via these flags.
+  teamsNotifyEnabled: boolean;
+  telegramNotifyEnabled: boolean;
   enabled: boolean;
   // automation-push
   /**
@@ -116,6 +121,11 @@ export function TaskForm({
     projectPath: initial?.projectPath === null ? null : (initial?.projectPath ?? ''),
     teamsWebhook: initial?.teamsWebhook ?? '',
     telegramChatId: initial?.telegramChatId ?? '',
+    // Default to enabled \u2014 matches the schema DEFAULT and the UX
+    // expectation that a configured target should ping unless
+    // explicitly silenced.
+    teamsNotifyEnabled: initial?.teamsNotifyEnabled ?? true,
+    telegramNotifyEnabled: initial?.telegramNotifyEnabled ?? true,
     enabled: initial?.enabled ?? true,
     pushEnabled: initial?.pushEnabled ?? true,
     taskRunnerEnabled: initial?.taskRunnerEnabled ?? false,
@@ -183,6 +193,8 @@ export function TaskForm({
         agentName,
         teamsWebhook: form.teamsWebhook || null,
         telegramChatId: form.telegramChatId || null,
+        teamsNotifyEnabled: form.teamsNotifyEnabled,
+        telegramNotifyEnabled: form.telegramNotifyEnabled,
       }),
     });
     if (!res.ok) {
@@ -745,6 +757,22 @@ export function TaskForm({
           Identity row without adding value. */}
       <fieldset className={sectionCls}>
         <legend className={legendCls}>Notifications</legend>
+        {/*
+          Per-transport enable toggles (Franck 2026-04-25 18:50).
+          Independent of the chat_id / webhook resolution: a user
+          can keep the per-task override stored while temporarily
+          silencing notifications for that transport.
+        */}
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.teamsNotifyEnabled}
+            onChange={(e) =>
+              setForm({ ...form, teamsNotifyEnabled: e.target.checked })
+            }
+          />
+          <span>Send Teams notifications for this task</span>
+        </label>
         <label className="block">
           <span className="text-sm">Teams webhook (override, otherwise global)</span>
           <input
@@ -753,6 +781,7 @@ export function TaskForm({
             value={form.teamsWebhook}
             onChange={(e) => setForm({ ...form, teamsWebhook: e.target.value })}
             placeholder="https://..."
+            disabled={!form.teamsNotifyEnabled}
           />
           <span className="text-xs text-slate-500">
             Empty → inherit the global webhook configured in{' '}
@@ -770,6 +799,16 @@ export function TaskForm({
           env.KDUST_TELEGRAM_BOT_TOKEN (deployment-level secret),
           NOT exposed in the UI.
         */}
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.telegramNotifyEnabled}
+            onChange={(e) =>
+              setForm({ ...form, telegramNotifyEnabled: e.target.checked })
+            }
+          />
+          <span>Send Telegram notifications for this task</span>
+        </label>
         <label className="block">
           <span className="text-sm">Telegram chat_id (override, otherwise global)</span>
           <input
@@ -779,6 +818,7 @@ export function TaskForm({
             value={form.telegramChatId}
             onChange={(e) => setForm({ ...form, telegramChatId: e.target.value })}
             placeholder="123456789  /  -1001234567890 (group)"
+            disabled={!form.telegramNotifyEnabled}
           />
           <span className="text-xs text-slate-500">
             Empty → inherit the global chat_id configured in{' '}

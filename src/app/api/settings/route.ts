@@ -27,6 +27,12 @@ const Patch = z.object({
   workosDomain: z.string().optional(),
   claimNamespace: z.string().optional(),
   defaultTeamsWebhook: z.string().url().nullable().optional(),
+  // Telegram chat_id is free-text: positive (DM), negative (group),
+  // or supergroup -100xxxxxxxxxxx. We accept any non-empty string,
+  // null, or omit. No URL/numeric validation \u2014 Telegram itself
+  // returns 400 with a clear error if the chat_id is bad, and the
+  // runner already swallows that with a console.warn.
+  defaultTelegramChatId: z.string().nullable().optional(),
   leafRunTimeoutMs: timeoutMs,
   orchestratorRunTimeoutMs: timeoutMs,
   // IANA timezone validated against Node's Intl database. Refuse

@@ -6,6 +6,9 @@ export interface AppConfigData {
   workosDomain: string;
   claimNamespace: string;
   defaultTeamsWebhook: string | null;
+  // Default Telegram chat_id for run notifications (Franck
+  // 2026-04-25 18:14). Bot token comes from env, not config.
+  defaultTelegramChatId: string | null;
   // Wall-clock runtime caps (Franck 2026-04-23 09:56). Stored in
   // ms; clamped [30s, 6h] by the runner and by the settings API.
   leafRunTimeoutMs: number;
@@ -25,6 +28,7 @@ export async function getAppConfig(): Promise<AppConfigData> {
       workosDomain: existing.workosDomain,
       claimNamespace: existing.claimNamespace,
       defaultTeamsWebhook: existing.defaultTeamsWebhook,
+      defaultTelegramChatId: existing.defaultTelegramChatId,
       leafRunTimeoutMs: existing.leafRunTimeoutMs,
       orchestratorRunTimeoutMs: existing.orchestratorRunTimeoutMs,
       timezone: existing.timezone,
@@ -49,6 +53,7 @@ export async function getAppConfig(): Promise<AppConfigData> {
     workosDomain: created.workosDomain,
     claimNamespace: created.claimNamespace,
     defaultTeamsWebhook: created.defaultTeamsWebhook,
+    defaultTelegramChatId: created.defaultTelegramChatId,
     leafRunTimeoutMs: created.leafRunTimeoutMs,
     orchestratorRunTimeoutMs: created.orchestratorRunTimeoutMs,
     timezone: created.timezone,

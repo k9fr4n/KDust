@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { postToTeams, type TeamsCardFact } from '../teams';
+import { postToTelegram, type TelegramFact } from '../telegram';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
 import {
@@ -670,7 +671,50 @@ export async function runTask(
   const setPhase = (phase: string, message: string) =>
     db.taskRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
 
-  const webhook = job.teamsWebhook || (await getAppConfig()).defaultTeamsWebhook;
+  const appCfg = await getAppConfig();
+  const webhook = job.teamsWebhook || appCfg.defaultTeamsWebhook;
+  // Telegram chat_id resolution mirrors the Teams webhook pattern
+  // (Franck 2026-04-25 18:14). Per-task value wins, app default
+  // is the fallback. postToTelegram() itself short-circuits to a
+  // no-op if either chatId is empty OR the bot token env is unset,
+  // so we don't need to guard the call sites separately.
+  const telegramChatId = job.telegramChatId || appCfg.defaultTelegramChatId;
+  // Tiny helper: fan-out the same report payload to both transports
+  // without duplicating the title/summary/facts construction at
+  // every call site. Errors on either side are logged and
+  // swallowed so a flaky webhook can't mark the run as failed
+  // post-hoc \u2014 the run already wrote its terminal status before
+  // we got here.
+  const notify = async (
+    title: string,
+    summary: string,
+    status: 'success' | 'failed',
+    facts: TeamsCardFact[],
+    details?: string,
+  ) => {
+    const tasks: Promise<void>[] = [];
+    if (webhook) {
+      tasks.push(
+        postToTeams(webhook, { title, summary, status, facts, details }).catch((e) =>
+          console.warn(`[cron] Teams notification failed:`, e),
+        ),
+      );
+    }
+    if (telegramChatId) {
+      // TelegramFact has the same shape as TeamsCardFact (name +
+      // value strings) so the array can be passed through as-is.
+      tasks.push(
+        postToTelegram(telegramChatId, {
+          title,
+          summary,
+          status,
+          facts: facts as TelegramFact[],
+          details,
+        }).catch((e) => console.warn(`[cron] Telegram notification failed:`, e)),
+      );
+    }
+    await Promise.all(tasks);
+  };
   let branch: string | null = null;
   let commitSha: string | null = null;
   let filesChanged = 0;
@@ -1048,19 +1092,17 @@ export async function runTask(
         where: { id: job.id },
         data: { lastRunAt: new Date(), lastStatus: 'success' },
       });
-      if (webhook) {
-        await postToTeams(webhook, {
-          title: `\uD83D\uDCAC KDust task : ${job.name}`,
-          summary: `Prompt-only run on ${project.name} (push disabled)`,
-          status: 'success',
-          details: agentText.slice(0, 4000),
-          facts: [
-            { name: 'Project', value: project.name },
-            { name: 'Mode', value: 'prompt-only' },
-            { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
-          ],
-        });
-      }
+      await notify(
+        `\uD83D\uDCAC KDust task : ${job.name}`,
+        `Prompt-only run on ${project.name} (push disabled)`,
+        'success',
+        [
+          { name: 'Project', value: project.name },
+          { name: 'Mode', value: 'prompt-only' },
+          { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
+        ],
+        agentText.slice(0, 4000),
+      );
       console.log(`[cron] success (prompt-only) job="${job.name}" duration=${durationMs}ms`);
       return run.id;
     }
@@ -1108,19 +1150,17 @@ export async function runTask(
         where: { id: job.id },
         data: { lastRunAt: new Date(), lastStatus: 'no-op' },
       });
-      if (webhook) {
-        await postToTeams(webhook, {
-          title: `ℹ️ KDust cron : ${job.name} (no-op)`,
-          summary: `Agent ran but produced no file changes on ${project.name}`,
-          status: 'success',
-          details: agentText,
-          facts: [
-            { name: 'Project', value: project.name },
-            { name: 'Base branch', value: policy.baseBranch },
-            { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
-          ],
-        });
-      }
+      await notify(
+        `ℹ️ KDust cron : ${job.name} (no-op)`,
+        `Agent ran but produced no file changes on ${project.name}`,
+        'success',
+        [
+          { name: 'Project', value: project.name },
+          { name: 'Base branch', value: policy.baseBranch },
+          { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
+        ],
+        agentText,
+      );
       console.log(`[cron] no-op job="${job.name}" duration=${durationMs}ms`);
       return run.id;
     }
@@ -1489,8 +1529,11 @@ export async function runTask(
       });
     }
 
-    // [10] Teams report -----------------------------------------------------
-    if (webhook) {
+    // [10] Notification report (Teams + Telegram) ---------------------------
+    // Both transports get the same payload \u2014 the `notify` helper
+    // dispatches in parallel and swallows individual failures so a
+    // flaky webhook doesn't leak into the run's terminal status.
+    if (webhook || telegramChatId) {
       // Same non-null reasoning as step [8]: step [10] is only
       // reached via the pushEnabled=true path.
       const links = buildGitLinks(repo, branch ?? policy.baseBranch, policy.baseBranch, commitSha);
@@ -1523,25 +1566,24 @@ export async function runTask(
       // true outcome in their channel — same branch/diff facts,
       // but red status + child failure summary as the body.
       if (childFailureSummary) {
-        await postToTeams(webhook, {
-          title: `❌ KDust cron : ${job.name}`,
-          summary: `Orchestrator failed via child: ${childFailureSummary}`,
-          status: 'failed',
-          details:
-            `One or more dispatched children ended in failure/abort.\n\n` +
+        await notify(
+          `❌ KDust cron : ${job.name}`,
+          `Orchestrator failed via child: ${childFailureSummary}`,
+          'failed',
+          facts,
+          `One or more dispatched children ended in failure/abort.\n\n` +
             `Children: ${childFailureSummary}\n\n` +
             (linkLines.length ? linkLines.join('\n') + '\n\n' : '') +
             `Agent output:\n${agentText.slice(0, 1500)}${agentText.length > 1500 ? '…' : ''}`,
-          facts,
-        });
+        );
       } else {
-        await postToTeams(webhook, {
-          title: `${job.dryRun ? '🧪' : '✅'} KDust cron : ${job.name}`,
-          summary: `${filesChanged} file(s) changed on ${project.name}`,
-          status: 'success',
-          details,
+        await notify(
+          `${job.dryRun ? '🧪' : '✅'} KDust cron : ${job.name}`,
+          `${filesChanged} file(s) changed on ${project.name}`,
+          'success',
           facts,
-        });
+          details,
+        );
       }
     }
     if (childFailureSummary) {
@@ -1579,20 +1621,20 @@ export async function runTask(
       where: { id: job.id },
       data: { lastRunAt: new Date(), lastStatus: terminalStatus },
     });
-    if (webhook) {
-      await postToTeams(webhook, {
-        title: `${wasAborted ? '⏹️' : '❌'} KDust cron : ${job.name}`,
-        summary: wasAborted
-          ? `${abortSummary ?? 'Aborted'} on ${effectiveProjectPath}`
-          : `Failed on ${effectiveProjectPath}`,
-        status: 'failed',
-        details: msg,
-        facts: branch ? [
-          { name: 'Branch attempt', value: branch },
-          { name: 'Base', value: policy.baseBranch },
-        ] : undefined,
-      });
-    }
+    await notify(
+      `${wasAborted ? '⏹️' : '❌'} KDust cron : ${job.name}`,
+      wasAborted
+        ? `${abortSummary ?? 'Aborted'} on ${effectiveProjectPath}`
+        : `Failed on ${effectiveProjectPath}`,
+      'failed',
+      branch
+        ? [
+            { name: 'Branch attempt', value: branch },
+            { name: 'Base', value: policy.baseBranch },
+          ]
+        : [],
+      msg,
+    );
     console.error(`[cron] ${wasAborted ? 'ABORTED' : 'FAILED'} job="${job.name}": ${msg}`);
 
     // Cascade cancellation (Franck 2026-04-22 23:37):

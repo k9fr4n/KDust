@@ -19,6 +19,10 @@ export type CronFormValues = {
    */
   projectPath: string | null;
   teamsWebhook: string;
+  // Per-task Telegram chat_id (Franck 2026-04-25 18:14). Free-text;
+  // negative numbers (groups/channels) and supergroup IDs (-100...)
+  // are valid. Empty string \u2192 fall back to AppConfig.defaultTelegramChatId.
+  telegramChatId: string;
   enabled: boolean;
   // automation-push
   /**
@@ -111,6 +115,7 @@ export function TaskForm({
     prompt: initial?.prompt ?? '',
     projectPath: initial?.projectPath === null ? null : (initial?.projectPath ?? ''),
     teamsWebhook: initial?.teamsWebhook ?? '',
+    telegramChatId: initial?.telegramChatId ?? '',
     enabled: initial?.enabled ?? true,
     pushEnabled: initial?.pushEnabled ?? true,
     taskRunnerEnabled: initial?.taskRunnerEnabled ?? false,
@@ -177,6 +182,7 @@ export function TaskForm({
         maxDiffLines: form.maxDiffLines ?? 2000,
         agentName,
         teamsWebhook: form.teamsWebhook || null,
+        telegramChatId: form.telegramChatId || null,
       }),
     });
     if (!res.ok) {
@@ -755,6 +761,31 @@ export function TaskForm({
             </a>
             . Set here to redirect notifications of this specific task
             to a different channel.
+          </span>
+        </label>
+        {/*
+          Telegram chat_id override (Franck 2026-04-25 18:14).
+          Mirrors the Teams field: empty -> inherit global default,
+          set -> per-task override. Bot token is held in
+          env.KDUST_TELEGRAM_BOT_TOKEN (deployment-level secret),
+          NOT exposed in the UI.
+        */}
+        <label className="block">
+          <span className="text-sm">Telegram chat_id (override, otherwise global)</span>
+          <input
+            className={field}
+            type="text"
+            inputMode="text"
+            value={form.telegramChatId}
+            onChange={(e) => setForm({ ...form, telegramChatId: e.target.value })}
+            placeholder="123456789  /  -1001234567890 (group)"
+          />
+          <span className="text-xs text-slate-500">
+            Empty → inherit the global chat_id configured in{' '}
+            <a href="/settings/global" className="underline">App Settings</a>.
+            Bot token is set via the <code>KDUST_TELEGRAM_BOT_TOKEN</code>{' '}
+            env var. Notifications are no-ops if either the token or
+            the chat_id is missing.
           </span>
         </label>
       </fieldset>

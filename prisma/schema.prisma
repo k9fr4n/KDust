@@ -15,6 +15,13 @@ model AppConfig {
   workosDomain        String   @default("api.workos.com")
   claimNamespace      String   @default("https://dust.tt/")
   defaultTeamsWebhook String?
+  // Default Telegram chat_id for run-completion notifications
+  // (Franck 2026-04-25 18:14). Used when Task.telegramChatId is
+  // null. The bot token itself is held in env.KDUST_TELEGRAM_BOT_TOKEN
+  // (it's a credential, not config). Stored as String because
+  // chat_ids can be negative for groups/channels and exceed
+  // Int32 range (e.g. supergroups -100xxxxxxxxxxx).
+  defaultTelegramChatId String?
 
   // Global wall-clock runtime caps (Franck 2026-04-23 09:56).
   // Applied when Task.maxRuntimeMs is null. Clamp [30s, 6h] still
@@ -190,6 +197,11 @@ model Task {
   // These invariants are enforced at create/patch time in /api/tasks.
   projectPath    String?
   teamsWebhook   String?
+  // Per-task Telegram chat_id override. Falls back to
+  // AppConfig.defaultTelegramChatId, then no-op if both null
+  // OR env.KDUST_TELEGRAM_BOT_TOKEN is missing. Same string-not-int
+  // rationale as the AppConfig field.
+  telegramChatId String?
   enabled        Boolean   @default(true)
   lastRunAt      DateTime?
   lastStatus     String?

@@ -50,6 +50,8 @@ const TaskInput = z.object({
     .optional()
     .transform((v) => (v && v.trim() ? v.trim() : null)),
   teamsWebhook: z.string().url().optional().nullable(),
+  // See settings/route.ts for the rationale on free-text validation.
+  telegramChatId: z.string().optional().nullable(),
   enabled: z.boolean().default(true),
   // automation-push settings
   pushEnabled: z.boolean().default(true),

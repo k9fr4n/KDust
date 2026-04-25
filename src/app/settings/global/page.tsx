@@ -82,6 +82,29 @@ export default function GlobalSettingsPage() {
             <span className="text-sm">Default Teams webhook</span>
             <input className={field} type="url" {...bind('defaultTeamsWebhook')} />
           </label>
+          {/*
+            Default Telegram chat_id (Franck 2026-04-25 18:14).
+            Used when Task.telegramChatId is null. The bot token
+            is in env.KDUST_TELEGRAM_BOT_TOKEN \u2014 deliberately NOT
+            here, since AppConfig is read by API routes and we
+            don't want a bot credential surfacing in JSON
+            responses or React state. chat_id alone is harmless.
+          */}
+          <label className="block">
+            <span className="text-sm">Default Telegram chat_id</span>
+            <input
+              className={field}
+              type="text"
+              placeholder="123456789  /  -1001234567890"
+              {...bind('defaultTelegramChatId')}
+            />
+            <span className="text-xs text-slate-500">
+              Notifications are sent only when both the chat_id
+              (here or per task) AND the
+              <code className="mx-1">KDUST_TELEGRAM_BOT_TOKEN</code>
+              env var are set.
+            </span>
+          </label>
 
           {/* --- Default timezone (Franck 2026-04-24 17:07) ---
               IANA identifier applied as fallback when a Task has

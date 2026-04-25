@@ -231,6 +231,13 @@ function ChatPageInner() {
   const [currentProject, setCurrentProject] = useState<string | null>(null);
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
   const [mcpStatus, setMcpStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
+  // Chat-mode task-runner MCP serverId (Franck 2026-04-25 11:31).
+  // Started in parallel with the fs-cli MCP whenever a project is
+  // selected; passed alongside `mcpServerId` in `mcpServerIds` so
+  // the agent can call list_tasks / run_task / dispatch_task /
+  // wait_for_run from chat. null when no project is active or the
+  // ensure call failed (chat then degrades to fs-cli only).
+  const [taskRunnerServerId, setTaskRunnerServerId] = useState<string | null>(null);
   // `serverStreaming` reflects server-side knowledge of an in-flight agent
   // reply. It stays true even if the user navigated away and came back,
   // as long as the Dust call is still producing tokens in the background.
@@ -389,28 +396,42 @@ function ChatPageInner() {
       window.dispatchEvent(
         new CustomEvent('kdust:project-changed', { detail: { name: convProject } }),
       );
-      // Re-ensure MCP fs server for the new project
+      // Re-ensure MCP servers for the new project (fs-cli + task-runner).
+      // Run them in parallel \u2014 they're independent and the agent
+      // benefits from having both available before the next message.
+      // Franck 2026-04-25 11:31.
       if (convProject) {
         setMcpStatus('starting');
-        try {
-          const rr = await fetch('/api/mcp/ensure', {
+        const [fsRes, trRes] = await Promise.allSettled([
+          fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectName: convProject }),
-          });
-          const jj = await rr.json();
-          if (rr.ok && jj.serverId) {
-            setMcpServerId(jj.serverId);
-            setMcpStatus('ready');
-          } else {
-            setMcpStatus('error');
-          }
-        } catch {
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/task-runner-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: convProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        ]);
+        if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
+          setMcpServerId(fsRes.value.j.serverId);
+          setMcpStatus('ready');
+        } else {
           setMcpStatus('error');
+        }
+        // Task-runner failure is non-fatal: chat still works with
+        // fs-cli alone, just no task dispatch from conversation.
+        if (trRes.status === 'fulfilled' && trRes.value.ok && trRes.value.j.serverId) {
+          setTaskRunnerServerId(trRes.value.j.serverId);
+        } else {
+          setTaskRunnerServerId(null);
+          console.warn('[chat] task-runner MCP ensure failed; list_tasks/run_task unavailable');
         }
       } else {
         setMcpServerId(null);
         setMcpStatus('idle');
+        setTaskRunnerServerId(null);
       }
     }
   };
@@ -486,23 +507,35 @@ function ChatPageInner() {
         }
         if (name) {
           setMcpStatus('starting');
-          try {
-            const r = await fetch('/api/mcp/ensure', {
+          // Mount-time parallel ensure of both MCPs. Same rationale
+          // as the project-change handler above. Franck 2026-04-25 11:31.
+          const [fsRes, trRes] = await Promise.allSettled([
+            fetch('/api/mcp/ensure', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ projectName: name }),
-            });
-            const jj = await r.json();
-            if (r.ok && jj.serverId) {
-              setMcpServerId(jj.serverId);
-              setMcpStatus('ready');
-            } else {
-              setMcpStatus('error');
-              setError(jj.error ?? 'Failed to start MCP fs server');
-            }
-          } catch (e: any) {
+            }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+            fetch('/api/mcp/task-runner-ensure', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectName: name }),
+            }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          ]);
+          if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
+            setMcpServerId(fsRes.value.j.serverId);
+            setMcpStatus('ready');
+          } else {
             setMcpStatus('error');
-            setError(e?.message ?? String(e));
+            const errMsg =
+              fsRes.status === 'fulfilled'
+                ? fsRes.value.j?.error ?? 'Failed to start MCP fs server'
+                : (fsRes as PromiseRejectedResult).reason?.message ?? 'fs ensure rejected';
+            setError(typeof errMsg === 'string' ? errMsg : 'Failed to start MCP fs server');
+          }
+          if (trRes.status === 'fulfilled' && trRes.value.ok && trRes.value.j.serverId) {
+            setTaskRunnerServerId(trRes.value.j.serverId);
+          } else {
+            console.warn('[chat] task-runner MCP ensure failed at mount; chat will run without task tools');
           }
         }
       })
@@ -786,23 +819,47 @@ function ChatPageInner() {
     // healthy) and prevents the "User does not have access to the
     // client-side MCP servers" 403 that Dust emits for unknown IDs.
     let effectiveMcpServerId: string | null = mcpServerId;
+    let effectiveTaskRunnerServerId: string | null = taskRunnerServerId;
     if (currentProject) {
+      // Re-ensure both MCPs in parallel just before sending so a
+      // serverId that Dust evicted server-side is refreshed before
+      // we hit the 403 path. Franck 2026-04-25 11:31.
       try {
-        const rr = await fetch('/api/mcp/ensure', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectName: currentProject }),
-        });
-        const jj = await rr.json();
-        if (rr.ok && jj.serverId) {
-          effectiveMcpServerId = jj.serverId;
-          if (jj.serverId !== mcpServerId) setMcpServerId(jj.serverId);
+        const [fsRes, trRes] = await Promise.allSettled([
+          fetch('/api/mcp/ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: currentProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/task-runner-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: currentProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        ]);
+        if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
+          effectiveMcpServerId = fsRes.value.j.serverId;
+          if (fsRes.value.j.serverId !== mcpServerId) setMcpServerId(fsRes.value.j.serverId);
+        }
+        if (trRes.status === 'fulfilled' && trRes.value.ok && trRes.value.j.serverId) {
+          effectiveTaskRunnerServerId = trRes.value.j.serverId;
+          if (trRes.value.j.serverId !== taskRunnerServerId)
+            setTaskRunnerServerId(trRes.value.j.serverId);
         }
       } catch {
         // Non-fatal \u2014 fall through to the send attempt and let the
         // 403 retry below salvage the call if needed.
       }
     }
+
+    // Build the MCP server ID array: fs-cli first (primary tool
+    // surface), task-runner second (delegation tools). Both can
+    // be absent independently \u2014 chat with neither still works
+    // for plain conversational turns. Filter nulls before passing.
+    const buildMcpIds = () =>
+      [effectiveMcpServerId, effectiveTaskRunnerServerId].filter(
+        (x): x is string => !!x,
+      );
 
     // Small helper: detects the misleading 403 Dust sends when a
     // client-side MCP server ID is unknown (torn down / never
@@ -816,7 +873,8 @@ function ChatPageInner() {
       url: string,
       body: Record<string, unknown>,
     ): Promise<Response> => {
-      const ids = effectiveMcpServerId ? [effectiveMcpServerId] : undefined;
+      const idsArr = buildMcpIds();
+      const ids = idsArr.length > 0 ? idsArr : undefined;
       const first = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -828,28 +886,41 @@ function ChatPageInner() {
       if (!looksLikeMcpAccessError(first.status, errText) || !currentProject) {
         return first;
       }
-      // Retry once with a freshly-ensured serverId.
-      console.warn('[chat] Dust rejected MCP serverId; re-ensuring and retrying once');
+      // Retry once with freshly-ensured serverIds. Re-evict and
+      // re-create BOTH (we don't know which one Dust rejected, and
+      // forcing both is cheap). Franck 2026-04-25 11:31.
+      console.warn('[chat] Dust rejected MCP serverId; re-ensuring both MCPs and retrying once');
       try {
-        const rr = await fetch('/api/mcp/ensure', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectName: currentProject, force: true }),
-        });
-        const jj = await rr.json();
-        if (rr.ok && jj.serverId) {
-          effectiveMcpServerId = jj.serverId;
-          setMcpServerId(jj.serverId);
+        const [fsRes, trRes] = await Promise.allSettled([
+          fetch('/api/mcp/ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: currentProject, force: true }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/task-runner-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: currentProject, force: true }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+        ]);
+        if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
+          effectiveMcpServerId = fsRes.value.j.serverId;
+          setMcpServerId(fsRes.value.j.serverId);
+        }
+        if (trRes.status === 'fulfilled' && trRes.value.ok && trRes.value.j.serverId) {
+          effectiveTaskRunnerServerId = trRes.value.j.serverId;
+          setTaskRunnerServerId(trRes.value.j.serverId);
         }
       } catch {
         /* swallow \u2014 retry regardless, worst case same error */
       }
+      const retryIds = buildMcpIds();
       return fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...body,
-          mcpServerIds: effectiveMcpServerId ? [effectiveMcpServerId] : undefined,
+          mcpServerIds: retryIds.length > 0 ? retryIds : undefined,
         }),
       });
     };

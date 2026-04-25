@@ -326,7 +326,10 @@ function buildAutomationPrompt(
  *                  safety if it somehow gets through.
  */
 export interface RunTaskOptions {
-  parentRunId?: string;
+  // Nullable: chat-mode dispatch (Franck 2026-04-25 11:31) has no
+  // parent TaskRun, so the MCP server passes orchestratorRunId=null
+  // through to runTask. Persisted as TaskRun.parentRunId=null.
+  parentRunId?: string | null;
   runDepth?: number;
   promptOverride?: string;
   projectOverride?: string;

@@ -190,6 +190,61 @@ export async function releaseTaskRunnerServer(orchestratorRunId: string): Promis
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Chat-mode task-runner registry (Franck 2026-04-25 11:31)                  */
+/*                                                                            */
+/*  /chat doesn't have an orchestrator TaskRun, but the user still wants the  */
+/*  agent to call list_tasks / run_task / dispatch_task / wait_for_run from   */
+/*  conversational mode. We give chat its own task-runner instance, keyed by  */
+/*  PROJECT (one per project), constructed with orchestratorRunId=null.       */
+/*                                                                            */
+/*  The cache is separate from taskRunnerCache (which is keyed by runId) so   */
+/*  evictions don't collide. Chat handles are not auto-swept: they're cheap   */
+/*  and the SDK's auth-failure path already releases stale ones via           */
+/*  releaseChatTaskRunnerServer. A future TTL pass could mirror fs-server's   */
+/*  idle sweeper if memory pressure shows up in production.                   */
+/* -------------------------------------------------------------------------- */
+
+const g2 = globalThis as unknown as {
+  __kdustChatTaskRunnerMcp?: Map<string, Promise<TaskRunnerHandle>>;
+};
+if (!g2.__kdustChatTaskRunnerMcp) g2.__kdustChatTaskRunnerMcp = new Map();
+const chatTaskRunnerCache = g2.__kdustChatTaskRunnerMcp!;
+
+export async function getChatTaskRunnerServerId(projectName: string): Promise<string> {
+  const existing = chatTaskRunnerCache.get(projectName);
+  if (existing) {
+    try {
+      const handle = await existing;
+      if (handle.serverId) return handle.serverId;
+    } catch {
+      chatTaskRunnerCache.delete(projectName);
+    }
+  }
+  // null orchestratorRunId = chat mode (see startTaskRunnerServer doc)
+  const p = startTaskRunnerServer(null, projectName);
+  chatTaskRunnerCache.set(projectName, p);
+  try {
+    const handle = await p;
+    return handle.serverId;
+  } catch (e) {
+    chatTaskRunnerCache.delete(projectName);
+    throw e;
+  }
+}
+
+export async function releaseChatTaskRunnerServer(projectName: string): Promise<void> {
+  const entry = chatTaskRunnerCache.get(projectName);
+  chatTaskRunnerCache.delete(projectName);
+  if (!entry) return;
+  try {
+    const handle = await entry;
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*  command-runner MCP server registry (Franck 2026-04-21 13:39)              */
 /*                                                                            */
 /*  Same shape as task-runner: keyed per run, not per project. Each run with  */

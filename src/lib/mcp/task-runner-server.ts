@@ -59,7 +59,7 @@ import {
 import { resolveBranchPolicy } from '../branch-policy';
 
 export interface TaskRunnerHandle {
-  orchestratorRunId: string;
+  orchestratorRunId: string | null;
   projectName: string;
   serverId: string;
   server: McpServer;
@@ -160,7 +160,13 @@ async function resolveTaskForProject(
  * behaviour for free.
  */
 export async function resolveB2B3(
-  orchestratorRunId: string,
+  // Nullable for chat-mode dispatch (Franck 2026-04-25 11:31): a
+  // chat session has no parent TaskRun, so B2 auto-inherit is
+  // structurally impossible \u2014 there's nothing to inherit FROM. The
+  // function then collapses to "B1 if explicit, default otherwise"
+  // and B3 cannot fire (no merge target). This is the correct
+  // semantics: chat-spawned runs are top-level by definition.
+  orchestratorRunId: string | null,
   projectName: string,
   explicitBaseBranch: string | undefined,
   opts: { noInherit: boolean; noMerge: boolean },
@@ -181,10 +187,15 @@ export async function resolveB2B3(
   // target remains the orchestrator's branch — we merge back into
   // the agent's current working branch, not into the arbitrary ref
   // they chose as base.
-  const parentRun = await db.taskRun.findUnique({
-    where: { id: orchestratorRunId },
-    select: { branch: true, task: { select: { projectPath: true, baseBranch: true } } },
-  });
+  // Skip the parent lookup entirely when there's no orchestrator
+  // (chat mode). parentBranch=null then short-circuits the B2
+  // path below, leaving only the B1 explicit branch path active.
+  const parentRun = orchestratorRunId
+    ? await db.taskRun.findUnique({
+        where: { id: orchestratorRunId },
+        select: { branch: true, task: { select: { projectPath: true, baseBranch: true } } },
+      })
+    : null;
   const parentBranch = parentRun?.branch ?? null;
 
   // Resolve project defaults to spot "parent is already on default"
@@ -284,7 +295,13 @@ export async function resolveB2B3(
 }
 
 export async function startTaskRunnerServer(
-  orchestratorRunId: string,
+  // Nullable for chat-mode (Franck 2026-04-25 11:31): when started
+  // for an /chat session there is no orchestrator TaskRun, so the
+  // server runs in "top-level dispatch" mode \u2014 children are
+  // dispatched with parentRunId=null, B2 auto-inherit is inactive,
+  // wait_for_run accepts any chat-spawned top-level run, and the
+  // depth check skips the parent lookup (nextDepth=1).
+  orchestratorRunId: string | null,
   projectName: string,
 ): Promise<TaskRunnerHandle> {
   const dust = await getDustClient();
@@ -428,10 +445,15 @@ export async function startTaskRunnerServer(
       );
     }
 
-    const parent = await db.taskRun.findUnique({
-      where: { id: orchestratorRunId },
-      select: { runDepth: true },
-    });
+    // Chat mode: no parent run to inspect → start at depth 1.
+    // Same as a cron-triggered top-level orchestrator's first
+    // dispatch in terms of MAX_DEPTH budget.
+    const parent = orchestratorRunId
+      ? await db.taskRun.findUnique({
+          where: { id: orchestratorRunId },
+          select: { runDepth: true },
+        })
+      : null;
     const nextDepth = (parent?.runDepth ?? 0) + 1;
     if (nextDepth > MAX_DEPTH) {
       return err(
@@ -444,6 +466,9 @@ export async function startTaskRunnerServer(
   // Lookup the parent task name once — both tools use it for the
   // 'triggeredBy' provenance field on new child runs.
   async function getParentTaskName(): Promise<string> {
+    // Chat mode has no parent task; surface the trigger source
+    // explicitly so the child run's audit trail is unambiguous.
+    if (!orchestratorRunId) return '(chat)';
     return db.taskRun
       .findUnique({
         where: { id: orchestratorRunId },
@@ -943,19 +968,29 @@ export async function startTaskRunnerServer(
       // Walk ancestors: the caller's orchestrator must be on the
       // chain, otherwise refuse.
       {
-        let cur: string | null = initial.parentRunId;
-        let reached = initial.id === orchestratorRunId;
-        for (let i = 0; i < 20 && cur && !reached; i++) {
-          if (cur === orchestratorRunId) {
-            reached = true;
-            break;
+        // Chat mode: there's no orchestrator run to be a descendant
+        // of. Policy: allow waiting only on top-level runs that were
+        // themselves triggered from chat (parentRunId=null). This
+        // prevents a chat session from peeking at runs spawned by
+        // an unrelated orchestrator chain.
+        let reached: boolean;
+        if (!orchestratorRunId) {
+          reached = initial.parentRunId === null;
+        } else {
+          let cur: string | null = initial.parentRunId;
+          reached = initial.id === orchestratorRunId;
+          for (let i = 0; i < 20 && cur && !reached; i++) {
+            if (cur === orchestratorRunId) {
+              reached = true;
+              break;
+            }
+            const p: { parentRunId: string | null } | null =
+              await db.taskRun.findUnique({
+                where: { id: cur },
+                select: { parentRunId: true },
+              });
+            cur = p?.parentRunId ?? null;
           }
-          const p: { parentRunId: string | null } | null =
-            await db.taskRun.findUnique({
-              where: { id: cur },
-              select: { parentRunId: true },
-            });
-          cur = p?.parentRunId ?? null;
         }
         if (!reached) {
           return {
@@ -1264,7 +1299,7 @@ export async function startTaskRunnerServer(
       dust.client,
       (id: string) => {
         console.log(
-          `[mcp/task-runner] registered for orchestratorRunId=${orchestratorRunId} project="${projectName}" serverId=${id}`,
+          `[mcp/task-runner] registered for ${orchestratorRunId ? `orchestratorRunId=${orchestratorRunId}` : 'chat-mode (no orchestrator)'} project="${projectName}" serverId=${id}`,
         );
         resolve(id);
       },
@@ -1302,8 +1337,13 @@ export async function startTaskRunnerServer(
         );
         void (async () => {
           try {
-            const { releaseTaskRunnerServer } = await import('./registry');
-            await releaseTaskRunnerServer(orchestratorRunId);
+            const { releaseTaskRunnerServer, releaseChatTaskRunnerServer } = await import('./registry');
+            if (orchestratorRunId) {
+              await releaseTaskRunnerServer(orchestratorRunId);
+            } else {
+              // Chat-mode handle: keyed by project name, not runId.
+              await releaseChatTaskRunnerServer(projectName);
+            }
           } catch { /* ignore */ }
         })();
         return;

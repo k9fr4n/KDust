@@ -67,12 +67,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (syncedTitle !== conv.title) conv.title = syncedTitle;
   // Expose server-side streaming state so clients that open the conv
   // while an answer is still being produced can show a banner.
+  // Plus expose the replay buffers (Franck 2026-04-25 19:36) so a
+  // passive client \u2014 e.g. the same user reopening the chat in a new
+  // tab, or the remounted ChatClient after router.push \u2014 can render
+  // the partial agent reply instead of the unhelpful "Agent is still
+  // replying in the background" banner.
   const streaming = isStreaming(id);
   const active = getActiveStream(id);
   return NextResponse.json({
     conversation: conv,
     streaming,
     streamingSince: active?.startedAt ?? null,
+    streamContent: active?.contentBuffer ?? '',
+    streamCot: active?.cotBuffer ?? '',
   });
 }
 

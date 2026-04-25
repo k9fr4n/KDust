@@ -399,14 +399,24 @@ function ChatPageInner({
     if (typeof window !== 'undefined' && window.location.pathname !== `/chat/${id}`) {
       router.replace(`/chat/${id}`);
     }
-    setStreamedText('');
-    setCotText('');
     setError(null);
     const r = await fetch(`/api/conversation/${id}`);
     const j = await r.json();
     const c = j.conversation;
     setMessages(c?.messages ?? []);
     setAgentSId(c?.agentSId ?? '');
+    // Seed streaming bubbles from the server replay buffer
+    // (Franck 2026-04-25 19:36). On a fresh load of an active
+    // stream this gives the user immediate "thinking" visibility
+    // instead of an empty bubble + opaque banner. When the conv
+    // has no active stream we clear stale tokens.
+    if (j.streaming) {
+      setStreamedText(j.streamContent ?? '');
+      setCotText(j.streamCot ?? '');
+    } else {
+      setStreamedText('');
+      setCotText('');
+    }
     // An open conversation \"owns\" the agent choice \u2014 beats project
     // default and beats list[0] fallback.
     if (c?.agentSId) setAgentPickedBy('conv');
@@ -646,15 +656,25 @@ function ChatPageInner({
         const j = await r.json();
         if (!j.streaming) {
           // stream has finished elsewhere — reload messages (includes the
-          // newly-persisted agent reply) and clear the banner.
+          // newly-persisted agent reply) and clear the banner + bubbles.
           setMessages(j.conversation?.messages ?? []);
+          setStreamedText('');
+          setCotText('');
           setServerStreaming(false);
           setServerStreamingSince(null);
+        } else {
+          // Stream still running. Refresh the streaming bubbles from
+          // the server replay buffer (Franck 2026-04-25 19:36) so the
+          // user sees a live-feeling "thinking..." preview without
+          // owning the SSE subscription. The buffer is cumulative,
+          // so a plain assignment is correct (no diff math needed).
+          setStreamedText(j.streamContent ?? '');
+          setCotText(j.streamCot ?? '');
         }
       } catch {
         /* transient */
       }
-    }, 3000);
+    }, 1500);
     return () => clearInterval(iv);
   }, [currentId, serverStreaming, streaming]);
 
@@ -997,13 +1017,18 @@ function ChatPageInner({
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
         setCurrentId(j.id);
-        // Promote the URL to /chat/<id> as soon as the row exists
-        // server-side, so a refresh during streaming reattaches to
-        // the right conversation. push() this time (not replace)
-        // so the user can hit Back to land on the empty /chat
-        // surface they came from. Franck 2026-04-25 11:43.
+        // Promote the URL to /chat/<id> WITHOUT triggering a Next.js
+        // route change (Franck 2026-04-25 19:36). router.push would
+        // unmount this ChatClient instance (mounted from /chat) and
+        // re-mount the one from /chat/[id], orphaning the SSE
+        // consumeStream() about to fire below \u2014 the user would then
+        // see the "Agent is still replying in the background" banner
+        // for their VERY FIRST reply, instead of the live thinking
+        // bubble. window.history.pushState updates the address bar
+        // (so a refresh lands on the right conv, and Back returns
+        // to /chat) without remounting the page component.
         if (typeof window !== 'undefined' && window.location.pathname !== `/chat/${j.id}`) {
-          router.push(`/chat/${j.id}`);
+          window.history.pushState({}, '', `/chat/${j.id}`);
         }
         await consumeStream(j.id, j.userMessageSId);
       } else {

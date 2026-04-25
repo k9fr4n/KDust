@@ -5,6 +5,8 @@ import {
   markStreamStart,
   markStreamEnd,
   markStreamAgentMessage,
+  appendStreamContent,
+  appendStreamCot,
   isStreaming,
 } from '@/lib/chat/active-streams';
 
@@ -77,6 +79,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             // display per-message UX (e.g. Stop button tooltip).
             if (kind === 'agent_message_id') {
               markStreamAgentMessage(id, data);
+            } else if (kind === 'token') {
+              // Mirror the live event into the replay buffer so a
+              // passive observer (other tab, reopened chat) can\n              // still see the running reply (Franck 2026-04-25 19:36).
+              appendStreamContent(id, data);
+            } else if (kind === 'cot') {
+              appendStreamCot(id, data);
             }
             send(kind, data);
           },

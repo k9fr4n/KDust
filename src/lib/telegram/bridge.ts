@@ -45,9 +45,11 @@ import {
   sendMessage,
   editMessageText,
   sendChatAction,
+  answerCallbackQuery,
   isInCooldown,
   cooldownRemainingMs,
   type TgMessage,
+  type TgCallbackQuery,
 } from './api';
 
 // ---- per-chat in-flight stream registry ----
@@ -132,6 +134,130 @@ async function resolveMcpServerIds(
   return ids.length > 0 ? ids : null;
 }
 
+/**
+ * Apply a project change for a given chat. Used by both the
+ * `/project <name>` slash command and the inline-keyboard
+ * callback fired from `/projects` button taps. Centralising the
+ * logic keeps both entry points behaviourally identical
+ * (drop-and-reset semantics, in-memory pending map) and avoids
+ * drift if we tweak the rules later.
+ *
+ * @param chatId Telegram chat identifier (string form).
+ * @param projectName  null \u2192 clear, otherwise a directory name
+ *                     under /projects to switch to.
+ * @returns Object with a user-facing message and a flag
+ *          indicating whether the change was applied (false on
+ *          unknown project so the caller can treat it as an
+ *          error path, e.g. show_alert on a callback toast).
+ */
+async function applyProjectChoice(
+  chatId: string,
+  projectName: string | null,
+): Promise<{ ok: boolean; message: string }> {
+  if (projectName === null) {
+    await dropBinding(chatId);
+    pendingProject.delete(chatId);
+    return {
+      ok: true,
+      message:
+        '\u2705 Project cleared. The next message starts a fresh ' +
+        'conversation in global mode (no fs tools).',
+    };
+  }
+  const projects = await listProjects();
+  const match = projects.find((p) => p.name === projectName);
+  if (!match) {
+    return {
+      ok: false,
+      message: `\u274c Project "${projectName}" not found. Run /projects for the list.`,
+    };
+  }
+  // Switching project resets the conversation: a fresh fs-cli
+  // chroot makes any reuse of the previous Dust conv tool
+  // history misleading. The binding row will be recreated on
+  // the next real user message; until then we remember the
+  // project choice in the in-memory pending map so
+  // createBinding() picks it up.
+  await dropBinding(chatId);
+  pendingProject.set(chatId, match.name);
+  return {
+    ok: true,
+    message:
+      `\u2705 Project set to ${match.name}. The next message starts ` +
+      `a fresh conversation with fs tools chrooted on ` +
+      `/projects/${match.name}.`,
+  };
+}
+
+/**
+ * Dispatch a Telegram callback_query (inline keyboard button
+ * tap). We always answer the query first to clear the spinner
+ * on the client, then act on the encoded `data` field.
+ *
+ * Recognised callback_data formats:
+ *   proj:<name>      switch to that project
+ *   proj:__clear__   clear the project (global mode)
+ *
+ * Unknown formats are quietly acked + logged so a stale
+ * keyboard from a previous deploy doesn't surface a scary
+ * error to the user.
+ */
+export async function handleTelegramCallback(
+  cq: TgCallbackQuery,
+): Promise<void> {
+  try {
+    const chatId = cq.message ? String(cq.message.chat.id) : null;
+    const data = cq.data ?? '';
+    if (!chatId) {
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+    // Whitelist: only allow callbacks from the same chat_ids
+    // that may chat with the bot. Otherwise an attacker could
+    // forge callback_data from a public group (Telegram does
+    // forward callbacks even if the bot is muted there).
+    const cfg = await getAppConfig();
+    if (!isAllowed(chatId, cfg.telegramAllowedChatIds)) {
+      console.warn(
+        `[telegram] rejected callback from chat_id=${chatId} (not in whitelist)`,
+      );
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+
+    if (data.startsWith('proj:')) {
+      const arg = data.slice('proj:'.length);
+      const target = arg === '__clear__' ? null : arg;
+      const result = await applyProjectChoice(chatId, target);
+      // The toast text is capped at ~200 chars by Telegram,
+      // and show_alert=false makes it appear as a transient
+      // popup near the top of the screen.
+      await answerCallbackQuery(cq.id, {
+        text: result.ok
+          ? target
+            ? `Project: ${target}`
+            : 'Project cleared'
+          : 'Project not found',
+      });
+      // Also send a confirmation message so the choice is
+      // visible in the chat history (toasts disappear).
+      await sendMessage(chatId, result.message);
+      return;
+    }
+
+    console.warn(`[telegram] unknown callback_data: ${data}`);
+    await answerCallbackQuery(cq.id);
+  } catch (e) {
+    console.error(
+      `[telegram] callback handler error (id=${cq.id}): ${
+        e instanceof Error ? (e.stack ?? e.message) : String(e)
+      }`,
+    );
+    // Best-effort ack so the spinner clears even on failure.
+    await answerCallbackQuery(cq.id).catch(() => undefined);
+  }
+}
+
 async function createBinding(
   chatId: string,
   agentSId: string,
@@ -201,54 +327,38 @@ async function handleCommand(
         return true;
       }
       const binding = await resolveBinding(chatId);
-      const lines = projects.map((p) =>
-        binding?.projectName === p.name ? `• ${p.name}  (current)` : `• ${p.name}`,
-      );
-      await sendMessage(
-        chatId,
-        ['Projects:', ...lines, '', 'Use /project <name> to switch.'].join('\n'),
-      );
+      const current = binding?.projectName ?? null;
+      // Build a 1-column inline keyboard (one button per
+      // project). Telegram caps callback_data at 64 bytes; we
+      // prefix with `proj:` so the dispatcher can route the
+      // callback unambiguously, and we trust project names to
+      // be short directory identifiers (no risk of overflow at
+      // KDust\u2019s scale, but we truncate defensively).
+      const buttons = projects.map((p) => [
+        {
+          text:
+            (current === p.name ? '\u2705 ' : '') +
+            (p.name.length > 50 ? p.name.slice(0, 47) + '\u2026' : p.name),
+          callback_data: `proj:${p.name}`.slice(0, 64),
+        },
+      ]);
+      // Add a "Clear / global" button at the bottom so the
+      // user can drop the project context with one tap.
+      buttons.push([
+        {
+          text: (current === null ? '\u2705 ' : '') + '\u2014 global (no project) \u2014',
+          callback_data: 'proj:__clear__',
+        },
+      ]);
+      await sendMessage(chatId, 'Pick a project:', {
+        inline_keyboard: buttons,
+      });
       return true;
     }
     case '/project': {
       const requested = args.trim();
-      if (requested === '') {
-        // Clear: drop binding + pending choice. Next message
-        // starts in global mode (no fs tools).
-        await dropBinding(chatId);
-        pendingProject.delete(chatId);
-        await sendMessage(
-          chatId,
-          '\u2705 Project cleared. The next message starts a fresh conversation in global mode (no fs tools).',
-        );
-        return true;
-      }
-      const projects = await listProjects();
-      const match = projects.find((p) => p.name === requested);
-      if (!match) {
-        await sendMessage(
-          chatId,
-          `\u274c Project "${requested}" not found. Run /projects for the list.`,
-        );
-        return true;
-      }
-      // Switching project resets the conversation: a fresh fs-cli
-      // chroot makes any reuse of the previous Dust conv tool
-      // history misleading (paths from the old project would
-      // still be in context). The binding row will be recreated
-      // on the next real user message; until then we remember
-      // the project choice in the in-memory pending map so
-      // createBinding() picks it up. The map is process-local
-      // (not persisted) which is fine: on a restart the user can
-      // simply re-run /project. Persisting it would require a
-      // schema change since TelegramBinding has a mandatory
-      // conversationId FK.
-      await dropBinding(chatId);
-      pendingProject.set(chatId, match.name);
-      await sendMessage(
-        chatId,
-        `\u2705 Project set to ${match.name}. The next message starts a fresh conversation with fs tools chrooted on /projects/${match.name}.`,
-      );
+      const result = await applyProjectChoice(chatId, requested || null);
+      await sendMessage(chatId, result.message);
       return true;
     }
     case '/new': {

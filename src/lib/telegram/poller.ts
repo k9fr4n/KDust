@@ -29,7 +29,7 @@ import {
   isInCooldown,
   cooldownRemainingMs,
 } from './api';
-import { handleTelegramMessage } from './bridge';
+import { handleTelegramMessage, handleTelegramCallback } from './bridge';
 
 let started = false;
 let stopRequested = false;
@@ -195,8 +195,6 @@ async function loop(): Promise<void> {
       let maxId = offset - 1;
       for (const u of updates) {
         maxId = Math.max(maxId, u.update_id);
-        const msg = u.message ?? u.edited_message;
-        if (!msg) continue;
         // Dedup: if we've already processed this update_id in
         // this process lifetime, skip silently. Cheap insurance
         // against infinite replies if the offset advance is
@@ -209,7 +207,12 @@ async function loop(): Promise<void> {
           continue;
         }
         try {
-          await handleTelegramMessage(msg);
+          if (u.callback_query) {
+            await handleTelegramCallback(u.callback_query);
+          } else {
+            const msg = u.message ?? u.edited_message;
+            if (msg) await handleTelegramMessage(msg);
+          }
         } catch (e) {
           console.error(
             `[telegram] handler threw for update_id=${u.update_id}: ${

@@ -157,11 +157,31 @@ export interface TgMessage {
   text?: string;
   entities?: Array<{ type: string; offset: number; length: number }>;
 }
+/**
+ * One button on an inline keyboard. We only use the
+ * `callback_data` variant: pressing the button triggers a
+ * callback_query update that KDust dispatches as if it were a
+ * regular slash command. The string is opaque to Telegram and
+ * limited to 64 bytes.
+ */
+export interface TgInlineKeyboardButton {
+  text: string;
+  callback_data: string;
+}
+
+export interface TgCallbackQuery {
+  id: string;
+  from: TgUser;
+  message?: TgMessage; // the message bearing the inline keyboard
+  data?: string; // the callback_data of the pressed button
+}
+
 export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
   edited_message?: TgMessage;
-  // Other variants (callback_query, channel_post, ...) are
+  callback_query?: TgCallbackQuery;
+  // Other variants (channel_post, my_chat_member, ...) are
   // ignored by KDust today; we keep the type loose so future
   // additions don't fail to parse.
   [k: string]: unknown;
@@ -176,7 +196,11 @@ export async function getUpdates(
   // bandwidth/parsing on update kinds we don't handle.
   return call<TgUpdate[]>(
     'getUpdates',
-    { offset, timeout: timeoutSec, allowed_updates: ['message'] },
+    {
+      offset,
+      timeout: timeoutSec,
+      allowed_updates: ['message', 'callback_query'],
+    },
     signal,
   );
 }
@@ -184,7 +208,16 @@ export async function getUpdates(
 export async function sendMessage(
   chatId: string | number,
   text: string,
-  opts?: { reply_to_message_id?: number; parse_mode?: 'HTML' | 'MarkdownV2' },
+  opts?: {
+    reply_to_message_id?: number;
+    parse_mode?: 'HTML' | 'MarkdownV2';
+    /**
+     * Inline keyboard rows. Each row is an array of buttons.
+     * Telegram caps the total payload at ~10kB so keep button
+     * labels short. callback_data is limited to 64 bytes.
+     */
+    inline_keyboard?: TgInlineKeyboardButton[][];
+  },
 ): Promise<TgMessage> {
   return callGated<TgMessage>('sendMessage', {
     chat_id: chatId,
@@ -192,7 +225,38 @@ export async function sendMessage(
     parse_mode: opts?.parse_mode,
     reply_to_message_id: opts?.reply_to_message_id,
     disable_web_page_preview: true,
+    reply_markup: opts?.inline_keyboard
+      ? { inline_keyboard: opts.inline_keyboard }
+      : undefined,
   });
+}
+
+/**
+ * Acknowledge a callback_query so the Telegram client stops the
+ * loading spinner on the tapped button. Optionally surfaces a
+ * short toast to the user. Always best-effort: we don't want a
+ * failed ack to mask the real handler outcome.
+ */
+export async function answerCallbackQuery(
+  callbackQueryId: string,
+  opts?: { text?: string; show_alert?: boolean },
+): Promise<void> {
+  if (isInCooldown()) return;
+  try {
+    await call('answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      text: opts?.text,
+      show_alert: opts?.show_alert ?? false,
+    });
+  } catch (e) {
+    // Telegram returns 400 if the query is older than 1 minute;
+    // not fatal, just log.
+    console.warn(
+      `[telegram] answerCallbackQuery failed: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 export async function editMessageText(

@@ -373,6 +373,7 @@ async function handleCommand(
         return true;
       }
       // Validate via Dust; cheap guard against typos.
+      let agentName: string | null = null;
       try {
         const ctx = await getDustClient();
         if (!ctx) throw new Error('Dust not connected');
@@ -381,14 +382,16 @@ async function handleCommand(
         // when the SDK renames it between versions.
         const r = await ctx.client.getAgentConfigurations({});
         if (r.isErr()) throw new Error(r.error.message);
-        const list = r.value as Array<{ sId: string }>;
-        if (!list.some((a) => a.sId === sId)) {
+        const list = r.value as Array<{ sId: string; name: string }>;
+        const match = list.find((a) => a.sId === sId);
+        if (!match) {
           throw new Error('agent sId not visible to this user');
         }
+        agentName = match.name;
       } catch (e) {
         await sendMessage(
           chatId,
-          `❌ Agent ${sId} not found: ${e instanceof Error ? e.message : String(e)}`,
+          `\u274c Agent ${sId} not found: ${e instanceof Error ? e.message : String(e)}`,
         );
         return true;
       }
@@ -402,7 +405,7 @@ async function handleCommand(
       });
       await sendMessage(
         chatId,
-        `✅ Agent set to ${sId}. The next message starts a fresh conversation with this agent.`,
+        `\u2705 Agent set to ${agentName ?? sId}${agentName ? ` (${sId})` : ''}. The next message starts a fresh conversation with this agent.`,
       );
       return true;
     }
@@ -411,11 +414,38 @@ async function handleCommand(
       const cfg = await getAppConfig();
       const project =
         binding?.projectName ?? pendingProject.get(chatId) ?? null;
+      const agentSId = binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? null;
+      // Prefer the cached name on the Conversation row (set at
+      // bind time). Fall back to a Dust lookup so the user
+      // never sees a bare sId when the agent is resolvable.
+      // Dust call is wrapped in try/catch \u2014 a transient outage
+      // shouldn't break /whoami.
+      let agentName: string | null = binding?.conversation?.agentName ?? null;
+      if (!agentName && agentSId) {
+        try {
+          const ctx = await getDustClient();
+          if (ctx) {
+            const r = await ctx.client.getAgentConfigurations({});
+            if (r.isOk()) {
+              const list = r.value as Array<{ sId: string; name: string }>;
+              agentName =
+                list.find((a) => a.sId === agentSId)?.name ?? null;
+            }
+          }
+        } catch {
+          /* keep agentName null */
+        }
+      }
+      const agentLine = agentSId
+        ? agentName
+          ? `${agentName}  (${agentSId})`
+          : agentSId
+        : '\u2014';
       await sendMessage(
         chatId,
         [
           `chat_id   : ${chatId}`,
-          `agent     : ${binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? '\u2014'}`,
+          `agent     : ${agentLine}`,
           `project   : ${project ?? '\u2014 (global)'}${
             !binding && project ? '  [pending]' : ''
           }`,

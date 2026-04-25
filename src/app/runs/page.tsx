@@ -578,7 +578,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                   <td className="text-center">
                     {(() => {
                       // Priority: local Conversation row. We route to
-                      // /chat?id=<localId> (not /conversations/:id)
+                      // /chat/<localId> (not /conversations/:id)
                       // because /chat is the interactive view with
                       // streaming, sidebar, composer, etc. \u2014 the
                       // legacy /conversations/:id page is read-only

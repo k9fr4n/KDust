@@ -41,6 +41,6 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   return NextResponse.json({
     ok: true,
     projectName: conv.projectName ?? null,
-    redirect: `/chat?id=${id}`,
+    redirect: `/chat/${id}`,
   });
 }

@@ -57,12 +57,12 @@ export function OpenConversationLink({
       // component \u2014 switcher, guards, server layout.
       // Franck 2026-04-19 11:26: "le filtre de projet ne change pas"
       // when clicking recent-conversations on the dashboard.
-      window.location.href = j.redirect ?? `/chat?id=${conversationId}`;
+      window.location.href = j.redirect ?? `/chat/${conversationId}`;
     } catch (err) {
       console.error(err);
       // Fallback: navigate anyway; the /chat layout will redirect to
       // the dashboard if the cookie is missing.
-      window.location.href = `/chat?id=${conversationId}`;
+      window.location.href = `/chat/${conversationId}`;
     } finally {
       // `finally` still runs before the unload, but setBusy() here is
       // mostly cosmetic since the page is about to be replaced.
@@ -72,7 +72,7 @@ export function OpenConversationLink({
 
   return (
     <a
-      href={`/chat?id=${conversationId}`}
+      href={`/chat/${conversationId}`}
       onClick={onClick}
       className={className}
       aria-busy={busy}

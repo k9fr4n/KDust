@@ -22,7 +22,13 @@
  */
 
 import { getAppConfig, getTelegramOffset, setTelegramOffset } from '@/lib/config';
-import { getUpdates, getMe, isTelegramConfigured } from './api';
+import {
+  getUpdates,
+  getMe,
+  isTelegramConfigured,
+  isInCooldown,
+  cooldownRemainingMs,
+} from './api';
 import { handleTelegramMessage } from './bridge';
 
 let started = false;
@@ -92,8 +98,20 @@ async function loop(): Promise<void> {
       break;
     }
     if (!isTelegramConfigured()) {
-      console.warn('[telegram] KDUST_TELEGRAM_BOT_TOKEN missing — sleeping 30s');
+      console.warn('[telegram] KDUST_TELEGRAM_BOT_TOKEN missing \u2014 sleeping 30s');
       await sleep(30_000);
+      continue;
+    }
+    // While in cooldown, sleep until it expires before pulling
+    // any new updates. We could keep fetching and silently drop,
+    // but holding off on getUpdates also keeps the offset stable
+    // and avoids accumulating updates we have to throw away.
+    if (isInCooldown()) {
+      const remainMs = cooldownRemainingMs();
+      console.warn(
+        `[telegram] in cooldown \u2014 sleeping ${Math.ceil(remainMs / 1000)}s`,
+      );
+      await sleep(Math.min(remainMs, 60_000) + 500);
       continue;
     }
 

@@ -60,30 +60,74 @@ async function call<T>(
   return json.result as T;
 }
 
+// ----- global flood-ban cooldown -----
+// When Telegram returns 429 with a retry_after of more than a
+// few seconds, the bot has been temporarily flood-banned. Any
+// further sendMessage during the cooldown counts towards the
+// ban duration AND fails wastefully. We track the cooldown end
+// here and short-circuit ALL outbound calls until it expires.
+//
+// Process-local: a restart resets it, which is fine because
+// Telegram still enforces the ban on its side regardless of
+// what we remember locally \u2014 we just won't get the early-skip
+// benefit until the next 429 confirms it.
+let cooldownUntilMs = 0;
+
+export function isInCooldown(): boolean {
+  return Date.now() < cooldownUntilMs;
+}
+
+export function cooldownRemainingMs(): number {
+  return Math.max(0, cooldownUntilMs - Date.now());
+}
+
 /**
- * sendMessage with built-in 429 retry. Telegram returns a
- * `retry_after` hint (seconds) on rate-limit errors; we honour
- * it ONCE, then surface the failure if it persists. Without
- * this, a small backlog spike (e.g. the operator activating the
- * bridge after a day of testing) cascades into permanent
- * delivery failures because the handler throws and the loop
- * moves on.
+ * Outbound call with bounded 429 retry + global cooldown gate.
+ *
+ * Strategy:
+ *  - If we're already in cooldown, fail fast (don't even try).
+ *  - On 429 with retry_after \u2264 5s: sleep + retry once.
+ *  - On 429 with retry_after > 5s: open the global cooldown
+ *    until that time and surface a SkipDueToCooldown error so
+ *    the handler can drop the message gracefully.
+ *
+ * Capping the inline retry at 5s keeps the long-poll loop
+ * snappy: any longer wait means the bot has been flood-banned
+ * and continuing to call the API only extends the ban.
  */
-async function callWithRetry<T>(
+async function callGated<T>(
   method: string,
   body: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (isInCooldown()) {
+    const err = new Error(
+      `Telegram ${method} skipped: in cooldown for ${Math.ceil(
+        cooldownRemainingMs() / 1000,
+      )}s`,
+    );
+    (err as { code?: number }).code = 429;
+    (err as { skipped?: boolean }).skipped = true;
+    throw err;
+  }
   try {
     return await call<T>(method, body, signal);
   } catch (e) {
     const code = (e as { code?: number }).code;
     const retryAfter = (e as { retryAfter?: number }).retryAfter;
     if (code !== 429 || !retryAfter) throw e;
-    // Cap the wait at 30s so we never block the loop for minutes
-    // on a misconfigured bot. If Telegram asks for more, we drop
-    // the message rather than freeze the bridge.
-    const waitMs = Math.min(retryAfter, 30) * 1000 + 250;
+    if (retryAfter > 5) {
+      cooldownUntilMs = Date.now() + (retryAfter + 1) * 1000;
+      console.error(
+        `[telegram] flood-ban: cooldown for ${retryAfter}s on ${method}; ` +
+          `outbound calls will be skipped until ${new Date(
+            cooldownUntilMs,
+          ).toISOString()}`,
+      );
+      (e as { skipped?: boolean }).skipped = true;
+      throw e;
+    }
+    const waitMs = retryAfter * 1000 + 250;
     console.warn(
       `[telegram] ${method} hit 429, sleeping ${waitMs}ms before single retry`,
     );
@@ -142,7 +186,7 @@ export async function sendMessage(
   text: string,
   opts?: { reply_to_message_id?: number; parse_mode?: 'HTML' | 'MarkdownV2' },
 ): Promise<TgMessage> {
-  return callWithRetry<TgMessage>('sendMessage', {
+  return callGated<TgMessage>('sendMessage', {
     chat_id: chatId,
     text: text.length > 4096 ? text.slice(0, 4090) + '\u2026' : text,
     parse_mode: opts?.parse_mode,
@@ -157,10 +201,11 @@ export async function editMessageText(
   text: string,
   opts?: { parse_mode?: 'HTML' | 'MarkdownV2' },
 ): Promise<void> {
-  // editMessageText does NOT use retry-with-sleep: the streaming
-  // path in bridge.ts already handles 429 by extending its own
-  // throttle window (lastEditAt += 2000), and we don't want to
-  // block the stream for the full retry_after on every edit.
+  // editMessageText also goes through callGated so it respects
+  // the global cooldown. We don't sleep-and-retry here \u2014 the
+  // streaming path in bridge.ts already extends its throttle
+  // window on 429, and a long sleep would freeze the stream.
+  if (isInCooldown()) return;
   await call('editMessageText', {
     chat_id: chatId,
     message_id: messageId,
@@ -174,6 +219,9 @@ export async function sendChatAction(
   chatId: string | number,
   action: 'typing' | 'upload_document',
 ): Promise<void> {
+  // chat actions are best-effort UI sugar; never trip the API
+  // during cooldown.
+  if (isInCooldown()) return;
   await call('sendChatAction', { chat_id: chatId, action });
 }
 

@@ -45,6 +45,8 @@ import {
   sendMessage,
   editMessageText,
   sendChatAction,
+  isInCooldown,
+  cooldownRemainingMs,
   type TgMessage,
 } from './api';
 
@@ -333,9 +335,47 @@ async function handleCommand(
  * so the loop stays alive on bad input.
  */
 export async function handleTelegramMessage(msg: TgMessage): Promise<void> {
+  // Top-level guard: any error inside this handler is logged and
+  // swallowed so the poller's offset always advances. Without
+  // this wrapper, an exception thrown from handleCommand (which
+  // sits OUTSIDE the streaming try/catch below) would propagate
+  // up to the poller and leave the offset stuck if anything in
+  // the caller chain misbehaves.
+  try {
+    await handleTelegramMessageInner(msg);
+  } catch (e) {
+    if ((e as { skipped?: boolean }).skipped) {
+      // Already-known cooldown skip; quieter log.
+      console.warn(
+        `[telegram] update from chat ${msg.chat.id} dropped: in cooldown`,
+      );
+      return;
+    }
+    console.error(
+      `[telegram] handler error (chat=${msg.chat.id}): ${
+        e instanceof Error ? (e.stack ?? e.message) : String(e)
+      }`,
+    );
+  }
+}
+
+async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
   const chatId = String(msg.chat.id);
   const text = (msg.text ?? '').trim();
   if (!text) return;
+
+  // Hard short-circuit while flood-banned. Advancing the offset
+  // (done by the poller) drops the message; better than sending
+  // it later when the user has long moved on, AND keeps us from
+  // extending the ban by hitting the API.
+  if (isInCooldown()) {
+    console.warn(
+      `[telegram] dropping update from chat=${chatId}: cooldown for ${Math.ceil(
+        cooldownRemainingMs() / 1000,
+      )}s`,
+    );
+    return;
+  }
 
   const cfg = await getAppConfig();
   if (!isAllowed(chatId, cfg.telegramAllowedChatIds)) {

@@ -107,9 +107,43 @@ async function skipBacklogIfFirstStart(): Promise<void> {
   }
 }
 
+/**
+ * Round-trip the offset persistence path before starting the
+ * poll loop. Catches the most common boot-time misconfiguration
+ * (schema drift: telegramUpdateOffset column missing because
+ * `prisma db push` did not run in the container) BEFORE we
+ * enter the long-poll, where a failed setTelegramOffset would
+ * silently spin on the same backlog at 30 Hz.
+ *
+ * Returns true when the path is healthy, false otherwise (loop
+ * aborts so the operator notices in /logs).
+ */
+async function selfTestPersistence(): Promise<boolean> {
+  try {
+    const current = await getTelegramOffset();
+    await setTelegramOffset(current);
+    return true;
+  } catch (e) {
+    console.error(
+      '[telegram] persistence self-test FAILED \u2014 offset cannot be ' +
+        'written to AppConfig. Most likely the schema is out of date ' +
+        '(run `prisma db push` in the container). Bridge will not start.\n' +
+        `  underlying error: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return false;
+  }
+}
+
 async function loop(): Promise<void> {
   let backoff = 1_000;
   let consecutiveAuthFailures = 0;
+  let consecutivePersistFailures = 0;
+
+  if (!(await selfTestPersistence())) {
+    started = false;
+    stopRequested = false;
+    return;
+  }
 
   await skipBacklogIfFirstStart();
 
@@ -186,7 +220,24 @@ async function loop(): Promise<void> {
       }
       // Persist offset only AFTER the full batch has been
       // processed; on crash we'll re-deliver but never lose.
-      await setTelegramOffset(maxId + 1);
+      // If persistence fails repeatedly the loop aborts (better
+      // than infinite re-fetch of the same backlog at 30 Hz).
+      try {
+        await setTelegramOffset(maxId + 1);
+        consecutivePersistFailures = 0;
+      } catch (e) {
+        consecutivePersistFailures++;
+        console.error(
+          `[telegram] failed to persist offset (${consecutivePersistFailures}/3): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+        if (consecutivePersistFailures >= 3) {
+          console.error('[telegram] giving up: schema/DB seems broken');
+          break;
+        }
+        await sleep(5_000);
+      }
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') break;
       const code = (err as { code?: number }).code;

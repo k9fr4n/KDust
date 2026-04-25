@@ -97,18 +97,15 @@ export async function getTelegramOffset(): Promise<number> {
 }
 
 export async function setTelegramOffset(offset: number): Promise<void> {
-  try {
-    await db.appConfig.update({
-      where: { id: 1 },
-      data: { telegramUpdateOffset: offset },
-    });
-  } catch (e) {
-    console.warn(
-      `[telegram] failed to persist update offset=${offset}: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    );
-  }
+  // Re-throws on failure so the poller can detect a broken DB
+  // schema (e.g. column missing because `prisma db push` did not
+  // run at container boot) and refuse to keep looping. Silent
+  // failure here used to cause an infinite getUpdates retry on
+  // the same backlog (no offset advance \u2192 no progress).
+  await db.appConfig.update({
+    where: { id: 1 },
+    data: { telegramUpdateOffset: offset },
+  });
 }
 
 export async function updateAppConfig(patch: Partial<AppConfigData>) {

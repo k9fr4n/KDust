@@ -35,16 +35,61 @@ async function call<T>(
     signal,
   });
   const json = (await res.json().catch(() => null)) as
-    | { ok: boolean; result?: T; description?: string; error_code?: number }
+    | {
+        ok: boolean;
+        result?: T;
+        description?: string;
+        error_code?: number;
+        parameters?: { retry_after?: number; migrate_to_chat_id?: number };
+      }
     | null;
   if (!res.ok || !json?.ok) {
     const desc = json?.description ?? `HTTP ${res.status}`;
     const code = json?.error_code ?? res.status;
     const err = new Error(`Telegram ${method} failed: ${code} ${desc}`);
     (err as { code?: number }).code = code;
+    // Telegram surfaces rate-limit hints via parameters.retry_after
+    // (seconds). We expose it on the error so callers can sleep
+    // the suggested duration before retrying instead of guessing.
+    if (typeof json?.parameters?.retry_after === 'number') {
+      (err as { retryAfter?: number }).retryAfter =
+        json.parameters.retry_after;
+    }
     throw err;
   }
   return json.result as T;
+}
+
+/**
+ * sendMessage with built-in 429 retry. Telegram returns a
+ * `retry_after` hint (seconds) on rate-limit errors; we honour
+ * it ONCE, then surface the failure if it persists. Without
+ * this, a small backlog spike (e.g. the operator activating the
+ * bridge after a day of testing) cascades into permanent
+ * delivery failures because the handler throws and the loop
+ * moves on.
+ */
+async function callWithRetry<T>(
+  method: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  try {
+    return await call<T>(method, body, signal);
+  } catch (e) {
+    const code = (e as { code?: number }).code;
+    const retryAfter = (e as { retryAfter?: number }).retryAfter;
+    if (code !== 429 || !retryAfter) throw e;
+    // Cap the wait at 30s so we never block the loop for minutes
+    // on a misconfigured bot. If Telegram asks for more, we drop
+    // the message rather than freeze the bridge.
+    const waitMs = Math.min(retryAfter, 30) * 1000 + 250;
+    console.warn(
+      `[telegram] ${method} hit 429, sleeping ${waitMs}ms before single retry`,
+    );
+    await new Promise((r) => setTimeout(r, waitMs));
+    return call<T>(method, body, signal);
+  }
 }
 
 // ---- Types (only the fields KDust uses) ----
@@ -97,7 +142,7 @@ export async function sendMessage(
   text: string,
   opts?: { reply_to_message_id?: number; parse_mode?: 'HTML' | 'MarkdownV2' },
 ): Promise<TgMessage> {
-  return call<TgMessage>('sendMessage', {
+  return callWithRetry<TgMessage>('sendMessage', {
     chat_id: chatId,
     text: text.length > 4096 ? text.slice(0, 4090) + '\u2026' : text,
     parse_mode: opts?.parse_mode,
@@ -112,6 +157,10 @@ export async function editMessageText(
   text: string,
   opts?: { parse_mode?: 'HTML' | 'MarkdownV2' },
 ): Promise<void> {
+  // editMessageText does NOT use retry-with-sleep: the streaming
+  // path in bridge.ts already handles 429 by extending its own
+  // throttle window (lastEditAt += 2000), and we don't want to
+  // block the stream for the full retry_after on every edit.
   await call('editMessageText', {
     chat_id: chatId,
     message_id: messageId,

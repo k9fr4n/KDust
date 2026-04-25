@@ -32,9 +32,54 @@ let currentAbort: AbortController | null = null;
 const LONG_POLL_TIMEOUT_SEC = 25;
 const MAX_BACKOFF_MS = 60_000;
 
+/**
+ * On first activation (offset stored = 0) Telegram would replay
+ * up to 24h of buffered updates \u2014 typically the operator's test
+ * messages, which then trigger a sendMessage burst that hits
+ * the per-bot rate limit.
+ *
+ * We avoid this by doing a one-shot getUpdates(offset=-1, t=0):
+ * Telegram returns just the most recent update (or an empty
+ * array if the bot has zero history). We then persist
+ * lastUpdate+1 as our starting offset, dropping the entire
+ * backlog. Any message sent AFTER this call is delivered
+ * normally.
+ *
+ * Run only when the cursor is still at its default of 0 \u2014 once
+ * the bridge has processed any update, the persisted offset
+ * tracks the truth and we never want to override it.
+ */
+async function skipBacklogIfFirstStart(): Promise<void> {
+  const current = await getTelegramOffset();
+  if (current !== 0) return;
+  try {
+    const updates = await getUpdates(-1, 0);
+    if (updates.length === 0) {
+      console.log('[telegram] first start, no backlog to skip');
+      return;
+    }
+    const latest = updates[updates.length - 1].update_id;
+    await setTelegramOffset(latest + 1);
+    console.log(
+      `[telegram] first start, skipped backlog up to update_id=${latest}`,
+    );
+  } catch (e) {
+    // Non-fatal: if the skip fails, the main loop still runs.
+    // Worst case the operator sees a one-time backlog burst,
+    // which the 429-retry in api.ts now handles gracefully.
+    console.warn(
+      `[telegram] backlog skip failed (will fall back to normal poll): ${
+        e instanceof Error ? e.message : e
+      }`,
+    );
+  }
+}
+
 async function loop(): Promise<void> {
   let backoff = 1_000;
   let consecutiveAuthFailures = 0;
+
+  await skipBacklogIfFirstStart();
 
   while (!stopRequested) {
     // Re-read the master switch every iteration so the operator

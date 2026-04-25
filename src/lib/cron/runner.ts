@@ -250,6 +250,51 @@ function buildDockerHostContext(projectPath: string): string {
   ].join('\n');
 }
 
+/**
+ * Toolchain policy block (Franck 2026-04-25 19:13). KDust no longer
+ * pre-installs language toolchains in its container — the projects
+ * KDust manages span Go, Python, Terraform, Node, Ansible, etc.,
+ * and trying to keep a single base image fat enough to satisfy all
+ * of them rapidly turns into an unmaintainable kitchen sink.
+ *
+ * Instead, the Dust agent is instructed (via this prompt addendum)
+ * to run ANY language-specific tool through Docker, using the
+ * /var/run/docker.sock that's already mounted in the KDust runner
+ * container (see Dockerfile, "Docker-out-of-Docker" Option A,
+ * Franck 2026-04-20 23:46).
+ *
+ * The directive is appended to every task prompt regardless of
+ * pushEnabled, because even in prompt-only mode the agent often
+ * needs to run a `go test` / `pytest` / `terraform plan` to
+ * diagnose. Without this guidance, the agent occasionally tried
+ * native invocations first, hit "Go isn't installed", and only
+ * THEN fell back to Docker — wasting tokens and adding noise to
+ * the conversation.
+ */
+const TOOLCHAIN_POLICY_BLOCK = [
+  '[Toolchain policy]',
+  'No language toolchains are installed natively in this environment',
+  '(no go, python, node-globally, terraform, ansible, etc. on PATH).',
+  'For ANY toolchain command you need to run, use Docker:',
+  '',
+  '    docker run --rm \\',
+  '      -v "$PWD":/work -w /work \\',
+  '      <official-image>:<pinned-version> <command>',
+  '',
+  'The Docker daemon socket is mounted into this environment, so',
+  '`docker run` works out of the box from your run_command tool.',
+  'Pick official images sized to the task:',
+  '  • Go         golang:1.23-bookworm',
+  '  • Python     python:3.12-slim',
+  '  • Node       node:22-bookworm-slim',
+  '  • Terraform  hashicorp/terraform:1.10',
+  '  • Ansible    quay.io/ansible/ansible-runner:latest',
+  'Do NOT attempt `apt install`, `curl ... | sh`, or other in-place',
+  'installs — they would only persist for this single command\'s',
+  'lifetime and are blocked anyway. If you genuinely need a tool',
+  'that has no obvious image, ask the user before building one.',
+].join('\n');
+
 function buildAutomationPrompt(
   job: {
     prompt: string;
@@ -260,23 +305,28 @@ function buildAutomationPrompt(
   },
   policy: { baseBranch: string; branchPrefix: string },
 ): string {
-  if (!job.pushEnabled) return job.prompt;
-  const lines = [
-    job.prompt,
-    '',
-    '---',
-    '[KDust automation context]',
-    'This run will be auto-committed (and pushed unless dry-run) by KDust after your reply.',
-    `- Base branch: ${policy.baseBranch}`,
-    `- Branch mode: ${job.branchMode}`,
-    `- Branch prefix: ${policy.branchPrefix}`,
-    `- Dry-run: ${job.dryRun ? 'yes (local commit only, no push)' : 'no (commit + push)'}`,
-    `- Max diff lines: ${job.maxDiffLines} (KDust aborts the push if exceeded)`,
-    'Do NOT run `git add` / `git commit` / `git push` yourself — KDust handles',
-    'all git writes from the working-tree diff after your reply. Just edit files',
-    'via the fs-cli MCP server as needed and explain your changes in your reply.',
-  ];
-  return lines.join('\n');
+  // Toolchain policy is ALWAYS appended (even in prompt-only mode
+  // where the agent might still want to run tests/lints) — unlike
+  // the automation context block below which only makes sense
+  // when KDust is going to commit on the agent's behalf.
+  const tail: string[] = ['', '---', TOOLCHAIN_POLICY_BLOCK];
+  if (job.pushEnabled) {
+    tail.push(
+      '',
+      '---',
+      '[KDust automation context]',
+      'This run will be auto-committed (and pushed unless dry-run) by KDust after your reply.',
+      `- Base branch: ${policy.baseBranch}`,
+      `- Branch mode: ${job.branchMode}`,
+      `- Branch prefix: ${policy.branchPrefix}`,
+      `- Dry-run: ${job.dryRun ? 'yes (local commit only, no push)' : 'no (commit + push)'}`,
+      `- Max diff lines: ${job.maxDiffLines} (KDust aborts the push if exceeded)`,
+      'Do NOT run `git add` / `git commit` / `git push` yourself — KDust handles',
+      'all git writes from the working-tree diff after your reply. Just edit files',
+      'via the fs-cli MCP server as needed and explain your changes in your reply.',
+    );
+  }
+  return [job.prompt, ...tail].join('\n');
 }
 
 /**

@@ -44,7 +44,7 @@ DAG engine or YAML.
 Every child run is a first-class `TaskRun` row linked to its parent
 via `parentRunId`, with `runDepth` and `trigger='mcp'`. The full
 chain is walkable in the DB and visualised as an indented tree on
-`/runs?view=tree`.
+`/run?view=tree`.
 
 ---
 
@@ -179,7 +179,7 @@ finish before the child does.
   "status": "dispatching",
   "run_id": null,
   "task": { "id": "...", "name": "audit-iam" },
-  "hint": "Child run row not created within 5s ... Dispatch is still in flight — check /runs in a moment or call dispatch_task again."
+  "hint": "Child run row not created within 5s ... Dispatch is still in flight — check /run in a moment or call dispatch_task again."
 }
 ```
 
@@ -309,7 +309,7 @@ The `output` field in the structured response is **capped at 4000
 characters** (`formatRunResult` in `task-runner-server.ts`). If
 the child's final message is larger, the excess is silently
 dropped from the return payload. The full output is preserved on
-the child's `TaskRun.output` column and visible on `/runs/<id>`.
+the child's `TaskRun.output` column and visible on `/run/<id>`.
 
 For pipelines that shuttle large artefacts between tasks, don't
 rely on `output` \u2014 use the filesystem.
@@ -376,7 +376,7 @@ parent LLM to re-parse free-form prose.
 The value of `input` is passed to the runner and ends up in the
 child's agent conversation, but it is **not** stored on the child
 `TaskRun` row. For debugging, inspect the child's Dust
-conversation (linked from `/runs/<id>` via the chat icon) — the
+conversation (linked from `/run/<id>` via the chat icon) — the
 effective user message is visible there.
 
 ---
@@ -540,7 +540,7 @@ error so runaway recursion (A → B → A) terminates after 10 runs.
 
 When a parent run ends in a non-success terminal state (`failed`,
 `aborted`) or is cancelled by the user via
-`POST /api/taskruns/:id/cancel`, KDust cascades the cancellation to
+`POST /api/taskrun/:id/cancel`, KDust cascades the cancellation to
 every descendant still `running` or `pending`:
 
 - Descendants with a live `AbortController` in this process are
@@ -590,19 +590,19 @@ Every run row carries two columns that answer "who launched this?":
 | `trigger`     | `cron`, `manual`, `mcp`, `null` (pre-2026-04-22 legacy) |
 | `triggeredBy` | cron: `null` · manual: OIDC email or `'ui'` · mcp: parent task name |
 
-On `/runs`, a coloured pill surfaces the combo at a glance
+On `/run`, a coloured pill surfaces the combo at a glance
 (indigo=cron, sky=manual, fuchsia=mcp).
 
 ---
 
 ## Observability
 
-- **Tree view**: `/runs?view=tree` groups rows by root ancestor and
+- **Tree view**: `/run?view=tree` groups rows by root ancestor and
   indents children with ASCII connectors. Missing ancestors are
   auto-fetched so filtered lists never render orphans. The view
   choice persists in a cookie `kdust_runs_view`.
 - **Lineage**: `parentRunId` + `runDepth` on every `TaskRun`.
-- **Run detail page** (`/tasks/:id`): full config dump including
+- **Run detail page** (`/task/:id`): full config dump including
   `taskRunnerEnabled` / `commandRunnerEnabled` badges and secret
   bindings preview.
 - **Server logs**: dispatches, nested-orchestrator notices, and
@@ -650,11 +650,11 @@ run_task({ task: "deploy-prod" })    // no project arg
 
 The chain is about to exceed `KDUST_MAX_RUN_DEPTH`. Either shorten
 the chain, bump the env var, or check for an accidental cycle (the
-tree view on `/runs` makes these obvious).
+tree view on `/run` makes these obvious).
 
 ### `generic task invariants violated`
 
-See `docs/tasks.md` (to be written) for the full generic-task
+See `docs/task.md` (to be written) for the full generic-task
 contract. Short version: generic tasks must have
 `schedule='manual'` and `pushEnabled=false`. `taskRunnerEnabled` is
 fine since 2026-04-22.

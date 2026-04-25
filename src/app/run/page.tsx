@@ -590,7 +590,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                         - dustConversationSId only  \u2192 disabled "orphan" icon
                         - no conversation linked    \u2192 nothing (just RunActions)
                       <OpenConversationLink> still POSTs to
-                      /api/conversations/:id/open first to set the project
+                      /api/conversation/:id/open first to set the project
                       cookie before navigating, otherwise the /chat guard
                       bounces the user when coming from "All Projects".
                     */}

@@ -9,7 +9,7 @@ import { useState } from 'react';
  * the user doesn't click and hit the expected 403. The detail page's
  * existing `mandatory` badge already explains why it can't be deleted.
  *
- * On non-mandatory tasks: confirms, fires DELETE /api/tasks/:id, and
+ * On non-mandatory tasks: confirms, fires DELETE /api/task/:id, and
  * surfaces the server-side error message verbatim on failure (the API
  * returns { error: string } for 4xx). Keeping the raw message is more
  * useful than a generic "HTTP 403" — a future invariant (e.g. can't
@@ -35,7 +35,7 @@ export function TaskDeleteButton({
     setBusy(true);
     let r: Response;
     try {
-      r = await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      r = await fetch(`/api/task/${id}`, { method: 'DELETE' });
     } catch (e) {
       setBusy(false);
       alert(`Network error: ${(e as Error).message}`);

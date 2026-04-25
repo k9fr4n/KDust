@@ -8,7 +8,7 @@ import { Play, Loader2, Check, X } from 'lucide-react';
  *
  * Behaviour by task kind:
  *   - Project-bound task (isGeneric=false): single click = fire-and-forget
- *     POST /api/tasks/:id/run with an empty body.
+ *     POST /api/task/:id/run with an empty body.
  *   - Generic task (isGeneric=true): clicking opens a minimalist
  *     project-picker popover. The API rejects a generic run without
  *     a `project` body, so asking the user here avoids a wasted
@@ -44,7 +44,7 @@ export function RunNowButton({
     setState('running');
     setOpen(false);
     try {
-      const r = await fetch(`/api/tasks/${cronId}/run`, {
+      const r = await fetch(`/api/task/${cronId}/run`, {
         method: 'POST',
         headers: projectOverride ? { 'Content-Type': 'application/json' } : undefined,
         body: projectOverride ? JSON.stringify({ project: projectOverride }) : undefined,

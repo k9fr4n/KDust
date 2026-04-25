@@ -153,7 +153,7 @@ export function TaskForm({
   }, [isEdit]);
 
   // Secret bindings drafted on the /task/new page (deferred mode
-  // of TaskSecretBindings). Flushed via /api/tasks/:id/secrets once
+  // of TaskSecretBindings). Flushed via /api/task/:id/secrets once
   // the task row has been created. In edit mode the child component
   // persists directly and this state is unused.
   const [pendingBindings, setPendingBindings] = useState<BindingDraft[]>([]);
@@ -163,7 +163,7 @@ export function TaskForm({
     setErr(null);
     setLoading(true);
     const agentName = agents.find((a) => a.sId === form.agentSId)?.name;
-    const url = isEdit ? `/api/tasks/${cronId}` : '/api/tasks';
+    const url = isEdit ? `/api/task/${cronId}` : '/api/task';
     const method = isEdit ? 'PATCH' : 'POST';
     const res = await fetch(url, {
       method,
@@ -210,7 +210,7 @@ export function TaskForm({
       const failures: string[] = [];
       for (const b of pendingBindings) {
         const bRes = await fetch(
-          `/api/tasks/${encodeURIComponent(newId)}/secrets`,
+          `/api/task/${encodeURIComponent(newId)}/secrets`,
           {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -539,7 +539,7 @@ export function TaskForm({
         {/* Secret env bindings (Franck 2026-04-21 22:00 + deferred
             mode 2026-04-22 17:50). Shown whenever the command-runner
             is enabled:
-              - edit mode  → persisted, mutates /api/tasks/:id/secrets
+              - edit mode  → persisted, mutates /api/task/:id/secrets
               - new mode   → deferred, local state flushed after the
                              task row is created (see submit() above)
             When command-runner is off we swap in a hint so the user

@@ -45,7 +45,7 @@ const activeRuns = new Map<string, AbortController>();
  *   - Teams card subtitle
  */
 export type AbortReason =
-  | { kind: 'user' }                    // POST /api/taskruns/:id/cancel
+  | { kind: 'user' }                    // POST /api/taskrun/:id/cancel
   | { kind: 'cascade'; parentRunId: string; parentStatus: string; note?: string }
   | { kind: 'timeout'; ms: number };   // internal 10-min killTimer
 

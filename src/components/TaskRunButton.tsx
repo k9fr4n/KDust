@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
  * Two modes (same contract as the compact RunNowButton on the task
  * list page):
  *   - Project-bound task (isGeneric=false): single click fires
- *     POST /api/tasks/:id/run with an empty body.
+ *     POST /api/task/:id/run with an empty body.
  *   - Generic task (isGeneric=true): click opens a minimalist
  *     picker, the selected project name is sent as
  *     { project: "<name>" } in the body. Without a project the
@@ -49,7 +49,7 @@ export function TaskRunButton({
   const fire = async (projectOverride?: string) => {
     setBusy(true);
     setMsg(null);
-    const r = await fetch(`/api/tasks/${id}/run`, {
+    const r = await fetch(`/api/task/${id}/run`, {
       method: 'POST',
       headers: projectOverride ? { 'Content-Type': 'application/json' } : undefined,
       body: projectOverride ? JSON.stringify({ project: projectOverride }) : undefined,

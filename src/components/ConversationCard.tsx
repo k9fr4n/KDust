@@ -34,7 +34,7 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
     setBusy(true);
     try {
       const next = !pinned;
-      const r = await fetch(`/api/conversations/${conv.id}/pin`, {
+      const r = await fetch(`/api/conversation/${conv.id}/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pinned: next }),
@@ -56,7 +56,7 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
     if (!confirm(`Delete conversation "${conv.title}" ?`)) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/conversations/${conv.id}`, { method: 'DELETE' });
+      const r = await fetch(`/api/conversation/${conv.id}`, { method: 'DELETE' });
       if (r.ok) {
         router.refresh();
         publishConvEvent({ type: 'deleted', id: conv.id });

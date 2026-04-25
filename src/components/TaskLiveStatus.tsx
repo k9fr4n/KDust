@@ -54,7 +54,7 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`/api/tasks/${cronId}`, { cache: 'no-store' });
+        const r = await fetch(`/api/task/${cronId}`, { cache: 'no-store' });
         if (!r.ok) return;
         const data = await r.json();
         const latest: Run | undefined = data?.task?.runs?.find((x: Run) => x.id === run.id) ?? data?.task?.runs?.[0];
@@ -97,7 +97,7 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
     setCancelling(true);
     setCancelMsg(null);
     try {
-      const r = await fetch(`/api/taskruns/${run.id}/cancel`, { method: 'POST' });
+      const r = await fetch(`/api/taskrun/${run.id}/cancel`, { method: 'POST' });
       if (r.ok) setCancelMsg('Abort signal sent. The run will stop within a few seconds.');
       else {
         const body = await r.json().catch(() => ({}));

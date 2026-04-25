@@ -42,7 +42,7 @@ type ConvSummary = {
   agentSId: string;
   updatedAt: string;
   projectName: string | null;
-  /** Dashboard and /chat share the same pin state via /api/conversations/:id/pin. */
+  /** Dashboard and /chat share the same pin state via /api/conversation/:id/pin. */
   pinned?: boolean;
   /** Optional — only present if the API returns it; used for tooltips. */
   createdAt?: string;
@@ -212,7 +212,7 @@ function ChatPageInner({
    * returned alongside the conversations list). Used to build
    * https://dust.tt/w/<wsSId>/assistant/<convSId> links so the
    * "Open in Dust" icon lands on the right workspace. null until
-   * the first /api/conversations fetch completes; the link is
+   * the first /api/conversation fetch completes; the link is
    * hidden while that's the case.
    */
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -379,7 +379,7 @@ function ChatPageInner({
   const router = useRouter();
 
   const refreshConvs = async () => {
-    const r = await fetch('/api/conversations');
+    const r = await fetch('/api/conversation');
     const j = await r.json();
     setConvs(j.conversations ?? []);
     // Workspace sId travels on the same payload so we only pay
@@ -402,7 +402,7 @@ function ChatPageInner({
     setStreamedText('');
     setCotText('');
     setError(null);
-    const r = await fetch(`/api/conversations/${id}`);
+    const r = await fetch(`/api/conversation/${id}`);
     const j = await r.json();
     const c = j.conversation;
     setMessages(c?.messages ?? []);
@@ -641,7 +641,7 @@ function ChatPageInner({
     if (!currentId || !serverStreaming || streaming) return;
     const iv = setInterval(async () => {
       try {
-        const r = await fetch(`/api/conversations/${currentId}`);
+        const r = await fetch(`/api/conversation/${currentId}`);
         if (!r.ok) return;
         const j = await r.json();
         if (!j.streaming) {
@@ -685,7 +685,7 @@ function ChatPageInner({
     setToolCalls([]);
     try {
       const r = await fetch(
-        `/api/conversations/${convId}/stream?userMessageSId=${encodeURIComponent(userMessageSId)}`,
+        `/api/conversation/${convId}/stream?userMessageSId=${encodeURIComponent(userMessageSId)}`,
       );
       if (!r.body) throw new Error('no stream');
       const reader = r.body.getReader();
@@ -750,7 +750,7 @@ function ChatPageInner({
     if (!currentId || stopping) return;
     setStopping(true);
     try {
-      void fetch(`/api/conversations/${currentId}/cancel`, { method: 'POST' }).catch(
+      void fetch(`/api/conversation/${currentId}/cancel`, { method: 'POST' }).catch(
         () => {/* best-effort */},
       );
     } finally {
@@ -987,7 +987,7 @@ function ChatPageInner({
     try {
       if (!currentId) {
         const agentName = agents.find((a) => a.sId === agentSId)?.name;
-        const r = await postWithRetry('/api/conversations', {
+        const r = await postWithRetry('/api/conversation', {
           agentSId,
           agentName,
           content,
@@ -1007,7 +1007,7 @@ function ChatPageInner({
         }
         await consumeStream(j.id, j.userMessageSId);
       } else {
-        const r = await postWithRetry(`/api/conversations/${currentId}/messages`, {
+        const r = await postWithRetry(`/api/conversation/${currentId}/messages`, {
           content,
           fileIds: fileIds.length > 0 ? fileIds : undefined,
           fileMetas: fileMetas.length > 0 ? fileMetas : undefined,
@@ -1023,7 +1023,7 @@ function ChatPageInner({
 
   const removeConv = async (id: string) => {
     if (!confirm('Delete this conversation?')) return;
-    const r = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    const r = await fetch(`/api/conversation/${id}`, { method: 'DELETE' });
     if (currentId === id) newChat();
     await refreshConvs();
     // Notify sibling tabs (dashboard / /conversation / other /chat)
@@ -1043,7 +1043,7 @@ function ChatPageInner({
       prev.map((c) => (c.id === id ? { ...c, pinned: next } : c)),
     );
     try {
-      const r = await fetch(`/api/conversations/${id}/pin`, {
+      const r = await fetch(`/api/conversation/${id}/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pinned: next }),

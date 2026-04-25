@@ -519,7 +519,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               to KDUST_CMD_OUTPUT_MAX_BYTES at write-time). */}
           {/* Commands section \u2014 rendered by the CommandsLive client
               component so that in-flight runs get a live-updating
-              list (polled at 2s via /api/taskruns/:id/commands).
+              list (polled at 2s via /api/taskrun/:id/commands).
               initialCommands is hydrated server-side so completed
               runs render instantly without a round-trip. Franck
               2026-04-24 22:39. */}

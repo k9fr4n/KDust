@@ -7,7 +7,7 @@
 //
 // Two modes:
 //   - Persisted (default, used on /task/:id/edit). A taskId is
-//     required; add / remove calls hit /api/tasks/:id/secrets and the
+//     required; add / remove calls hit /api/task/:id/secrets and the
 //     list refreshes from the server.
 //   - Deferred (used on /task/new). No taskId yet: the component
 //     maintains its bindings in local state and reports them upward
@@ -40,7 +40,7 @@ interface Props {
   /**
    * When true, skip the bindings fetch, keep state local, and report
    * every change to the parent via `onBindingsChange`. The parent is
-   * responsible for flushing to /api/tasks/:id/secrets once the task
+   * responsible for flushing to /api/task/:id/secrets once the task
    * row exists.
    */
   deferred?: boolean;
@@ -82,7 +82,7 @@ export function TaskSecretBindings({
         return;
       }
       const [bRes, sRes] = await Promise.all([
-        fetch(`/api/tasks/${encodeURIComponent(taskId!)}/secrets`, { cache: 'no-store' }),
+        fetch(`/api/task/${encodeURIComponent(taskId!)}/secrets`, { cache: 'no-store' }),
         fetch('/api/secrets', { cache: 'no-store' }),
       ]);
       if (!bRes.ok) throw new Error(`bindings HTTP ${bRes.status}`);
@@ -122,7 +122,7 @@ export function TaskSecretBindings({
       setDraftSecret('');
       return;
     }
-    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId!)}/secrets`, {
+    const res = await fetch(`/api/task/${encodeURIComponent(taskId!)}/secrets`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ envName: draftEnv, secretName: draftSecret }),
@@ -146,7 +146,7 @@ export function TaskSecretBindings({
       return;
     }
     const res = await fetch(
-      `/api/tasks/${encodeURIComponent(taskId!)}/secrets/${encodeURIComponent(envName)}`,
+      `/api/task/${encodeURIComponent(taskId!)}/secrets/${encodeURIComponent(envName)}`,
       { method: 'DELETE' },
     );
     if (!res.ok) {

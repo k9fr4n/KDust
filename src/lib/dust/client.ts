@@ -114,7 +114,7 @@ export async function getDustClient(): Promise<{
   // function \u2014 call sites that still invoke it don\u0027t need to change.
   // We wrap the SDK's error channel to downgrade cooperative-
   // cancellation chatter to a one-liner info log. When the caller
-  // aborts an SSE stream (user clicks "Stop" → /api/taskruns/:id/
+  // aborts an SSE stream (user clicks "Stop" → /api/taskrun/:id/
   // cancel fires AbortController.abort()), the SDK's event-stream
   // loop catches the resulting AbortError, calls
   //   logger.error({ error: e }, "Failed processing event stream")
@@ -136,7 +136,7 @@ export async function getDustClient(): Promise<{
         errObj?.code === 20 ||
         /aborted/i.test(String(errObj?.message ?? '')) ||
         // Dust SDK cooperative-cancel shape (Franck 2026-04-24 22:30):
-        // when the user clicks Stop and /api/taskruns/:id/cancel
+        // when the user clicks Stop and /api/taskrun/:id/cancel
         // fires, the SDK surfaces a Dust-typed error `{kind:'user'}`
         // (distinct from the raw AbortError above) before the SSE
         // loop notices `signal.aborted`. Same expected path, same

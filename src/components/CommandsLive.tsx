@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 /**
  * Shape mirrors the subset of Command columns returned by
- * GET /api/taskruns/:id/commands. Kept local because only this
+ * GET /api/taskrun/:id/commands. Kept local because only this
  * component and the page hydrator consume it.
  */
 type CommandRow = {
@@ -29,7 +29,7 @@ type CommandRow = {
  * Server hydrates the list via `initialCommands` so completed runs
  * render instantly with no flash. While the run is still running
  * (`initialRunStatus === 'running' | 'pending'`), the component
- * polls GET /api/taskruns/:id/commands every 2s and refreshes
+ * polls GET /api/taskrun/:id/commands every 2s and refreshes
  * state — new commands appear as they're recorded by the runner,
  * and in-flight commands flip from 'running' to their terminal
  * status the next tick.
@@ -70,7 +70,7 @@ export function CommandsLive({
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`/api/taskruns/${runId}/commands`, { cache: 'no-store' });
+        const r = await fetch(`/api/taskrun/${runId}/commands`, { cache: 'no-store' });
         if (!r.ok) return;
         const data = (await r.json()) as { runStatus: string; commands: CommandRow[] };
         if (cancelled || !mounted.current) return;

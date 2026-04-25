@@ -7,7 +7,7 @@ import { loadTokens } from './tokens';
  * signature — we already trust it because it was stored server-side
  * after a full auth roundtrip in src/lib/dust/workos.ts.
  *
- * Used by /api/tasks/:id/run to populate TaskRun.triggeredBy so the
+ * Used by /api/task/:id/run to populate TaskRun.triggeredBy so the
  * /run page can show "manual by <email>". Never throws — any
  * parse error yields null.
  *

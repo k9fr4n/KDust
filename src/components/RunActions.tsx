@@ -15,18 +15,18 @@ import { Square, RotateCw, Trash2, Loader2 } from 'lucide-react';
  *   success  / failed  / aborted → Rerun  + Delete
  *
  * Wire-up:
- *   - Stop   : POST /api/taskruns/:id/cancel
+ *   - Stop   : POST /api/taskrun/:id/cancel
  *              (existing endpoint, aborts the in-flight controller;
  *              falls back to a ghost-row write for stale entries).
- *   - Rerun  : POST /api/runs/:id/rerun
+ *   - Rerun  : POST /api/run/:id/rerun
  *              Inherits the original run's project context. For
  *              project-bound tasks this is task.projectPath; for
  *              generic tasks, fallback is the Conversation's
  *              projectName via dustConversationSId. This is the
- *              key distinction with POST /api/tasks/:taskId/run,
+ *              key distinction with POST /api/task/:taskId/run,
  *              which would fail on generic tasks (missing body).
  *              Disabled when run.task was deleted (taskId is null).
- *   - Delete : DELETE /api/runs/:id (idempotent).
+ *   - Delete : DELETE /api/run/:id (idempotent).
  *
  * All actions refresh the page via router.refresh() so the new
  * status / new row / deletion shows up without a full reload. The
@@ -65,7 +65,7 @@ export function RunActions({
     ev.preventDefault();
     if (busy) return;
     setBusy('stop');
-    fetch(`/api/taskruns/${runId}/cancel`, { method: 'POST' })
+    fetch(`/api/taskrun/${runId}/cancel`, { method: 'POST' })
       .catch(() => null)
       .finally(() => {
         setBusy(null);
@@ -81,7 +81,7 @@ export function RunActions({
     // Hit the per-run rerun route so the original run's project
     // context is carried over (important for generic tasks whose
     // project cannot be derived from the task row alone).
-    fetch(`/api/runs/${runId}/rerun`, { method: 'POST' })
+    fetch(`/api/run/${runId}/rerun`, { method: 'POST' })
       .then(async (r) => {
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
@@ -103,7 +103,7 @@ export function RunActions({
     if (busy) return;
     if (!window.confirm('Delete this run? This cannot be undone.')) return;
     setBusy('delete');
-    fetch(`/api/runs/${runId}`, { method: 'DELETE' })
+    fetch(`/api/run/${runId}`, { method: 'DELETE' })
       .catch(() => null)
       .finally(() => {
         setBusy(null);

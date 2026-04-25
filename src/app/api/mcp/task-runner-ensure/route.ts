@@ -12,7 +12,7 @@ export const runtime = 'nodejs';
  *
  * Ensures a chat-mode task-runner MCP server is started and
  * returns its serverId so the /chat client can include it in
- * mcpServerIds when posting to /api/conversations and friends.
+ * mcpServerIds when posting to /api/conversation and friends.
  *
  * Distinct from /api/mcp/ensure (which manages the per-project
  * fs-cli MCP server) because the two MCPs have different

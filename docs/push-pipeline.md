@@ -20,7 +20,7 @@ guard-rails, and the PR/MR auto-opener.
 | `false` | Prompt-only mode: agent runs, its reply is stored as `TaskRun.output`, nothing is committed/pushed. Prompt is sent verbatim. |
 
 `pushEnabled` is forced to `false` for generic tasks (no project
-→ no repo). See [`docs/tasks.md`](tasks.md) for the generic-task
+→ no repo). See [`docs/task.md`](tasks.md) for the generic-task
 invariants.
 
 ---
@@ -109,7 +109,7 @@ The agent never sees stale state from a previous run.
 >
 > The provenance is persisted on `TaskRun.baseBranchSource`
 > (`default | explicit | auto-inherit`) and shown as a pill on
-> `/runs/:id`. Full specification: [`task-runner.md § Base branch & merge-back`](task-runner.md#base-branch--merge-back-b1b2b3).
+> `/run/:id`. Full specification: [`task-runner.md § Base branch & merge-back`](task-runner.md#base-branch--merge-back-b1b2b3).
 
 ### [3] Branch setup
 
@@ -353,7 +353,7 @@ refresh.
 
 ### Task ran but no commit appeared
 
-Likely `status='no-op'` (no file changes) — check `/runs/<id>`.
+Likely `status='no-op'` (no file changes) — check `/run/<id>`.
 The agent ran, replied, but didn't write anything. If that's
 wrong, inspect the agent's reply: it may have described changes
 without actually calling fs-cli's `edit_file`.
@@ -362,7 +362,7 @@ without actually calling fs-cli's `edit_file`.
 
 ## See also
 
-- [`docs/tasks.md`](tasks.md) — task model reference
+- [`docs/task.md`](tasks.md) — task model reference
 - [`docs/task-runner.md`](task-runner.md) — orchestration
 - `src/lib/cron/runner.ts` — the implementation
 - `src/lib/branch-policy.ts` — policy resolver

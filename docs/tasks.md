@@ -7,9 +7,9 @@ row with the agent's output, diff stats, and a status.
 Tasks live in the `Task` table (mapped to SQLite `CronJob` for
 backward compat). The management UI is at:
 
-- `/tasks`          — list / filter / search
-- `/tasks/new`      — create
-- `/tasks/[id]`     — detail, run history, "Run now"
+- `/task`          — list / filter / search
+- `/task/new`      — create
+- `/task/[id]`     — detail, run history, "Run now"
 
 ---
 
@@ -26,7 +26,7 @@ fix") that doesn't know its project until invoked. Generic tasks
 are forbidden from cron (no implicit project context) and from the
 push pipeline (no repo to push to).
 
-### Visual taxonomy on `/tasks`
+### Visual taxonomy on `/task`
 
 Task kind is **two-dimensional** and rendered with two independent
 channels on the list:
@@ -41,7 +41,7 @@ shown with an amber border **and** a violet pill, a project worker
 has a sky border and no pill. The legend above the list documents
 both axes.
 
-### Generic-task invariants (enforced in `/api/tasks`)
+### Generic-task invariants (enforced in `/api/task`)
 
 When `projectPath = null`:
 
@@ -148,7 +148,7 @@ Two independent triggers:
   schedule expressions against `now()` in each task's timezone,
   and fires `runTask(id, { trigger:'cron' })`.
 - **Manual**: the UI's "Run now" button hits
-  `POST /api/tasks/:id/run`, which calls
+  `POST /api/task/:id/run`, which calls
   `runTask(id, { trigger:'manual', triggeredBy:<email> })`.
 
 Both dispatch the same `runTask` function in `src/lib/cron/
@@ -164,7 +164,7 @@ Every run row carries:
 | `trigger`     | `cron` / `manual` / `mcp` / `null` (pre-2026-04-22 legacy) |
 | `triggeredBy` | cron: `null` · manual: OIDC email or `'ui'` · mcp: parent task name |
 
-Surfaced as a coloured pill on `/runs`.
+Surfaced as a coloured pill on `/run`.
 
 ---
 
@@ -202,7 +202,7 @@ REPLACES (not appends) the stored prompt for that call only. See
 
 ## Creating a task
 
-UI: `/tasks/new`. API: `POST /api/tasks`.
+UI: `/task/new`. API: `POST /api/task`.
 
 ### Required at minimum
 
@@ -239,7 +239,7 @@ expression, the scheduler fires it.
 
 ### Manually (UI)
 
-1. Go to `/tasks/:id` or find the row on `/tasks`.
+1. Go to `/task/:id` or find the row on `/task`.
 2. Click **Run now**.
 3. For a bound task: dispatches immediately.
    For a generic task: a popover asks you to pick a project.
@@ -270,10 +270,10 @@ See [`docs/task-runner.md`](task-runner.md). Three tools:
 
 | Surface              | Shows                                   |
 |----------------------|-----------------------------------------|
-| `/tasks`             | list with last run status, next fire    |
-| `/tasks/:id`         | full config dump, live run status, run history |
-| `/runs`              | global run log, filters, tree view      |
-| `/runs/:id`          | single run: output, diff, branch/commit, PR link |
+| `/task`             | list with last run status, next fire    |
+| `/task/:id`         | full config dump, live run status, run history |
+| `/run`              | global run log, filters, tree view      |
+| `/run/:id`          | single run: output, diff, branch/commit, PR link |
 | Teams webhook        | push/no-op/failure notification per run |
 
 ---

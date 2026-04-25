@@ -4,10 +4,10 @@ import { useState } from 'react';
 
 /**
  * Wraps children in an <a>-like clickable region that:
- *   1. POSTs to /api/conversations/:id/open (sets project cookie)
+ *   1. POSTs to /api/conversation/:id/open (sets project cookie)
  *   2. Navigates to /chat?id=:id
  *
- * A plain <Link href="/api/conversations/:id/open"> cannot be used because:
+ * A plain <Link href="/api/conversation/:id/open"> cannot be used because:
  *   - Next.js may prefetch the GET on hover/visibility, firing the
  *     cookie-mutating side-effect for every card in the list;
  *   - The last-prefetched card's project would win, and clicking ANY
@@ -38,7 +38,7 @@ export function OpenConversationLink({
     if (busy) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/conversations/${conversationId}/open`, {
+      const r = await fetch(`/api/conversation/${conversationId}/open`, {
         method: 'POST',
       });
       if (!r.ok) throw new Error(`open failed: HTTP ${r.status}`);

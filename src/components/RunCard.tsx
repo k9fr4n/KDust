@@ -11,8 +11,8 @@
  *
  * Always-visible pin/delete action cluster (no hover gate) — same
  * UX as ConversationCard. Actions hit:
- *   * POST   /api/runs/:id/pin    { pinned: boolean }
- *   * DELETE /api/runs/:id
+ *   * POST   /api/run/:id/pin    { pinned: boolean }
+ *   * DELETE /api/run/:id
  * and publish cross-tab events on the shared conversations bus so
  * sibling tabs refresh without a manual reload.
  */
@@ -70,7 +70,7 @@ export function RunCard({ run }: { run: RunCardData }) {
     setBusy(true);
     const next = !pinned;
     try {
-      const r = await fetch(`/api/runs/${run.id}/pin`, {
+      const r = await fetch(`/api/run/${run.id}/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pinned: next }),
@@ -92,7 +92,7 @@ export function RunCard({ run }: { run: RunCardData }) {
     if (!confirm('Delete this run from history?')) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/runs/${run.id}`, { method: 'DELETE' });
+      const r = await fetch(`/api/run/${run.id}`, { method: 'DELETE' });
       if (r.ok) {
         router.refresh();
         publishConvEvent({ type: 'run-deleted', id: run.id });

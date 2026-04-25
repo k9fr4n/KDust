@@ -38,6 +38,32 @@ let currentAbort: AbortController | null = null;
 const LONG_POLL_TIMEOUT_SEC = 25;
 const MAX_BACKOFF_MS = 60_000;
 
+// ---- in-memory update_id dedup (Franck 2026-04-25 23:00) ----
+//
+// Defence-in-depth against the bot replying multiple times to
+// the same user message. The persisted offset SHOULD already
+// guarantee at-most-once delivery within the process, but in
+// the wild we observed duplicate replies (suspected: two KDust
+// instances racing on the same bot token, or a stale webhook).
+//
+// We keep a sliding window of the last N processed update_ids;
+// anything seen again is silently dropped. N=512 is generous
+// enough that even a busy chat won't lose deduping memory
+// before the same id has cycled out of Telegram's buffer (24h).
+const recentUpdateIds = new Set<number>();
+const RECENT_MAX = 512;
+function rememberUpdateId(id: number): boolean {
+  if (recentUpdateIds.has(id)) return false; // already seen
+  recentUpdateIds.add(id);
+  if (recentUpdateIds.size > RECENT_MAX) {
+    // Drop oldest \u2014 Set iteration is insertion-order so the
+    // first key is the oldest. This keeps the cap O(1) per add.
+    const oldest = recentUpdateIds.values().next().value;
+    if (oldest !== undefined) recentUpdateIds.delete(oldest);
+  }
+  return true;
+}
+
 /**
  * On first activation (offset stored = 0) Telegram would replay
  * up to 24h of buffered updates \u2014 typically the operator's test
@@ -137,6 +163,17 @@ async function loop(): Promise<void> {
         maxId = Math.max(maxId, u.update_id);
         const msg = u.message ?? u.edited_message;
         if (!msg) continue;
+        // Dedup: if we've already processed this update_id in
+        // this process lifetime, skip silently. Cheap insurance
+        // against infinite replies if the offset advance is
+        // somehow defeated by a parallel poller, a stale
+        // webhook, or any other source of duplicate delivery.
+        if (!rememberUpdateId(u.update_id)) {
+          console.warn(
+            `[telegram] dedup: dropping duplicate update_id=${u.update_id}`,
+          );
+          continue;
+        }
         try {
           await handleTelegramMessage(msg);
         } catch (e) {
@@ -208,12 +245,34 @@ export async function startTelegramBridge(): Promise<void> {
   try {
     const me = await getMe();
     console.log(
-      `[telegram] bridge starting as @${me.username ?? me.first_name} (id=${me.id})`,
+      `[telegram] bridge starting as @${me.username ?? me.first_name} (id=${me.id}) pid=${process.pid}`,
     );
   } catch (e) {
     console.warn(
       `[telegram] getMe at boot failed: ${e instanceof Error ? e.message : e}`,
     );
+  }
+  // Detect a stale webhook: if one is configured, getUpdates
+  // returns 409 Conflict on every call. Surface it loudly at
+  // boot so the operator knows to deleteWebhook \u2014 silent
+  // failure here was a real footgun while debugging.
+  try {
+    const token = process.env.KDUST_TELEGRAM_BOT_TOKEN;
+    if (token) {
+      const res = await fetch(
+        `https://api.telegram.org/bot${token}/getWebhookInfo`,
+      );
+      const j = (await res.json()) as { result?: { url?: string } };
+      if (j.result?.url) {
+        console.error(
+          `[telegram] WEBHOOK ACTIVE on this bot (${j.result.url}) \u2014 ` +
+            'getUpdates will keep returning 409. Run ' +
+            '`curl -s "https://api.telegram.org/bot$TOKEN/deleteWebhook"` once.',
+        );
+      }
+    }
+  } catch {
+    // best effort
   }
   started = true;
   stopRequested = false;

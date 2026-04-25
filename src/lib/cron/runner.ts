@@ -20,6 +20,7 @@ import {
   pushBranch,
   checkoutExistingBranch,
   mergeFastForward,
+  deleteRemoteBranch,
 } from '../git';
 
 /**
@@ -418,6 +419,27 @@ export interface RunTaskOptions {
    * Unset / null (the common case) = historical behaviour.
    */
   postMergeTargetBranch?: string;
+  /**
+   * Skip pushing this run's own branch to origin (Franck 2026-04-25).
+   *
+   * Used for orchestrator chains where the child's commits are
+   * destined to reach origin via the orchestrator's branch through
+   * B3 fast-forward merge \u2014 pushing the child branch separately
+   * just clutters origin with redundant refs (one per intermediate
+   * step in a 3-stage pipeline).
+   *
+   * When enabled:
+   *   - step [8] commits locally then SKIPS pushBranch
+   *   - step [8b] PR auto-open is skipped (no remote branch to PR)
+   *   - step [8c] B3 still runs, merging from the LOCAL child
+   *     branch into the orchestrator's branch and pushing only that
+   *   - if B3 fails (refused / errored), step [8c] FALLS BACK to
+   *     pushing the child branch so the work isn't stranded
+   *
+   * The MCP layer auto-enables this when postMergeTargetBranch is
+   * set; callers can still force-push by passing keep_child_branch.
+   */
+  skipChildPush?: boolean;
 }
 
 /** Defend in depth against shell-injection via branch names even
@@ -1107,6 +1129,12 @@ export async function runTask(
     if (!commitSha) throw new Error('commitAll returned null despite diff being non-empty');
     console.log(`[cron] commit ${commitSha.slice(0, 8)}`);
 
+    // Tracks whether step [8] actually pushed to origin. Drives:
+    //   - step [8b] PR opening (no point opening a PR for a branch
+    //     that doesn't exist on origin)
+    //   - step [8c] B3 fallback-push behaviour (we may still need
+    //     to push if the merge-back fails)
+    let pushedToOrigin = false;
     if (!job.dryRun) {
       // Non-null assertion: we only reach this block via the
       // pushEnabled=true path (prompt-only short-circuit at [5b]
@@ -1115,10 +1143,21 @@ export async function runTask(
       if (protectedList.includes(branch)) {
         throw new Error(`aborting push: target branch "${branch}" is protected`);
       }
-      await setPhase('pushing', `git push origin ${branch}`);
-      const push = await pushBranch(project.name, branch, job.branchMode === 'stable');
-      if (!push.ok) throw new Error(`push failed: ${push.error}\n${push.output}`);
-      console.log(`[cron] pushed ${branch}`);
+      if (opts?.skipChildPush) {
+        // B3 will FF-merge our work into the orchestrator's branch
+        // and push only that, keeping origin tidy. Local branch
+        // stays for the merge step. Franck 2026-04-25.
+        console.log(
+          `[cron] skipChildPush=true, deferring push to B3 merge-back ` +
+            `(branch="${branch}" stays local for now)`,
+        );
+      } else {
+        await setPhase('pushing', `git push origin ${branch}`);
+        const push = await pushBranch(project.name, branch, job.branchMode === 'stable');
+        if (!push.ok) throw new Error(`push failed: ${push.error}\n${push.output}`);
+        pushedToOrigin = true;
+        console.log(`[cron] pushed ${branch}`);
+      }
     } else {
       console.log(`[cron] dryRun=true, skipping push`);
     }
@@ -1132,7 +1171,11 @@ export async function runTask(
     let prUrl: string | null = null;
     let prNumber: number | null = null;
     let prState: string | null = null;
-    if (!job.dryRun && branch) {
+    // Only attempt PR auto-open when we ACTUALLY pushed the branch.
+    // skipChildPush=true means the branch is local-only at this
+    // point; opening a PR against a non-existent remote branch
+    // would be a 422 from the platform anyway. Franck 2026-04-25.
+    if (!job.dryRun && branch && pushedToOrigin) {
       const platformTarget = project.prTargetBranch ?? policy.baseBranch;
       const resolved = resolveGitPlatform({
         gitUrl: project.gitUrl,
@@ -1237,6 +1280,30 @@ export async function runTask(
               `FF-only merge refused (non-linear history or divergent ` +
               `commits). Orchestrator must reconcile manually. Git output:\n${merge.output}`;
             console.warn(`[cron] B3: ${mergeBackDetails}`);
+            // Fallback-push the child branch when skipChildPush
+            // was active so the work isn't stranded local-only.
+            // Without this, a B3 refusal would lose the run's
+            // commits to origin entirely \u2014 they'd only exist on
+            // the worker's filesystem. Franck 2026-04-25.
+            if (opts?.skipChildPush && !pushedToOrigin) {
+              console.warn(
+                `[cron] B3 refused: fallback-pushing child branch ` +
+                  `"${branch}" to preserve work on origin`,
+              );
+              const fallback = await pushBranch(
+                project.name,
+                branch,
+                job.branchMode === 'stable',
+              );
+              if (fallback.ok) {
+                pushedToOrigin = true;
+                mergeBackDetails +=
+                  `\n\nFallback: child branch "${branch}" pushed to origin so the work is recoverable.`;
+              } else {
+                mergeBackDetails +=
+                  `\n\nFallback push ALSO failed: ${fallback.error}. Work is local-only on the worker.`;
+              }
+            }
           } else {
             const pushBack = await pushBranch(project.name, mergeTarget, false);
             if (!pushBack.ok) {
@@ -1247,6 +1314,42 @@ export async function runTask(
               mergeBackStatus = 'ff';
               mergeBackDetails = `fast-forward merged ${branch} into ${mergeTarget} and pushed`;
               console.log(`[cron] B3: ${mergeBackDetails}`);
+              // From the run's POV, its commits ARE on origin now
+              // (via mergeTarget). Useful state for downstream
+              // logic like Teams cards that report "pushed yes/no".
+              // The child branch itself is still local-only when
+              // skipChildPush was active \u2014 that's the whole point
+              // (keeping origin tidy).
+              pushedToOrigin = true;
+
+              // Orchestrator-chain cleanup (Franck 2026-04-25):
+              // when this run was part of an auto-inherit chain
+              // (skipChildPush=true), its own branch may have been
+              // auto-pushed to origin by the resolveB2B3 helper of
+              // a downstream child needing a base ref. Now that
+              // the work has reached origin via mergeTarget, that
+              // transit branch is a redundant ref. Delete it so a
+              // 3-level orchestration shows ONE branch on origin
+              // instead of N. Idempotent: noop if the branch was
+              // never pushed (the common leaf-worker case).
+              if (opts?.skipChildPush) {
+                const cleanup = await deleteRemoteBranch(project.name, branch);
+                if (cleanup.ok) {
+                  if (!cleanup.error) {
+                    console.log(
+                      `[cron] B3 cleanup: deleted origin/${branch} (transit branch, work reached origin via ${mergeTarget})`,
+                    );
+                    mergeBackDetails += `; cleaned up origin/${branch}`;
+                  } else {
+                    // soft-success noop branch (was never pushed)
+                    console.log(`[cron] B3 cleanup: ${cleanup.error}`);
+                  }
+                } else {
+                  console.warn(
+                    `[cron] B3 cleanup: failed to delete origin/${branch}: ${cleanup.error}`,
+                  );
+                }
+              }
             }
           }
         }

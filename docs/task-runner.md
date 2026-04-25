@@ -384,6 +384,37 @@ run_task / dispatch_task called
    4. source='auto-inherit'
 ```
 
+### Origin tidiness: skip-child-push + transit cleanup
+
+When B3 will FF-merge a child's work into the orchestrator's
+branch, KDust automatically suppresses the per-child push to
+origin (Franck 2026-04-25). The commits reach origin via the
+orchestrator's branch instead, keeping the remote clean:
+
+| Before | After |
+|--------|-------|
+| 3-step orchestration → 3 branches on origin | → 1 branch on origin |
+
+Mechanism (per intermediate orchestrator level):
+
+1. `resolveB2B3` auto-pushes the parent's branch so the child's
+   `git reset --hard origin/<base>` can resolve.
+2. Child runs with `skipChildPush=true`: step [8] commits locally,
+   does NOT push to origin.
+3. Step [8c] B3 FF-merges the LOCAL child branch into the
+   orchestrator's branch and pushes only that.
+4. On B3 FF success, the runner ALSO deletes the run's own
+   transit branch on origin (idempotent: no-op for leaf workers
+   that were never pushed).
+
+Failure modes preserve the work:
+
+- B3 refused (non-linear) → fallback-pushes the child branch so
+  the commits exist on origin somewhere; operator reconciles
+  manually.
+- B3 push failed → child branch NOT cleaned up; details surfaced
+  in `mergeBackDetails`.
+
 ### B3 merge-back (sync `run_task` only)
 
 After a successful child run on `run_task`, and **before the

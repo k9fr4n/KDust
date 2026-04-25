@@ -476,6 +476,45 @@ export async function mergeFastForward(
  * re-pushing an already-synced ref (informational; push itself is
  * idempotent, but skipping the network round-trip is a small win).
  */
+/**
+ * Delete a branch on origin. Idempotent: returns ok=true when the
+ * branch already doesn't exist remotely (git push --delete prints
+ * a "remote ref does not exist" error on stderr but still exits 1,
+ * which we map to a soft success).
+ *
+ * Used by the orchestrator-chain cleanup (Franck 2026-04-25): when
+ * a transit branch's commits have been FF-merged into its parent
+ * and pushed via the parent's branch, the transit branch on origin
+ * becomes a redundant ref. Deleting it keeps the remote tidy \u2014 a
+ * 3-level orchestration ends up with ONE branch on origin instead
+ * of three.
+ */
+export async function deleteRemoteBranch(
+  projectName: string,
+  branch: string,
+): Promise<GitSyncResult> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  const r = await runGit(['push', 'origin', '--delete', branch], cwd);
+  if (r.code === 0) {
+    return { ok: true, output: r.out };
+  }
+  // Map "remote ref does not exist" to soft success so callers
+  // can call this unconditionally without pre-checking branch
+  // existence (which would race anyway).
+  if (/remote ref does not exist|unable to delete/i.test(r.out)) {
+    return {
+      ok: true,
+      output: r.out,
+      error: 'noop: branch was not on origin',
+    };
+  }
+  return {
+    ok: false,
+    output: r.out,
+    error: `git push origin --delete ${branch} exited ${r.code}`,
+  };
+}
+
 export async function branchExistsOnOrigin(
   projectName: string,
   branch: string,

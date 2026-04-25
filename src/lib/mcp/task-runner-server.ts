@@ -681,6 +681,15 @@ export async function startTaskRunnerServer(
         baseBranchOverride: b2.baseBranchOverride,
         baseBranchOverrideSource: b2.baseBranchOverrideSource,
         postMergeTargetBranch: b2.postMergeTargetBranch,
+        // When B3 will merge the child's work back into the
+        // orchestrator's branch, the per-child push to origin
+        // is redundant \u2014 the commits reach origin via the
+        // orchestrator's branch instead. Skipping the push keeps
+        // origin tidy (one branch per orchestrator chain instead
+        // of one per pipeline step). The runner falls back to
+        // pushing the child branch if B3 ends up refused, so
+        // work is never stranded. Franck 2026-04-25.
+        skipChildPush: !!b2.postMergeTargetBranch,
         trigger: 'mcp',
         triggeredBy: parentTaskName,
         onRunCreated: (id) => {

@@ -1,6 +1,6 @@
 'use client';
 /**
- * Flat / Tree view toggle for /runs.
+ * Flat / Tree view toggle for /run.
  *
  * Why a dedicated client component instead of plain <Link>s?
  * We want the chosen view to persist across navigations from the

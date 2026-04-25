@@ -31,7 +31,7 @@ export const runtime = 'nodejs';
  *                          should surface this as a disabled
  *                          button with an explanatory tooltip;
  *                          users wanting to rerun in that case
- *                          can go to /tasks/:id/run manually and
+ *                          can go to /task/:id/run manually and
  *                          pick a project.
  *
  * Response:

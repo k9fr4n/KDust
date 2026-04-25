@@ -8,7 +8,7 @@ import { loadTokens } from './tokens';
  * after a full auth roundtrip in src/lib/dust/workos.ts.
  *
  * Used by /api/tasks/:id/run to populate TaskRun.triggeredBy so the
- * /runs page can show "manual by <email>". Never throws — any
+ * /run page can show "manual by <email>". Never throws — any
  * parse error yields null.
  *
  * Why not a proper session middleware? KDust is currently

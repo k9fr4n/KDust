@@ -40,7 +40,7 @@ const activeRuns = new Map<string, AbortController>();
  * misleading for cascade-triggered or timeout aborts.
  *
  * Surfaced through:
- *   - TaskRun.phaseMessage (what the UI shows on /runs)
+ *   - TaskRun.phaseMessage (what the UI shows on /run)
  *   - TaskRun.error (long-form, full context)
  *   - Teams card subtitle
  */
@@ -107,7 +107,7 @@ export function cancelTaskRun(
  *     (same path as a user-initiated cancel → ends as 'aborted')
  *   - if it's marked 'running' in DB but not in memory (ghost row
  *     from a previous process), mark it 'aborted' directly so the
- *     /runs UI doesn't show a stuck spinner forever
+ *     /run UI doesn't show a stuck spinner forever
  *   - if it's 'pending' (scheduled but waiting on concurrency lock),
  *     mark it 'aborted' directly — no controller has been created yet
  *
@@ -344,7 +344,7 @@ export interface RunTaskOptions {
   /**
    * Optional human-readable actor tag associated with `trigger`:
    *   - 'manual' → user email / session id (best effort)
-   *   - 'mcp'    → parent task name (for quick display in /runs)
+   *   - 'mcp'    → parent task name (for quick display in /run)
    *   - 'cron'   → left null (the schedule string is already on Task)
    */
   triggeredBy?: string | null;
@@ -394,7 +394,7 @@ export interface RunTaskOptions {
   baseBranchOverride?: string;
   /**
    * Provenance of `baseBranchOverride`. Persisted on TaskRun
-   * (baseBranchSource column) so the /runs UI can display a pill
+   * (baseBranchSource column) so the /run UI can display a pill
    * next to the base branch name ("auto-inherit" / "explicit").
    * Ignored when `baseBranchOverride` is unset.
    */
@@ -605,7 +605,7 @@ export async function runTask(
     );
     policy.baseBranch = override;
     // Flag the source so downstream consumers (Teams card,
-    // /runs detail) can spot the override at a glance.
+    // /run detail) can spot the override at a glance.
     policy.source.baseBranch = 'task';
   }
 
@@ -800,7 +800,7 @@ export async function runTask(
     const agentPrompt = buildAutomationPrompt({ ...job, prompt: effectivePrompt }, policy);
     const conv = await createDustConversation(job.agentSId, agentPrompt, convTitle, mcpServerIds, 'cli');
     // Stamp the TaskRun with the Dust conversation sId ASAP so the
-    // /runs page can show a "Chat" link even if the run later fails
+    // /run page can show a "Chat" link even if the run later fails
     // mid-stream. Fire-and-forget — not worth aborting for.
     db.taskRun
       .update({
@@ -810,7 +810,7 @@ export async function runTask(
       .catch(() => {});
     // Create the local Conversation row early (Franck 2026-04-24
     // 18:51). Previously this happened only AFTER the agent stream
-    // completed (~1-10 min later), so the /runs/:id "Open chat"
+    // completed (~1-10 min later), so the /run/:id "Open chat"
     // button was hidden for the entire duration of the run. Now we
     // persist the conv + user message immediately; the agent
     // message is appended at the end of the stream. If the run
@@ -887,7 +887,7 @@ export async function runTask(
     );
     let streamErr: string | null = null;
 
-    // Periodically flush the partial agent output to DB so the /tasks/:id
+    // Periodically flush the partial agent output to DB so the /task/:id
     // page can show real-time streaming text (without needing an SSE route
     // of its own). Throttled to ~500ms to avoid hammering SQLite.
     //
@@ -895,7 +895,7 @@ export async function runTask(
     // of-thought tokens as generation_tokens with
     // classification='chain_of_thought'. They're delivered through
     // the same onEvent callback under kind='cot'. We accumulate
-    // them in `thinking` and flush alongside `partial` so the /runs
+    // them in `thinking` and flush alongside `partial` so the /run
     // detail page can surface the reasoning in a collapsible
     // section. Same 500ms throttle; a single flush writes both
     // columns to minimise SQLite write amplification.
@@ -964,7 +964,7 @@ export async function runTask(
     //
     // The Conversation row + user message were created at the
     // BEGINNING of the Dust call (Franck 2026-04-24 18:51) so the
-    // "Open chat" button on /runs/:id is live from second one. Here
+    // "Open chat" button on /run/:id is live from second one. Here
     // we only need to append the agent message with the final
     // content and the stream stats. Kept robust against the rare
     // case where the early upsert failed (e.g. DB hiccup): we
@@ -1212,7 +1212,7 @@ export async function runTask(
           `**Diff:** ${filesChanged} file(s), +${linesAdded} / -${linesRemoved} lines\n` +
           `**Commit:** \`${commitSha?.slice(0, 12) ?? 'n/a'}\`\n` +
           `**Base:** \`${platformTarget}\`\n` +
-          `**KDust run:** ${process.env.KDUST_PUBLIC_URL ? `${process.env.KDUST_PUBLIC_URL}/runs/${run.id}` : `run ${run.id}`}\n\n` +
+          `**KDust run:** ${process.env.KDUST_PUBLIC_URL ? `${process.env.KDUST_PUBLIC_URL}/run/${run.id}` : `run ${run.id}`}\n\n` +
           `---\n\n` +
           `**Agent summary**\n\n${agentText.slice(0, 2000)}${agentText.length > 2000 ? '\n\n\u2026 (truncated)' : ''}`;
         const r = await resolved.adapter.openPullRequest({
@@ -1430,7 +1430,7 @@ export async function runTask(
     const durationMs = Date.now() - startedAt;
     if (childFailureSummary) {
       // Failure path: keep all the computed metadata (diff, commit,
-      // branch, merge-back) so /runs/:id remains informative, but
+      // branch, merge-back) so /run/:id remains informative, but
       // flip status/phase/error/output so the chain reflects the
       // real outcome. Also explicitly set Task.lastStatus='failed'
       // so the task list doesn't lie at a glance.
@@ -1443,7 +1443,7 @@ export async function runTask(
           error:
             `Orchestrator's own agent completed, but one or more dispatched ` +
             `children ended in failure/abort: ${childFailureSummary}. ` +
-            `Inspect the failed children's /runs pages for the root cause.`,
+            `Inspect the failed children's /run pages for the root cause.`,
           branch,
           commitSha,
           filesChanged,
@@ -1618,7 +1618,7 @@ export async function runTask(
     );
   } finally {
     // Always release the per-task lock so the next scheduler fire (or
-    // a manual /runs trigger) can proceed. Safe even if the try-block
+    // a manual /run trigger) can proceed. Safe even if the try-block
     // returned early before adding to the set.
     activeTaskIds.delete(taskId);
     // Release the task-runner MCP server handle if this run had one.

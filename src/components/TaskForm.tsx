@@ -69,7 +69,7 @@ export type CronFormValues = {
   protectedBranches: string | null;
   /**
    * Wall-clock runtime cap in ms (Franck 2026-04-23 00:23). Null =
-   * inherit from env defaults (see docs/tasks.md). Set only when a
+   * inherit from env defaults (see docs/task.md). Set only when a
    * task needs a tighter or looser bound than the project-wide
    * default. Clamp [30000, 21600000] applied in runner.ts.
    */
@@ -152,7 +152,7 @@ export function TaskForm({
     }
   }, [isEdit]);
 
-  // Secret bindings drafted on the /tasks/new page (deferred mode
+  // Secret bindings drafted on the /task/new page (deferred mode
   // of TaskSecretBindings). Flushed via /api/tasks/:id/secrets once
   // the task row has been created. In edit mode the child component
   // persists directly and this state is unused.
@@ -193,7 +193,7 @@ export function TaskForm({
     // have the new task id. One POST per binding — non-batched so that
     // partial failures (eg. deleted secret name) are reported but don't
     // wipe sibling bindings. Any failure here surfaces the task id so
-    // the user can finish the wiring from /tasks/:id/edit.
+    // the user can finish the wiring from /task/:id/edit.
     if (!isEdit && pendingBindings.length > 0) {
       let created: { task?: { id?: string } };
       try {
@@ -227,16 +227,16 @@ export function TaskForm({
         setErr(
           `Task created but ${failures.length} secret binding(s) failed:\n` +
             failures.join('\n') +
-            `\nFinish the wiring from /tasks/${newId}/edit.`,
+            `\nFinish the wiring from /task/${newId}/edit.`,
         );
-        router.push(`/tasks/${newId}/edit`);
+        router.push(`/task/${newId}/edit`);
         router.refresh();
         return;
       }
     }
 
     setLoading(false);
-    router.push(isEdit ? `/tasks/${cronId}` : '/tasks');
+    router.push(isEdit ? `/task/${cronId}` : '/task');
     router.refresh();
   };
 
@@ -508,7 +508,7 @@ export function TaskForm({
         {/* ----- Command runner toggle (Franck 2026-04-21 13:39) -----
             Opt-in to the KDust-side command-runner MCP server. Attaches
             the `run_command` tool whose every invocation is persisted
-            in the Command table (visible on /runs/[id]). Safer than
+            in the Command table (visible on /run/[id]). Safer than
             fs-cli\u0027s bundled run_command because:
               - the transport is owned by KDust (no mid-run SDK
                 re-inits)
@@ -768,7 +768,7 @@ export function TaskForm({
         {isEdit && (
           <button
             type="button"
-            onClick={() => router.push(`/tasks/${cronId}`)}
+            onClick={() => router.push(`/task/${cronId}`)}
             className="inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             Cancel

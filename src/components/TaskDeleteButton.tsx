@@ -4,7 +4,7 @@ import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 /**
- * Delete button for /tasks/[id]. Hidden when the task is mandatory
+ * Delete button for /task/[id]. Hidden when the task is mandatory
  * (auto-provisioned audit tasks — see src/lib/audit/provision.ts) so
  * the user doesn't click and hit the expected 403. The detail page's
  * existing `mandatory` badge already explains why it can't be deleted.
@@ -43,7 +43,7 @@ export function TaskDeleteButton({
     }
     setBusy(false);
     if (r.ok) {
-      router.push('/tasks');
+      router.push('/task');
       router.refresh();
       return;
     }

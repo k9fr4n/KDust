@@ -3,11 +3,11 @@ import { useEffect, useState } from 'react';
 
 /**
  * LiveDuration — ticks every second while a run is in flight so
- * the /runs table and /runs/:id header show an ever-increasing
+ * the /run table and /run/:id header show an ever-increasing
  * elapsed time instead of a static dash. Once `finishedAt` is
  * set, the timer stops and the final wall-clock is displayed.
  *
- * Franck 2026-04-24 18:51: "sur /runs, pendant le running on ne
+ * Franck 2026-04-24 18:51: "sur /run, pendant le running on ne
  * voit pas le temps passé".
  *
  * Props (all ISO strings to stay RSC-friendly):
@@ -21,7 +21,7 @@ import { useEffect, useState } from 'react';
  *                    defensive).
  *
  * Implementation notes:
- *   - One interval per mounted instance. A /runs table with 100
+ *   - One interval per mounted instance. A /run table with 100
  *     rows pays 100 intervals — acceptable (setInterval is cheap,
  *     ~neglig. CPU), and simpler than a shared tick broadcaster.
  *   - Uses Date.now() client-side; the server-rendered timestamp

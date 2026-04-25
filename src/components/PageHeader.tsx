@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
  *
  * Replaces the per-page `<h1 class="text-2xl font-bold">Title
  * <span class="ml-2 ...">scope</span></h1>` hand-rolled structure
- * that drifted across /conversations, /tasks, /runs, /projects etc.
+ * that drifted across /conversation, /task, /run, /projects etc.
  *
  * Layout:
  *   [icon] Title · scope           [right-slot (counters, actions)]

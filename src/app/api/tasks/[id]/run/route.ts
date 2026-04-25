@@ -66,7 +66,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // Provenance: always 'manual' for this endpoint (the only way to
   // reach it is a human clicking "Run" in the UI or curl-ing it on
   // purpose). We try to surface an actor identity from the OIDC
-  // session email when available so the /runs page can show "by
+  // session email when available so the /run page can show "by
   // <email>"; fall back to 'ui' for pre-OIDC flows or CLI curl
   // calls. Best effort — never blocks the dispatch on a lookup.
   let triggeredBy: string | null = 'ui';

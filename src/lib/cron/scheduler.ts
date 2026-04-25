@@ -82,7 +82,7 @@ export async function reloadScheduler(): Promise<void> {
           // very task is still in flight. `protect: true` already
           // guards against overlaps of the SAME Cron handle, but
           // isTaskRunActive() also protects against manual runs
-          // triggered via /tasks/:id/run right before the fire.
+          // triggered via /task/:id/run right before the fire.
           if (isTaskRunActive(t.id)) {
             console.log(`[scheduler] task ${t.id} fire skipped: previous run still active`);
             return;

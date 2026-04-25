@@ -29,7 +29,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   // wrapper explicitly to "viewport minus the sticky Nav (h-14)".
   //
   // Why negative margins rather than editing RootLayout:
-  // touching the root affects /conversations, /agents, /projects,
+  // touching the root affects /conversation, /agents, /projects,
   // /admin, / \u2026 which all rely on that same breathing room.
   // Cancelling locally keeps the diff scoped to /chat.
   return (

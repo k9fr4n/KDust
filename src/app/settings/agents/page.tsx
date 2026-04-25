@@ -569,7 +569,7 @@ export default function AgentsSettingsPage() {
       {/* Delete modal. Name-match gate intentional: agents may be
           referenced by tasks, by project default-agent bindings, or
           by pinned conversations \u2014 archiving one is a high-impact
-          operation. We mirror the pattern from /tasks/:id delete. */}
+          operation. We mirror the pattern from /task/:id delete. */}
       {deleting && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"

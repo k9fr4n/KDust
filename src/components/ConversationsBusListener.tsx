@@ -3,7 +3,7 @@
  * ConversationsBusListener — tiny headless component that subscribes
  * to the cross-tab conversations bus and triggers a router.refresh()
  * on any pin / delete event. Mount it once on server-rendered
- * conversation listings (`/`, `/conversations`) so they pick up
+ * conversation listings (`/`, `/conversation`) so they pick up
  * mutations performed on a sibling tab without requiring a manual
  * reload.
  *

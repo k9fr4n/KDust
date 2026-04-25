@@ -777,7 +777,7 @@ export async function startTaskRunnerServer(
       startHeartbeat(`child task "${child.name}" running`);
 
       // Trigger provenance: this dispatch is always 'mcp'. For the
-      // display tag we use the parent task's name so /runs can show
+      // display tag we use the parent task's name so /run can show
       // "mcp by <parentTaskName>" at a glance.
       const parentTaskName = await getParentTaskName();
 
@@ -881,7 +881,7 @@ export async function startTaskRunnerServer(
                     earlyRunId === null
                       ? `Child run row was not created within ${maxWaitMs}ms; ` +
                         `it may be held on a concurrency lock. Retry the same ` +
-                        `run_task call or inspect /runs in the UI.`
+                        `run_task call or inspect /run in the UI.`
                       : `Child run is still running. Call ` +
                         `wait_for_run({ run_id: "${earlyRunId}" }) ` +
                         `to block up to 55s and get the final result. ` +
@@ -1086,7 +1086,7 @@ export async function startTaskRunnerServer(
   // to launch N sibling tasks in parallel and move on without
   // blocking — e.g. "kick off three independent audits across
   // projects, I'll collect results later via wait_for_run or via
-  // /runs". That's what dispatch_task is for.
+  // /run". That's what dispatch_task is for.
   //
   // Contract:
   //   - Same validation as run_task (task resolution, project-arg
@@ -1100,7 +1100,7 @@ export async function startTaskRunnerServer(
   //     run_id: null} with a hint so the agent can retry.
   //   - The child keeps running in the background; use
   //     wait_for_run({ run_id }) to collect its result later, or
-  //     the /runs UI for a visual view.
+  //     the /run UI for a visual view.
   //
   // Background execution survives the orchestrator's end: the
   // MCP server is shut down when the orchestrator finishes, but
@@ -1251,7 +1251,7 @@ export async function startTaskRunnerServer(
                   hint:
                     `Child run row not created within 5s (likely waiting on a ` +
                     `concurrency lock). Dispatch is still in flight — check ` +
-                    `/runs in a moment or call dispatch_task again.`,
+                    `/run in a moment or call dispatch_task again.`,
                 },
                 null,
                 2,
@@ -1273,7 +1273,7 @@ export async function startTaskRunnerServer(
                 hint:
                   `Child is running detached. Call ` +
                   `wait_for_run({ run_id: "${capturedRunId}" }) later to ` +
-                  `collect its result, or inspect /runs in the UI.`,
+                  `collect its result, or inspect /run in the UI.`,
               },
               null,
               2,

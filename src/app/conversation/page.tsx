@@ -35,7 +35,7 @@ type SearchProps = {
 };
 
 /**
- * /conversations — Full list of chat conversations.
+ * /conversation — Full list of chat conversations.
  *
  * Filters (query string):
  *   ?agent=<sId>       restrict to a single agent
@@ -104,7 +104,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
           needed anymore. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search by title…" />
-        {(q || agentFilter) && <ClearFiltersLink href="/conversations" />}
+        {(q || agentFilter) && <ClearFiltersLink href="/conversation" />}
       </div>
 
       {allAgents.length > 1 && (
@@ -171,5 +171,5 @@ function buildHref({ agent, q, page }: { agent?: string; q?: string; page?: numb
   if (agent) qs.set('agent', agent);
   if (q) qs.set('q', q);
   if (page && page > 1) qs.set('page', String(page));
-  return `/conversations${qs.toString() ? `?${qs}` : ''}`;
+  return `/conversation${qs.toString() ? `?${qs}` : ''}`;
 }

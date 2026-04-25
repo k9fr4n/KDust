@@ -168,7 +168,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   //   explicit ?view=… wins → otherwise fall back to the
   //   `kdust_runs_view` cookie set by the RunsViewToggle → otherwise
   //   default to flat. This makes "Runs" in the sidebar (a bare
-  //   /runs link with no params) honour the user's last pick.
+  //   /run link with no params) honour the user's last pick.
   const cookieView = (await cookies()).get('kdust_runs_view')?.value;
   const view: ViewMode =
     sp.view === 'tree'
@@ -338,7 +338,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
     if (merged.view !== 'flat') qs.set('view', merged.view);
     if (merged.page > 1) qs.set('page', String(merged.page));
-    return `/runs${qs.toString() ? `?${qs}` : ''}`;
+    return `/run${qs.toString() ? `?${qs}` : ''}`;
   };
   // Tree ordering: DFS over the fetched runs. We preserve the
   // original top-level order (already sorted by SQLite per sort/dir
@@ -426,7 +426,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           (status/task/sort/dir) are preserved automatically. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search task name, branch, commit, status message…" />
-        {(q || statusFilter || taskFilter) && <ClearFiltersLink href="/runs" />}
+        {(q || statusFilter || taskFilter) && <ClearFiltersLink href="/run" />}
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4 text-xs">
@@ -439,7 +439,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           return (
             <FilterPill
               key={s}
-              href={`/runs${qs.toString() ? `?${qs}` : ''}`}
+              href={`/run${qs.toString() ? `?${qs}` : ''}`}
               active={active}
             >
               {s}
@@ -448,7 +448,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         })}
         {taskFilter && (
           <Link
-            href={`/runs${
+            href={`/run${
               new URLSearchParams({
                 ...(statusFilter ? { status: statusFilter } : {}),
                 ...(q ? { q } : {}),
@@ -539,7 +539,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       </span>
                     )}
                     {r.task ? (
-                      <Link href={`/tasks/${r.task.id}`} className="underline">
+                      <Link href={`/task/${r.task.id}`} className="underline">
                         {r.task.name}
                       </Link>
                     ) : (
@@ -555,7 +555,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                   <td className="text-xs font-mono text-slate-500">{r.task?.projectPath ?? '-'}</td>
                   <td className="text-xs">
                     {/* Started cell is the entry-point to the per-
-                        run detail page /runs/:id (full agent output,
+                        run detail page /run/:id (full agent output,
                         diff, git links, error traceback). Previously
                         a separate \"details \u2192\" column duplicated
                         the Task name link; both collapsed into this
@@ -652,7 +652,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
 
 /**
  * Clickable <th> for server-rendered column sorting. Mirrors the
- * implementation on /tasks so the two pages look and behave
+ * implementation on /task so the two pages look and behave
  * identically. Toggles direction on re-click, otherwise jumps to the
  * column's default direction (set in sortHref()).
  */

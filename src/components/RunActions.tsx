@@ -7,7 +7,7 @@ import { Square, RotateCw, Trash2, Loader2 } from 'lucide-react';
 /**
  * Per-run action cluster (Franck 2026-04-23 23:46).
  *
- * Lives in the Actions column of the /runs table. Renders a subset
+ * Lives in the Actions column of the /run table. Renders a subset
  * of buttons depending on the run's status so we never show
  * "Stop" on a finished row or "Rerun" on a still-running one:
  *
@@ -31,7 +31,7 @@ import { Square, RotateCw, Trash2, Loader2 } from 'lucide-react';
  * All actions refresh the page via router.refresh() so the new
  * status / new row / deletion shows up without a full reload. The
  * buttons include stopPropagation on every handler because
- * ClickableRunRow would otherwise navigate to /runs/:id — we want
+ * ClickableRunRow would otherwise navigate to /run/:id — we want
  * the row-click affordance to remain, just not on the action
  * buttons themselves.
  *

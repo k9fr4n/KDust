@@ -4,10 +4,10 @@ import { db } from '@/lib/db';
 export const runtime = 'nodejs';
 
 /**
- * GET /api/projects/:id/tasks
+ * GET /api/projects/:id/task
  *
  * List every Task attached to a project. Used by the project
- * dashboard (/projects/:id) to let the user jump to /tasks/:id for
+ * dashboard (/projects/:id) to let the user jump to /task/:id for
  * schedule/prompt edits.
  */
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {

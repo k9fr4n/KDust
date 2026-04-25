@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
  * Filter pill (Franck 2026-04-23 22:46).
  *
  * Unifies the filter-pill styling hand-rolled via `pillCls(active)`
- * on /conversations and inline class strings on /tasks, /runs.
+ * on /conversation and inline class strings on /task, /run.
  *
  * Two visual states:
  *   active:   solid brand fill, white text, bolder weight.

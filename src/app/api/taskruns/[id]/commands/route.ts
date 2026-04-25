@@ -8,13 +8,13 @@ export const runtime = 'nodejs';
  *
  * Returns the Command rows attached to a TaskRun, ordered by
  * startedAt ASC so callers render them chronologically. Used by
- * the /runs/:id page to live-poll the command list while the run
+ * the /run/:id page to live-poll the command list while the run
  * is in progress (Franck 2026-04-24 22:39) — before this endpoint
  * existed, the list was only materialised server-side at page
  * load and operators had to refresh to see new commands.
  *
  * Response shape matches the subset of Command columns the
- * /runs/:id page consumes; we intentionally DON'T return raw
+ * /run/:id page consumes; we intentionally DON'T return raw
  * stdout/stderr in full here because a single command can hold
  * up to KDUST_CMD_OUTPUT_MAX_BYTES of output, and the list is
  * polled at 1.5s — keeping the payload small protects the

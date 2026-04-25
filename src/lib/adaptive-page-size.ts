@@ -38,8 +38,8 @@ export async function getAdaptivePageSize(params: {
   /**
    * Vertical pixels between the #rows-anchor element and the
    * first actual row. Typical value:
-   *   - /runs, /tasks : ~36px (a table <thead> row)
-   *   - /conversations: 0    (no header; the anchor sits at the
+   *   - /run, /task : ~36px (a table <thead> row)
+   *   - /conversation: 0    (no header; the anchor sits at the
    *                           top of the first card)
    * Subtracted from the probe-measured availablePx before dividing
    * by row height.

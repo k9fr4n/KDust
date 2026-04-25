@@ -1,5 +1,5 @@
 /**
- * /runs/[id] — single-run detail page.
+ * /run/[id] — single-run detail page.
  *
  * Enriched 2026-04-19 13:10 (Franck): "ajoute le plus de
  * detail/stats possible". Beyond the basic TaskRun fields (status,
@@ -177,13 +177,13 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
     <div>
       {/* Breadcrumb */}
       <div className="mb-4 flex items-center gap-2 text-sm">
-        <Link href="/runs" className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600">
+        <Link href="/run" className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600">
           <ArrowLeft size={14} /> Back to runs
         </Link>
         {run.task && (
           <>
             <span className="text-slate-300">·</span>
-            <Link href={`/tasks/${run.task.id}`} className="text-slate-500 hover:text-brand-600">
+            <Link href={`/task/${run.task.id}`} className="text-slate-500 hover:text-brand-600">
               {run.task.name}
             </Link>
           </>
@@ -223,10 +223,10 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               name, but users asked for an explicit button-style
               affordance alongside \"Open chat\" so they can jump to
               the task's settings/prompt without going back to
-              /runs. */}
+              /run. */}
           {run.task && (
             <Link
-              href={`/tasks/${run.task.id}`}
+              href={`/task/${run.task.id}`}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
             >
               <Settings size={14} />
@@ -281,7 +281,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <div className="mb-2">
               <span className="text-slate-500 text-xs">▲ Parent run: </span>
               <Link
-                href={`/runs/${parentRun.id}`}
+                href={`/run/${parentRun.id}`}
                 className="underline font-mono text-xs hover:text-brand-500"
               >
                 {parentRun.id.slice(0, 8)}
@@ -302,7 +302,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                 {childRuns.map((c, i) => (
                   <li key={c.id} className="text-xs flex items-center gap-2">
                     <span className="text-slate-400 font-mono">#{i + 1}</span>
-                    <Link href={`/runs/${c.id}`} className="underline font-mono hover:text-brand-500">
+                    <Link href={`/run/${c.id}`} className="underline font-mono hover:text-brand-500">
                       {c.id.slice(0, 8)}
                     </Link>
                     <span className="font-mono">{c.task?.name ?? '(deleted)'}</span>

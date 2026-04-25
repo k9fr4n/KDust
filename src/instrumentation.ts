@@ -73,7 +73,7 @@ export async function register() {
     // this hook runs, so any SQL probing that column would fail
     // immediately. Leftover mandatory-audit task rows (if any) are
     // carried over as ordinary tasks with no kind/category — harmless
-    // and visible in /tasks if the operator wants to clean them up
+    // and visible in /task if the operator wants to clean them up
     // manually.
   }
 }

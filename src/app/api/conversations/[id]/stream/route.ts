@@ -98,7 +98,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         // human-readable title on the conversation after the first
         // agent turn (e.g. "g\u00e9n\u00e8re moi une image" \u2192 "Demande
         // d'image g\u00e9n\u00e9r\u00e9e par IA"). Fetch it once the reply is
-        // saved and persist locally so the /chat header and\n        // /conversations listing match what users see on dust.tt.
+        // saved and persist locally so the /chat header and\n        // /conversation listing match what users see on dust.tt.
         // Best-effort: failures are logged but never block the
         // stream response. Skip if we already have a non-trivial
         // local title AND it's been set manually (we never override

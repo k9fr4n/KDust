@@ -4,7 +4,7 @@ import { Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /**
- * "Run now" button for the /tasks/:id detail page.
+ * "Run now" button for the /task/:id detail page.
  *
  * Two modes (same contract as the compact RunNowButton on the task
  * list page):

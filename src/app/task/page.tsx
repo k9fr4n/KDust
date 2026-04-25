@@ -88,7 +88,7 @@ function normaliseSort(raw?: string): SortKey {
 }
 
 /**
- * /tasks — unified list of every cron with search + filters + sort.
+ * /task — unified list of every cron with search + filters + sort.
  *
  * Query string (all optional):
  *   ?q=<text>            substring match on name (case-insensitive)
@@ -230,7 +230,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     if (merged.sort !== 'lastRun') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
     if (merged.page > 1) qs.set('page', String(merged.page));
-    return `/tasks${qs.toString() ? `?${qs}` : ''}`;
+    return `/task${qs.toString() ? `?${qs}` : ''}`;
   };
   /** Build the href for a column header click: flip dir on same col, else asc/desc default. */
   const sortHref = (col: SortKey) => {
@@ -257,7 +257,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               {paged.length} shown · {total.toLocaleString('fr-FR')} total
             </span>
             <Link
-              href="/tasks/new"
+              href="/task/new"
               className="inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors"
             >
               + New task
@@ -272,7 +272,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
           needed anymore. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search by name…" />
-        {hasActiveFilter && <ClearFiltersLink href="/tasks" />}
+        {hasActiveFilter && <ClearFiltersLink href="/task" />}
       </div>
 
       {/*

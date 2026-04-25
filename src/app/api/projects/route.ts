@@ -104,7 +104,7 @@ export async function POST(req: Request) {
   // Audit task auto-provisioning was removed on 2026-04-22. Audits are
   // now handled via user-created generic tasks invoked per project by
   // an orchestrator (run_task(project=...)). New projects are shipped
-  // empty — the user wires them up from /tasks/new.
+  // empty — the user wires them up from /task/new.
 
   return NextResponse.json({ project: updated, output: res.output }, { status: 201 });
 }

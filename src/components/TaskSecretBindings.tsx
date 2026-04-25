@@ -6,10 +6,10 @@
 // (Franck 2026-04-21 22:00, deferred mode 2026-04-22 17:50).
 //
 // Two modes:
-//   - Persisted (default, used on /tasks/:id/edit). A taskId is
+//   - Persisted (default, used on /task/:id/edit). A taskId is
 //     required; add / remove calls hit /api/tasks/:id/secrets and the
 //     list refreshes from the server.
-//   - Deferred (used on /tasks/new). No taskId yet: the component
+//   - Deferred (used on /task/new). No taskId yet: the component
 //     maintains its bindings in local state and reports them upward
 //     via `onBindingsChange`. TaskForm flushes them by issuing one
 //     POST per binding right after the task row is created.

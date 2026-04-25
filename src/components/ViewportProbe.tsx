@@ -82,8 +82,8 @@ export function ViewportProbe() {
     const measureRowHeight = (anchor: HTMLElement): number | null => {
       // Look for the first real row inside the anchor's sibling
       // container. Supports the two shapes used by our list pages:
-      //   - table row  (<tbody><tr>) for /runs, /tasks
-      //   - list item  (<ul><li>)   for /conversations
+      //   - table row  (<tbody><tr>) for /run, /task
+      //   - list item  (<ul><li>)   for /conversation
       // Returns null when no row is rendered (empty filter). In
       // that case the server helper keeps its fallback rowPx.
       const parent = anchor.parentElement;

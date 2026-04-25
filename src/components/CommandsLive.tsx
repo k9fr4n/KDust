@@ -24,7 +24,7 @@ type CommandRow = {
 };
 
 /**
- * Live-updating commands section for /runs/:id (Franck 2026-04-24 22:39).
+ * Live-updating commands section for /run/:id (Franck 2026-04-24 22:39).
  *
  * Server hydrates the list via `initialCommands` so completed runs
  * render instantly with no flash. While the run is still running

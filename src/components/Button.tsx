@@ -22,7 +22,7 @@ import { twMerge } from 'tailwind-merge';
  *
  * All variants share the same font weight, gap, rounded radius and
  * disabled treatment so the visual rhythm is identical whether you
- * drop a <Button> on /chat, /tasks or /admin.
+ * drop a <Button> on /chat, /task or /admin.
  */
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 type Size = 'md' | 'sm';

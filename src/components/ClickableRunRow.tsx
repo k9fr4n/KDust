@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import React from 'react';
 
 /**
- * <tr> wrapper that navigates to /runs/<id> on any click inside the
+ * <tr> wrapper that navigates to /run/<id> on any click inside the
  * row EXCEPT on nested interactive elements (links, buttons). Per
  * Franck 2026-04-19 13:10 the Started-at date link was removed and
  * the whole row made clickable instead.
@@ -12,7 +12,7 @@ import React from 'react';
  *   - We use onClick on the <tr> with a closest() check: if the
  *     event target is within an <a>, <button>, or role=button, we
  *     let the native handler win and do nothing. This keeps the
- *     "Task" link to /tasks/:id and the "Open chat" button working.
+ *     "Task" link to /task/:id and the "Open chat" button working.
  *   - We also support middle-click (button=1) and ctrl/meta-click
  *     to open the run detail in a new tab, matching browser
  *     expectations on clickable-row UIs.
@@ -40,7 +40,7 @@ export function ClickableRunRow({
   compact?: boolean;
 }) {
   const router = useRouter();
-  const href = `/runs/${runId}`;
+  const href = `/run/${runId}`;
 
   const onClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
     const t = e.target as HTMLElement;

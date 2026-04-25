@@ -170,7 +170,7 @@ export async function startCommandRunnerServer(
     {
       description:
         `Execute a shell command inside the "${projectName}" project workspace. ` +
-        `Every invocation is logged by KDust (visible on /runs/<id>). ` +
+        `Every invocation is logged by KDust (visible on /run/<id>). ` +
         `Chrooted to the project working tree. Dangerous argv patterns ` +
         `(--privileged, -v /:, --pid=host, \u2026) are rejected before spawning. ` +
         `Prefer this tool over fs-cli's run_command when you need reliable, ` +

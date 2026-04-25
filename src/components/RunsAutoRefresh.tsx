@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * Auto-refresh toggle for /runs (Franck 2026-04-23 13:35).
+ * Auto-refresh toggle for /run (Franck 2026-04-23 13:35).
  *
- * The /runs page is server-rendered and normally only updates on
+ * The /run page is server-rendered and normally only updates on
  * full navigation. For at-a-glance monitoring (seeing cron fires
  * land, watching a long task's status flip, catching cascade
  * cancellations) we want the table to tick on its own.

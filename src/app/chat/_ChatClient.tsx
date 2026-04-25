@@ -314,7 +314,7 @@ function ChatPageInner({
   }, [currentId]);
 
   // Cross-tab / cross-page sync (Franck 2026-04-20 17:04). When
-  // another surface (dashboard, /conversations, a second /chat tab)
+  // another surface (dashboard, /conversation, a second /chat tab)
   // pins or deletes a conversation, re-pull the list so our sidebar
   // state (still used for the header pin/delete chip\u0027s pinned
   // lookup) and any in-flight state reflect the change. If the
@@ -1026,7 +1026,7 @@ function ChatPageInner({
     const r = await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
     if (currentId === id) newChat();
     await refreshConvs();
-    // Notify sibling tabs (dashboard / /conversations / other /chat)
+    // Notify sibling tabs (dashboard / /conversation / other /chat)
     // so they drop this conv from their listings without a reload.
     if (r.ok) publishConvEvent({ type: 'deleted', id });
   };
@@ -1051,7 +1051,7 @@ function ChatPageInner({
       if (!r.ok) throw new Error('pin failed');
       // Re-sort pinned-first without a full network refresh.
       await refreshConvs();
-      // Notify sibling tabs (dashboard / /conversations / other /chat)
+      // Notify sibling tabs (dashboard / /conversation / other /chat)
       // so their view updates without a manual reload.
       publishConvEvent({ type: 'pinned', id, pinned: next });
     } catch {
@@ -1151,7 +1151,7 @@ function ChatPageInner({
     >
       {/* -----------------------------------------------------------------
        * Sidebar removed 2026-04-20 (Franck): the conversation list now
-       * lives exclusively on the dedicated /conversations dashboard.
+       * lives exclusively on the dedicated /conversation dashboard.
        * The "New chat" button was re-added inside the main header
        * (see <section> below). The <aside> block, its drag handle,
        * and the resize state (sidebarW / onResizeStart / ...) are

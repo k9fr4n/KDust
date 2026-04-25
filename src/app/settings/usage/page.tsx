@@ -805,7 +805,7 @@ export default async function UsagePage({
                       >
                         <td className="py-1">
                           <Link
-                            href={`/conversations/${m.conversation.id}`}
+                            href={`/conversation/${m.conversation.id}`}
                             className="hover:underline truncate block max-w-[14rem]"
                           >
                             {m.conversation.title}
@@ -860,7 +860,7 @@ export default async function UsagePage({
                       >
                         <td className="py-1">
                           <Link
-                            href={`/conversations/${m.conversation.id}`}
+                            href={`/conversation/${m.conversation.id}`}
                             className="hover:underline truncate block max-w-[14rem]"
                           >
                             {m.conversation.title}
@@ -984,7 +984,7 @@ export default async function UsagePage({
                 label: t?.name ?? '(deleted)',
                 sub: t?.projectPath ?? undefined,
                 count: r._count._all,
-                href: t ? `/tasks/${t.id}` : undefined,
+                href: t ? `/task/${t.id}` : undefined,
               };
             })}
             empty="No runs yet"
@@ -1018,7 +1018,7 @@ export default async function UsagePage({
                 >
                   <td className="py-1">
                     <Link
-                      href={`/conversations/${c.id}`}
+                      href={`/conversation/${c.id}`}
                       className="hover:underline truncate block max-w-xs"
                     >
                       {c.title}
@@ -1053,7 +1053,7 @@ export default async function UsagePage({
         <Card
           title="Recent runs"
           icon={<Clock size={14} />}
-          right={<Link href="/runs" className="text-xs text-brand-500 hover:underline">all →</Link>}
+          right={<Link href="/run" className="text-xs text-brand-500 hover:underline">all →</Link>}
         >
           <ul className="divide-y divide-slate-200 dark:divide-slate-800">
             {lastRuns.map((r) => (
@@ -1065,7 +1065,7 @@ export default async function UsagePage({
                 <span className="truncate flex-1">
                   {r.task ? (
                     <Link
-                      href={`/tasks/${r.task.id}`}
+                      href={`/task/${r.task.id}`}
                       className="hover:underline"
                     >
                       {r.task.name}
@@ -1095,13 +1095,13 @@ export default async function UsagePage({
         <Card
           title="Recent conversations"
           icon={<MessageSquare size={14} />}
-          right={<Link href="/conversations" className="text-xs text-brand-500 hover:underline">all →</Link>}
+          right={<Link href="/conversation" className="text-xs text-brand-500 hover:underline">all →</Link>}
         >
           <ul className="divide-y divide-slate-200 dark:divide-slate-800">
             {lastConvs.map((c) => (
               <li key={c.id} className="flex items-center gap-2 py-1.5 text-xs">
                 <span className="truncate flex-1">
-                  <Link href={`/conversations/${c.id}`} className="hover:underline">
+                  <Link href={`/conversation/${c.id}`} className="hover:underline">
                     {c.title}
                   </Link>
                 </span>

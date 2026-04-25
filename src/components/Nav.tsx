@@ -20,7 +20,7 @@ export async function Nav() {
     requiresProject?: boolean;
   }> = [
     { href: '/', label: 'Dashboard', iconName: 'LayoutDashboard' },
-    { href: '/conversations', label: 'Conversation', iconName: 'MessageSquare' },
+    { href: '/conversation', label: 'Conversation', iconName: 'MessageSquare' },
     // Chat is accessible with or without a selected project
     // (Franck 2026-04-19 18:02). Project-less sessions create
     // conversations with projectName=null; fs/git MCP tools are
@@ -29,8 +29,8 @@ export async function Nav() {
     // so the Nav link stays clickable on the \"All Projects\"
     // filter.
     { href: '/chat', label: 'Chat', iconName: 'MessageSquare' },
-    { href: '/runs', label: 'Run', iconName: 'Activity' },
-    { href: '/tasks', label: 'Task', iconName: 'Clock' },
+    { href: '/run', label: 'Run', iconName: 'Activity' },
+    { href: '/task', label: 'Task', iconName: 'Clock' },
   ];
 
   return (

@@ -103,10 +103,10 @@ export function RunCard({ run }: { run: RunCardData }) {
   };
 
   // Link target (Franck 2026-04-20 19:01): dashboard RunCard items
-  // must open the *run* detail page (/runs/:id), not the task page.
+  // must open the *run* detail page (/run/:id), not the task page.
   // The task name itself is still just the label; clicking the row
   // takes you straight to that specific run's logs/output.
-  const href = `/runs/${run.id}`;
+  const href = `/run/${run.id}`;
 
   return (
     <li className="group relative">

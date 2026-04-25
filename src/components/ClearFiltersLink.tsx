@@ -3,7 +3,7 @@ import Link from 'next/link';
 /**
  * Clear-filters link (Franck 2026-04-23 22:46).
  *
- * Identical visual treatment across /conversations, /tasks, /runs
+ * Identical visual treatment across /conversation, /task, /run
  * (amber outline, amber text). Centralised here so future style
  * changes don't require a search-and-replace across pages.
  */

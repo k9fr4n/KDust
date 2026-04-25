@@ -1,10 +1,10 @@
 /**
- * /tasks/[id] — task configuration page.
+ * /task/[id] — task configuration page.
  *
  * Scope simplified 2026-04-19 (Franck 12:58 + 13:10): this page now
  * shows ONLY the task configuration (prompt, schedule, branch
  * settings, …). The full list of runs with inline output/diff/
- * error moved to /runs[?task=<id>], and its entry point is the
+ * error moved to /run[?task=<id>], and its entry point is the
  * "History" chip in the top action bar.
  */
 import Link from 'next/link';
@@ -65,14 +65,14 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
             isGeneric={cron.projectPath === null}
           />
           <Link
-            href={`/runs?task=${cron.id}`}
+            href={`/run?task=${cron.id}`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
             title={`${runCount.toLocaleString('fr-FR')} past run${runCount === 1 ? '' : 's'}`}
           >
             <History size={14} /> History ({runCount.toLocaleString('fr-FR')})
           </Link>
           <Link
-            href={`/tasks/${cron.id}/edit`}
+            href={`/task/${cron.id}/edit`}
             className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <Pencil size={14} /> Edit

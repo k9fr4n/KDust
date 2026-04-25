@@ -3,12 +3,12 @@ import { useRouter } from 'next/navigation';
 import React from 'react';
 
 /**
- * <tr> wrapper making the whole row clickable to /tasks/<id>,
+ * <tr> wrapper making the whole row clickable to /task/<id>,
  * mirroring the same pattern used for <ClickableRunRow>. Nested
  * interactive elements (the RunNowButton, any inner Link) keep
  * their native behavior via closest() bail-out.
  *
- * Per Franck 2026-04-19 13:23: on /tasks the task name used to be
+ * Per Franck 2026-04-19 13:23: on /task the task name used to be
  * the only clickable element — now the whole row is clickable.
  */
 export function ClickableTaskRow({
@@ -17,13 +17,13 @@ export function ClickableTaskRow({
   children,
 }: {
   taskId: string;
-  /** Extra classes merged after the defaults \u2014 used on /tasks to
+  /** Extra classes merged after the defaults \u2014 used on /task to
    *  paint a kind-specific left border (automation vs audit). */
   className?: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const href = `/tasks/${taskId}`;
+  const href = `/task/${taskId}`;
 
   const onClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
     const t = e.target as HTMLElement;

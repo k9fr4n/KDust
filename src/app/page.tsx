@@ -132,7 +132,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatTile
-            href="/conversations"
+            href="/conversation"
             value={nbConvs}
             label="conversations"
             color="blue"
@@ -140,35 +140,35 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             subtle={nbPinned > 0 ? `${nbPinned} pinned` : undefined}
           />
           <StatTile
-            href="/tasks"
+            href="/task"
             value={nbCrons}
             label="tasks"
             color="purple"
             icon={<Clock size={18} />}
           />
           <StatTile
-            href="/runs"
+            href="/run"
             value={nbRunsTotal}
             label="total runs"
             color="slate"
             icon={<Activity size={18} />}
           />
           <StatTile
-            href="/runs?status=success"
+            href="/run?status=success"
             value={nbRunsSuccess}
             label="successful"
             color="green"
             icon={<CheckCircle2 size={18} />}
           />
           <StatTile
-            href="/runs?status=failed"
+            href="/run?status=failed"
             value={nbRunsFailed}
             label="failed"
             color="red"
             icon={<XCircle size={18} />}
           />
           <StatTile
-            href="/runs?status=running"
+            href="/run?status=running"
             value={nbRunsRunning}
             label="running now"
             color="amber"
@@ -176,7 +176,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             pulse={nbRunsRunning > 0}
           />
           <StatTile
-            href={`/runs?status=aborted`}
+            href={`/run?status=aborted`}
             value={undefined}
             label="see aborted"
             color="orange"
@@ -184,7 +184,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             small
           />
           <StatTile
-            href="/conversations?project=_global"
+            href="/conversation?project=_global"
             value={undefined}
             label="global conversations"
             color="slate"
@@ -195,11 +195,11 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
-            <SectionLink href="/conversations" icon={<MessageSquare size={16} />} label="Recent conversations" />
+            <SectionLink href="/conversation" icon={<MessageSquare size={16} />} label="Recent conversations" />
             <RecentConvs items={recentConvs} />
           </div>
           <div>
-            <SectionLink href="/runs" icon={<Clock size={16} />} label="Recent runs" />
+            <SectionLink href="/run" icon={<Clock size={16} />} label="Recent runs" />
             <RecentRuns items={recentRuns} />
           </div>
         </section>
@@ -251,21 +251,21 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile
-          href="/conversations"
+          href="/conversation"
           value={nbConv}
           label="conversations"
           color="blue"
           icon={<MessageSquare size={18} />}
         />
         <StatTile
-          href="/tasks"
+          href="/task"
           value={nbCrons}
           label="tasks"
           color="purple"
           icon={<Clock size={18} />}
         />
         <StatTile
-          href="/runs"
+          href="/run"
           value={nbRunsTotal}
           label="total runs"
           color="slate"
@@ -279,21 +279,21 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           icon={<FolderGit2 size={18} />}
         />
         <StatTile
-          href="/runs?status=success"
+          href="/run?status=success"
           value={nbRunsSuccess}
           label="successful"
           color="green"
           icon={<CheckCircle2 size={18} />}
         />
         <StatTile
-          href="/runs?status=failed"
+          href="/run?status=failed"
           value={nbRunsFailed}
           label="failed"
           color="red"
           icon={<XCircle size={18} />}
         />
         <StatTile
-          href="/runs?status=running"
+          href="/run?status=running"
           value={nbRunsRunning}
           label="running now"
           color="amber"
@@ -301,7 +301,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           pulse={nbRunsRunning > 0}
         />
         <StatTile
-          href="/runs?status=aborted"
+          href="/run?status=aborted"
           value={nbRunsAborted}
           label="aborted"
           color="orange"
@@ -311,11 +311,11 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div>
-          <SectionLink href="/conversations" icon={<MessageSquare size={16} />} label="Recent conversations" />
+          <SectionLink href="/conversation" icon={<MessageSquare size={16} />} label="Recent conversations" />
           <RecentConvs items={recentConvs} />
         </div>
         <div>
-          <SectionLink href="/runs" icon={<Clock size={16} />} label="Recent runs" />
+          <SectionLink href="/run" icon={<Clock size={16} />} label="Recent runs" />
           <RecentRuns items={recentRuns} />
         </div>
       </section>

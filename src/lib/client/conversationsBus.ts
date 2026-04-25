@@ -3,7 +3,7 @@
 /**
  * conversationsBus — cross-tab / cross-page sync of conversation
  * mutations (pin / delete). Used so that a user pinning a
- * conversation on /chat sees the change appear on a /conversations
+ * conversation on /chat sees the change appear on a /conversation
  * or / (dashboard) tab without a manual reload, and vice-versa.
  *
  * Transport: BroadcastChannel (native cross-tab, same-origin).

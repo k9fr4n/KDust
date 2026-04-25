@@ -5,7 +5,7 @@
  * called `toLocaleString("fr-FR")` without a timeZone option, so
  * the container's system TZ (UTC in our Docker image) was used
  * regardless of what the operator picked in /settings/global.
- * Result: every timestamp in /runs, /tasks, /settings/projects
+ * Result: every timestamp in /run, /task, /settings/projects
  * … was rendered 2h behind Paris during DST.
  *
  * Usage pattern (server component):

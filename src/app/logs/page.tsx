@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Trash2, ScrollText, Pause, Play, Filter, Copy, Check } from 'lucide-react';
+import { Trash2, ScrollText, Pause, Play, Filter, Copy, Check, Download } from 'lucide-react';
 
 type LogLevel = 'log' | 'info' | 'warn' | 'error';
 
@@ -146,6 +146,47 @@ export default function LogsPage() {
     }
   };
 
+  /**
+   * Download the currently visible (filtered) log lines as a
+   * plain-text file. Filename includes a sortable timestamp so
+   * multiple captures stack chronologically in the operator's
+   * Downloads folder.
+   *
+   * Format mirrors the on-screen renderer: full ISO-8601
+   * timestamp (vs the truncated HH:MM:SS.mmm shown in the
+   * viewer) so the file remains useful when read out of context
+   * \u2014 e.g. attached to a bug report.
+   *
+   * Filtered set is used (not the raw buffer) so what you see
+   * is what you get \u2014 in particular, "errors only" + a text
+   * filter exports exactly that scope.
+   */
+  const download = () => {
+    const text = filtered
+      .map(
+        (e) =>
+          `${new Date(e.ts).toISOString()} [${e.level}] ${e.text}`,
+      )
+      .join('\n');
+    // Filesystem-friendly timestamp: YYYYMMDD-HHmmss in local
+    // time. Avoids ":" which Windows refuses in filenames.
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ts =
+      `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+      `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kdust_log_${ts}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Defer revoke so Safari has time to start the download.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   // Per-level total counts (over the full unfiltered buffer).
   // Surfaced next to each level pill so the operator sees "you
   // have 12 errors waiting" even when the level is currently
@@ -243,6 +284,14 @@ export default function LogsPage() {
           >
             {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
             {copied ? 'Copied!' : 'Copy'}
+          </button>
+
+          <button
+            onClick={download}
+            title={`Download ${filtered.length} line(s) as kdust_log_<timestamp>.txt`}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <Download size={14} /> Download
           </button>
 
           <button

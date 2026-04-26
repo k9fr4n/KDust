@@ -1,28 +1,55 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2, ScrollText, Pause, Play, Filter, Copy, Check } from 'lucide-react';
+
+type LogLevel = 'log' | 'info' | 'warn' | 'error';
 
 type LogEntry = {
   id: number;
   ts: number;
-  level: 'log' | 'info' | 'warn' | 'error';
+  level: LogLevel;
   text: string;
 };
 
-const LEVEL_COLOR: Record<LogEntry['level'], string> = {
+const LEVEL_COLOR: Record<LogLevel, string> = {
   log: 'text-slate-200',
   info: 'text-sky-400',
   warn: 'text-amber-400',
   error: 'text-red-400',
 };
 
+// Active-button styling for each level pill, when its toggle
+// is ON. Inactive state uses the neutral border below.
+const LEVEL_PILL: Record<LogLevel, string> = {
+  log: 'bg-slate-700 text-slate-100 border-slate-600',
+  info: 'bg-sky-500/15 text-sky-300 border-sky-700',
+  warn: 'bg-amber-500/15 text-amber-300 border-amber-700',
+  error: 'bg-red-500/15 text-red-300 border-red-700',
+};
+
+const ALL_LEVELS: LogLevel[] = ['log', 'info', 'warn', 'error'];
+
+// Pixel tolerance: if the scroll viewport is within this many
+// pixels of its bottom we consider the user "at bottom" and
+// re-enable autoscroll. 32 leaves room for one ~3-line entry
+// to appear below without flipping the state on every render.
+const STICK_BOTTOM_TOLERANCE_PX = 32;
+
 export default function LogsPage() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState('');
+  // Per-level toggle. Default = everything on. Stored as a Set
+  // (over an array) for O(1) lookup in the render loop.
+  const [enabledLevels, setEnabledLevels] = useState<Set<LogLevel>>(
+    () => new Set<LogLevel>(ALL_LEVELS),
+  );
   const [autoscroll, setAutoscroll] = useState(true);
   const [copied, setCopied] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  // Reference to the SCROLLING viewport, not the inner content
+  // div: that's what owns scrollTop / clientHeight / scrollHeight.
+  const scrollRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
 
   const connect = useCallback(() => {
@@ -64,6 +91,28 @@ export default function LogsPage() {
     if (autoscroll && !paused) endRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [entries, autoscroll, paused]);
 
+  /**
+   * Smart autoscroll: the checkbox stops being a static toggle
+   * and reflects the user's intent inferred from the scroll
+   * position. If they scroll up (away from the bottom edge),
+   * we suspend autoscroll so the read-up isn't yanked back. As
+   * soon as they scroll back to the bottom, autoscroll resumes.
+   *
+   * Implementation note: we still expose the checkbox so the
+   * user has a manual override AND a visible indicator of the
+   * current mode. The setState is guarded against redundant
+   * updates with a strict equality check to keep React's diff
+   * cheap on every scroll event.
+   */
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom =
+      el.scrollHeight - el.clientHeight - el.scrollTop;
+    const atBottom = distanceFromBottom <= STICK_BOTTOM_TOLERANCE_PX;
+    setAutoscroll((prev) => (prev === atBottom ? prev : atBottom));
+  }, []);
+
   const clear = async () => {
     await fetch('/api/logs', { method: 'DELETE' });
     setEntries([]);
@@ -97,9 +146,41 @@ export default function LogsPage() {
     }
   };
 
-  const filtered = filter
-    ? entries.filter((e) => e.text.toLowerCase().includes(filter.toLowerCase()))
-    : entries;
+  // Per-level total counts (over the full unfiltered buffer).
+  // Surfaced next to each level pill so the operator sees "you
+  // have 12 errors waiting" even when the level is currently
+  // hidden by the toggle.
+  const levelCounts = useMemo(() => {
+    const counts: Record<LogLevel, number> = {
+      log: 0,
+      info: 0,
+      warn: 0,
+      error: 0,
+    };
+    for (const e of entries) counts[e.level]++;
+    return counts;
+  }, [entries]);
+
+  const filtered = useMemo(() => {
+    const needle = filter.toLowerCase();
+    return entries.filter((e) => {
+      if (!enabledLevels.has(e.level)) return false;
+      if (needle && !e.text.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [entries, filter, enabledLevels]);
+
+  const toggleLevel = (lvl: LogLevel) => {
+    setEnabledLevels((prev) => {
+      const next = new Set(prev);
+      if (next.has(lvl)) next.delete(lvl);
+      else next.add(lvl);
+      return next;
+    });
+  };
+
+  const showOnlyErrors = () => setEnabledLevels(new Set<LogLevel>(['error']));
+  const showAllLevels = () => setEnabledLevels(new Set<LogLevel>(ALL_LEVELS));
 
   return (
     <div className="space-y-3">
@@ -121,11 +202,28 @@ export default function LogsPage() {
             />
           </div>
 
-          <label className="text-xs flex items-center gap-1">
+          <label
+            className="text-xs flex items-center gap-1"
+            title={
+              autoscroll
+                ? 'Following bottom — scroll up to pause'
+                : 'Paused at scroll position — scroll down to resume'
+            }
+          >
             <input
               type="checkbox"
               checked={autoscroll}
-              onChange={(e) => setAutoscroll(e.target.checked)}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setAutoscroll(next);
+                // Manual re-enable jumps to bottom immediately so
+                // the toggle has a visible effect.
+                if (next) {
+                  requestAnimationFrame(() =>
+                    endRef.current?.scrollIntoView({ behavior: 'auto' }),
+                  );
+                }
+              }}
             />
             autoscroll
           </label>
@@ -156,7 +254,61 @@ export default function LogsPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-800 bg-slate-950 text-slate-100 font-mono text-xs leading-relaxed overflow-auto h-[calc(100vh-11rem)]">
+      {/* Per-level toggle pills + quick presets. Mirrors the
+          colour scheme used inside the log viewer so the
+          mapping is obvious. Click a pill to hide that level;
+          the count next to it always reflects the FULL buffer
+          (not just what's currently visible) so the operator
+          can see "12 errors waiting" even when errors are
+          hidden. */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span className="text-slate-500">Levels:</span>
+        {ALL_LEVELS.map((lvl) => {
+          const active = enabledLevels.has(lvl);
+          return (
+            <button
+              key={lvl}
+              onClick={() => toggleLevel(lvl)}
+              className={
+                'px-2 py-0.5 rounded border transition ' +
+                (active
+                  ? LEVEL_PILL[lvl]
+                  : 'border-slate-700 text-slate-500 hover:text-slate-300')
+              }
+              title={
+                active
+                  ? `Hide ${lvl} entries`
+                  : `Show ${lvl} entries`
+              }
+            >
+              {lvl}
+              <span className="ml-1 text-slate-400">
+                ({levelCounts[lvl]})
+              </span>
+            </button>
+          );
+        })}
+        <button
+          onClick={showOnlyErrors}
+          className="ml-2 px-2 py-0.5 rounded border border-red-800 text-red-300 hover:bg-red-500/10"
+          title="Show only error-level entries"
+        >
+          errors only
+        </button>
+        <button
+          onClick={showAllLevels}
+          className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800"
+          title="Re-enable all levels"
+        >
+          all
+        </button>
+      </div>
+
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="rounded-lg border border-slate-800 bg-slate-950 text-slate-100 font-mono text-xs leading-relaxed overflow-auto h-[calc(100vh-13rem)]"
+      >
         <div className="p-3 whitespace-pre-wrap">
           {filtered.length === 0 && (
             <div className="text-slate-500 italic">No logs captured yet…</div>

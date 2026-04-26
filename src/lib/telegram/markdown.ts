@@ -65,6 +65,52 @@ export function markdownToTelegramHtml(md: string): string {
     },
   );
 
+  // 1b. Markdown tables. Telegram has no table tag, so we
+  //     re-emit them in a <pre> block: monospace preserves
+  //     column alignment IF the agent padded its cells. We
+  //     also rebuild a thin ASCII separator from the markdown
+  //     "|---|---|" row to keep the visual structure.
+  //
+  //     Detection: a header line with at least one pipe, a
+  //     separator line of dashes/colons/pipes, and one or
+  //     more body rows. The opening pipe is optional (some
+  //     emitters drop it) so we accept both forms.
+  s = s.replace(
+    /(^|\n)((?:\|?[^\n|]*\|[^\n]*\n)(?:\|?[\s:|-]+\|[\s:|-]*\n)(?:(?:\|?[^\n|]*\|[^\n]*\n?)+))/g,
+    (_m, lead: string, tableSrc: string) => {
+      const lines = tableSrc.replace(/\n+$/, '').split('\n');
+      // Strip leading/trailing pipes and split each row into
+      // cells; trim each cell so column widths are easy to
+      // compute.
+      const rows = lines.map((l) =>
+        l
+          .replace(/^\s*\|/, '')
+          .replace(/\|\s*$/, '')
+          .split('|')
+          .map((c) => c.trim()),
+      );
+      if (rows.length < 2) return lead + tableSrc;
+      // Drop the markdown separator row from the rendered
+      // output; we rebuild our own.
+      const separatorIdx = 1;
+      const dataRows = rows.filter((_r, i) => i !== separatorIdx);
+      const cols = Math.max(...dataRows.map((r) => r.length));
+      const widths = Array.from({ length: cols }, (_, i) =>
+        Math.max(...dataRows.map((r) => (r[i] ?? '').length)),
+      );
+      const pad = (s: string, w: number) => s + ' '.repeat(Math.max(0, w - s.length));
+      const renderRow = (r: string[]) =>
+        r.map((c, i) => pad(c, widths[i] ?? 0)).join('  ');
+      const out: string[] = [];
+      out.push(renderRow(dataRows[0]));
+      out.push(widths.map((w) => '\u2500'.repeat(w)).join('  '));
+      for (let i = 1; i < dataRows.length; i++) {
+        out.push(renderRow(dataRows[i]));
+      }
+      return lead + stash(`<pre>${escapeHtml(out.join('\n'))}</pre>`);
+    },
+  );
+
   // 2. Inline code. Single-backtick spans on a single line.
   //    Double-backtick spans (`` `with backtick` ``) are not
   //    supported — rare enough in chat that the simpler regex

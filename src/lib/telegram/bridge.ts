@@ -45,12 +45,46 @@ import {
   sendMessage,
   editMessageText,
   sendChatAction,
+  sendPhoto,
   answerCallbackQuery,
   isInCooldown,
   cooldownRemainingMs,
   type TgMessage,
   type TgCallbackQuery,
 } from './api';
+
+// ---- markdown image extraction (Franck 2026-04-26 19:30) ----
+//
+// Dust agents that use an image-generation tool surface their
+// output as markdown image references in the agent message:
+//   ![alt](https://...)
+// Telegram clients render plain text only; the markdown stays
+// as-is and the image never appears. We extract these refs at
+// the end of the stream, send each as a sendPhoto (Telegram
+// fetches the URL server-side), and strip them from the text
+// message so the user doesn't see a duplicated link.
+//
+// Only http(s) URLs are extracted. data: URIs and relative
+// paths are kept inline (Telegram cannot fetch them anyway).
+// We deliberately match only the standard ![alt](url) form; if
+// the agent adds title text "![alt](url \"title\")" we still
+// match url and discard the title, which is the right behaviour.
+const MD_IMAGE_REGEX = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+
+function extractMarkdownImages(
+  text: string,
+): { stripped: string; images: { alt: string; url: string }[] } {
+  const images: { alt: string; url: string }[] = [];
+  const stripped = text.replace(MD_IMAGE_REGEX, (_m, alt: string, url: string) => {
+    images.push({ alt: alt.trim(), url });
+    // Replace with a tiny inline reference so the user still
+    // sees that "an image was generated here" if the rest of
+    // the message refers to it. Empty string would silently
+    // remove the visual cue and shift adjacent words together.
+    return alt.trim() ? `[\ud83d\uddbc\ufe0f ${alt.trim()}]` : '[\ud83d\uddbc\ufe0f image]';
+  });
+  return { stripped, images };
+}
 
 // ---- per-chat in-flight stream registry ----
 const inFlight = new Map<string, AbortController>();
@@ -958,8 +992,36 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
         }
       },
     );
-    buffer = content || buffer || '(empty reply)';
+    // Pull image markdown out of the final content so we can
+    // ship them as real photos. The text version of the reply
+    // (used both for the edited Telegram message and the local
+    // DB row) keeps a small "[\ud83d\uddbc\ufe0f alt]" inline marker
+    // for context but no longer carries the raw URL.
+    const { stripped, images } = extractMarkdownImages(content || buffer || '');
+    buffer = stripped || '(empty reply)';
     await flush(true);
+
+    // Best-effort: send each image as a separate photo message.
+    // Telegram fetches the URL server-side so it MUST be
+    // publicly reachable. On failure we surface the URL as a
+    // text follow-up so the user can still open it manually.
+    for (const img of images) {
+      try {
+        await sendPhoto(chatId, img.url, {
+          caption: img.alt || undefined,
+        });
+      } catch (e) {
+        console.warn(
+          `[telegram] sendPhoto failed for ${img.url}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+        await sendMessage(
+          chatId,
+          `\ud83d\uddbc\ufe0f ${img.alt || 'image'}: ${img.url}`,
+        ).catch(() => undefined);
+      }
+    }
 
     // Persist the agent reply on the local Conversation so the
     // web UI shows the same history.

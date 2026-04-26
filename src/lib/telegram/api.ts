@@ -232,6 +232,32 @@ export async function sendMessage(
 }
 
 /**
+ * Send a photo to a chat. The `photo` argument is a URL that
+ * Telegram fetches server-side, so it must be publicly
+ * reachable from Telegram's network (no auth, no private CDN).
+ *
+ * If the URL is private or otherwise unreachable, Telegram
+ * returns a 400 with a descriptive error \u2014 we propagate so
+ * the caller can fall back to inlining the URL as plain text.
+ */
+export async function sendPhoto(
+  chatId: string | number,
+  photoUrl: string,
+  opts?: { caption?: string; reply_to_message_id?: number },
+): Promise<TgMessage> {
+  return callGated<TgMessage>('sendPhoto', {
+    chat_id: chatId,
+    photo: photoUrl,
+    // Telegram caps caption at 1024 chars (vs 4096 for text).
+    caption:
+      opts?.caption && opts.caption.length > 1024
+        ? opts.caption.slice(0, 1020) + '\u2026'
+        : opts?.caption,
+    reply_to_message_id: opts?.reply_to_message_id,
+  });
+}
+
+/**
  * Acknowledge a callback_query so the Telegram client stops the
  * loading spinner on the tapped button. Optionally surfaces a
  * short toast to the user. Always best-effort: we don't want a

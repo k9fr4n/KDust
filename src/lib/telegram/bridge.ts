@@ -51,6 +51,7 @@ import {
   type TgMessage,
   type TgCallbackQuery,
 } from './api';
+import { markdownToTelegramHtml } from './markdown';
 
 // ---- per-chat in-flight stream registry ----
 const inFlight = new Map<string, AbortController>();
@@ -1078,23 +1079,52 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
       // Telegram throws 400 when the new text equals the previous
       // one ("message is not modified"). Skip edit when nothing
       // changed, but still update the timestamp so we don't spin.
-      const text = buffer.length > 0 ? buffer : '…';
+      const text = buffer.length > 0 ? buffer : '\u2026';
       if (text === lastSent) {
         lastEditAt = now;
         return;
       }
       lastEditAt = now;
       lastSent = text;
+      // Render markdown \u2192 Telegram-HTML so bold / code / links
+      // appear formatted instead of as their raw markdown
+      // source. The converter is robust to mid-stream chunks
+      // (unclosed constructs leak through as plain text), but a
+      // pathological input could still trip Telegram's HTML
+      // parser \u2014 in that case we fall back to plain text so the
+      // user always sees SOMETHING, never an empty edit.
+      const html = markdownToTelegramHtml(text);
       try {
-        await editMessageText(chatId, placeholderId, text);
+        await editMessageText(chatId, placeholderId, html, {
+          parse_mode: 'HTML',
+        });
       } catch (e) {
-        // 429 = rate limit; back off the next interval.
         const code = (e as { code?: number }).code;
-        if (code === 429) lastEditAt = now + 2000;
-        else
+        if (code === 429) {
+          lastEditAt = now + 2000;
+        } else if (
+          code === 400 &&
+          /parse|entities|tag/i.test(
+            e instanceof Error ? e.message : String(e),
+          )
+        ) {
+          // HTML parse error \u2014 retry the same content as plain
+          // text. Mark the buffer as plain so subsequent diffs
+          // don't keep failing the same way.
+          try {
+            await editMessageText(chatId, placeholderId, text);
+          } catch (e2) {
+            console.warn(
+              `[telegram] editMessageText fallback: ${
+                e2 instanceof Error ? e2.message : e2
+              }`,
+            );
+          }
+        } else {
           console.warn(
             `[telegram] editMessageText: ${e instanceof Error ? e.message : e}`,
           );
+        }
       }
     };
 

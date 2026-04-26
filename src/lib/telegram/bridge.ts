@@ -189,6 +189,130 @@ async function sendAgentPicker(chatId: string): Promise<void> {
   });
 }
 
+// ---- Conversations browser (Franck 2026-04-26 19:55) -----
+//
+// /chats        \u2192 inline keyboard of the 12 most recent
+//                  conversations (across both web UI and
+//                  Telegram origin), with a check on the one
+//                  this chat is currently bound to.
+// /chat <id>    \u2192 rebind the current Telegram chat to that
+//                  conversation. Future user messages are
+//                  posted into that conversation's Dust thread,
+//                  so the agent has the full prior history as
+//                  context.
+//
+// Trade-off acknowledged: TelegramBinding has unique(chatId)
+// AND unique(conversationId), so binding to a conv that some
+// OTHER chat is currently using would 409. We resolve by
+// detaching the prior binding silently \u2014 in a single-user
+// KDust deployment that's the right call. In a future
+// multi-user setup we would gate this behind ownership.
+
+async function sendChatsPicker(chatId: string): Promise<void> {
+  // Only show conversations that have at least one user
+  // message: empty placeholders that were created by /agent or
+  // /project but never used would be noise here.
+  const convs = await db.conversation.findMany({
+    take: 12,
+    orderBy: { updatedAt: 'desc' },
+    where: { messages: { some: { role: 'user' } } },
+    select: {
+      id: true,
+      title: true,
+      agentName: true,
+      projectName: true,
+      updatedAt: true,
+      pinned: true,
+    },
+  });
+  if (convs.length === 0) {
+    await sendMessage(chatId, 'No conversations yet.');
+    return;
+  }
+  // Surface the currently-bound conversation so the operator
+  // sees "you're already in here" without re-tapping.
+  const currentBinding = await resolveBinding(chatId);
+  const currentConvId = currentBinding?.conversationId ?? null;
+  const buttons = convs.map((c) => {
+    const isCurrent = currentConvId === c.id;
+    const pin = c.pinned ? '\ud83d\udccc ' : '';
+    // Compose: "<check> <pin> <title> \u00b7 <agent> \u00b7 <time>"
+    // capped to fit within Telegram's button label budget.
+    const title =
+      c.title.length > 32 ? c.title.slice(0, 29) + '\u2026' : c.title;
+    const agentTag = c.agentName ? ` \u00b7 ${c.agentName}` : '';
+    const projectTag = c.projectName ? ` [${c.projectName}]` : '';
+    const label =
+      (isCurrent ? '\u2705 ' : '') +
+      pin +
+      title +
+      agentTag +
+      projectTag +
+      ` \u00b7 ${fmtRelative(c.updatedAt)}`;
+    return [
+      {
+        text: label.length > 64 ? label.slice(0, 61) + '\u2026' : label,
+        callback_data: `chat:${c.id}`.slice(0, 64),
+      },
+    ];
+  });
+  await sendMessage(chatId, 'Recent conversations:', {
+    inline_keyboard: buttons,
+  });
+}
+
+async function applyChatChoice(
+  chatId: string,
+  conversationId: string,
+): Promise<{ ok: boolean; message: string; title?: string }> {
+  const conv = await db.conversation.findUnique({
+    where: { id: conversationId },
+    select: {
+      id: true,
+      title: true,
+      agentSId: true,
+      agentName: true,
+      projectName: true,
+      dustConversationSId: true,
+    },
+  });
+  if (!conv) {
+    return {
+      ok: false,
+      message: `\u274c Conversation ${conversationId} not found.`,
+    };
+  }
+  // Detach any existing binding for this chat AND any other
+  // binding that may already point at this conversation. The
+  // unique(conversationId) constraint would otherwise reject
+  // the create. In a single-user deployment this is the
+  // expected behaviour; the prior chat just lands back on
+  // "fresh conv on next message" which is the same as /new.
+  await db.telegramBinding.deleteMany({
+    where: { OR: [{ chatId }, { conversationId }] },
+  });
+  await db.telegramBinding.create({
+    data: {
+      chatId,
+      conversationId: conv.id,
+      agentSId: conv.agentSId,
+      projectName: conv.projectName,
+    },
+  });
+  // Drop any pending project choice \u2014 we just rebound to a
+  // concrete conv, that conv's own projectName wins.
+  pendingProject.delete(chatId);
+  return {
+    ok: true,
+    title: conv.title,
+    message:
+      `\u2705 Entered conversation "${conv.title}"${
+        conv.agentName ? ` (agent: ${conv.agentName})` : ''
+      }${conv.projectName ? ` [project: ${conv.projectName}]` : ''}.\n` +
+      `Your next message continues this thread.`,
+  };
+}
+
 // ---- Task runs viewer (Franck 2026-04-26) ----------------
 //
 // Read-only window into TaskRun for Telegram. Two entry points:
@@ -531,6 +655,18 @@ export async function handleTelegramCallback(
       return;
     }
 
+    if (data.startsWith('chat:')) {
+      const id = data.slice('chat:'.length);
+      const result = await applyChatChoice(chatId, id);
+      await answerCallbackQuery(cq.id, {
+        text: result.ok
+          ? `Chat: ${result.title ?? id}`
+          : 'Conversation not found',
+      });
+      await sendMessage(chatId, result.message);
+      return;
+    }
+
     console.warn(`[telegram] unknown callback_data: ${data}`);
     await answerCallbackQuery(cq.id);
   } catch (e) {
@@ -600,6 +736,8 @@ async function handleCommand(
           '/projects       pick a project (clickable list)',
           '/project <name> set the project context (fs tools chroot here)',
           '/project        clear project (global mode, no fs tools)',
+          '/chats          list recent conversations (clickable to enter)',
+          '/chat <id>      enter an existing conversation by id',
           '/runs           list recent task runs (clickable for details)',
           '/run <id>       show details of a specific run',
           '/whoami         show chat id, agent, project, bound conv',
@@ -713,6 +851,23 @@ async function handleCommand(
           `dust sId  : ${binding?.conversation?.dustConversationSId ?? '\u2014'}`,
         ].join('\n'),
       );
+      return true;
+    }
+    case '/chats': {
+      await sendChatsPicker(chatId);
+      return true;
+    }
+    case '/chat': {
+      const id = args.trim().split(/\s+/)[0];
+      if (!id) {
+        await sendMessage(
+          chatId,
+          'Usage: /chat <conversation_id>  (use /chats to pick)',
+        );
+        return true;
+      }
+      const result = await applyChatChoice(chatId, id);
+      await sendMessage(chatId, result.message);
       return true;
     }
     case '/runs': {

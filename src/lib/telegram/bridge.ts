@@ -189,6 +189,173 @@ async function sendAgentPicker(chatId: string): Promise<void> {
   });
 }
 
+// ---- Task runs viewer (Franck 2026-04-26) ----------------
+//
+// Read-only window into TaskRun for Telegram. Two entry points:
+//   /runs        \u2192 inline keyboard of the latest 12 runs (running
+//                  ones first, then recent finished). Tap to drill
+//                  in.
+//   /run <id>    \u2192 plain-text dump of one run (status, branch,
+//                  phase, durations, PR url, output tail).
+//
+// We deliberately keep the projection narrow (no thinkingOutput,
+// no full output) so the message stays under Telegram's 4096-byte
+// cap and we don't ship the agent's chain-of-thought to a chat
+// that may be archived externally.
+
+const RUN_STATUS_EMOJI: Record<string, string> = {
+  running: '\u25b6\ufe0f',
+  success: '\u2705',
+  failed: '\u274c',
+  aborted: '\ud83d\uded1',
+  skipped: '\u23ed\ufe0f',
+  'no-op': '\u26aa',
+};
+
+function fmtRelative(d: Date | null | undefined): string {
+  if (!d) return '\u2014';
+  const ms = Date.now() - d.getTime();
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  const days = Math.round(h / 24);
+  return `${days}d ago`;
+}
+
+function fmtDuration(startedAt: Date, finishedAt: Date | null): string {
+  const end = finishedAt ?? new Date();
+  const ms = end.getTime() - startedAt.getTime();
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m${rs ? ` ${rs}s` : ''}`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h${rm ? ` ${rm}m` : ''}`;
+}
+
+async function sendRunsPicker(chatId: string): Promise<void> {
+  // Fetch latest 12, but lift any currently-running entries to
+  // the top regardless of startedAt (they're the most useful
+  // signal for a "what is happening right now" query).
+  const recent = await db.taskRun.findMany({
+    take: 12,
+    orderBy: { startedAt: 'desc' },
+    select: {
+      id: true,
+      status: true,
+      startedAt: true,
+      finishedAt: true,
+      task: { select: { name: true } },
+    },
+  });
+  if (recent.length === 0) {
+    await sendMessage(chatId, 'No task runs yet.');
+    return;
+  }
+  recent.sort((a, b) => {
+    const aRunning = a.status === 'running' ? 0 : 1;
+    const bRunning = b.status === 'running' ? 0 : 1;
+    if (aRunning !== bRunning) return aRunning - bRunning;
+    return b.startedAt.getTime() - a.startedAt.getTime();
+  });
+  const buttons = recent.map((r) => {
+    const emoji = RUN_STATUS_EMOJI[r.status] ?? '\u2753';
+    const when =
+      r.status === 'running'
+        ? `running ${fmtDuration(r.startedAt, null)}`
+        : fmtRelative(r.finishedAt ?? r.startedAt);
+    // Cap label so the row stays readable on mobile. Telegram
+    // truncates labels at ~64 chars anyway; we leave headroom
+    // for the emoji and separator.
+    const taskName =
+      r.task.name.length > 36 ? r.task.name.slice(0, 33) + '\u2026' : r.task.name;
+    return [
+      {
+        text: `${emoji} ${taskName} \u00b7 ${when}`,
+        callback_data: `run:${r.id}`.slice(0, 64),
+      },
+    ];
+  });
+  await sendMessage(chatId, 'Recent runs:', { inline_keyboard: buttons });
+}
+
+async function sendRunDetail(chatId: string, runId: string): Promise<void> {
+  const run = await db.taskRun.findUnique({
+    where: { id: runId },
+    include: {
+      task: { select: { name: true, projectPath: true, agentName: true } },
+    },
+  });
+  if (!run) {
+    await sendMessage(chatId, `\u274c Run ${runId} not found.`);
+    return;
+  }
+  const emoji = RUN_STATUS_EMOJI[run.status] ?? '\u2753';
+  const lines: string[] = [];
+  lines.push(`${emoji} ${run.task.name}  \u2014 ${run.status}`);
+  lines.push('');
+  lines.push(`run id   : ${run.id}`);
+  if (run.task.projectPath) lines.push(`project  : ${run.task.projectPath}`);
+  if (run.task.agentName) lines.push(`agent    : ${run.task.agentName}`);
+  lines.push(
+    `started  : ${run.startedAt.toISOString()} (${fmtRelative(run.startedAt)})`,
+  );
+  if (run.finishedAt) {
+    lines.push(`finished : ${run.finishedAt.toISOString()}`);
+  }
+  lines.push(`duration : ${fmtDuration(run.startedAt, run.finishedAt)}`);
+  if (run.status === 'running' && run.phase) {
+    lines.push(
+      `phase    : ${run.phase}${run.phaseMessage ? ` \u2014 ${run.phaseMessage}` : ''}`,
+    );
+  }
+  if (run.branch) {
+    lines.push(
+      `branch   : ${run.branch}${run.baseBranch ? ` (from ${run.baseBranch})` : ''}`,
+    );
+  }
+  if (run.commitSha) lines.push(`commit   : ${run.commitSha.slice(0, 12)}`);
+  if (
+    run.filesChanged !== null ||
+    run.linesAdded !== null ||
+    run.linesRemoved !== null
+  ) {
+    lines.push(
+      `diff     : ${run.filesChanged ?? '?'} files, ` +
+        `+${run.linesAdded ?? 0} \u2212${run.linesRemoved ?? 0}`,
+    );
+  }
+  if (run.dryRun) lines.push('mode     : dry-run');
+  if (run.prUrl) lines.push(`PR       : ${run.prUrl}`);
+  if (run.mergeBackStatus) {
+    lines.push(
+      `merge    : ${run.mergeBackStatus}${
+        run.mergeBackDetails ? ` \u2014 ${run.mergeBackDetails}` : ''
+      }`,
+    );
+  }
+  if (run.error) {
+    // Surface a tail of the error \u2014 enough to triage from a
+    // phone, full text remains in the web UI.
+    const tail = run.error.length > 600 ? '\u2026' + run.error.slice(-600) : run.error;
+    lines.push('');
+    lines.push('error:');
+    lines.push(tail);
+  } else if (run.output && run.status !== 'running') {
+    const tail =
+      run.output.length > 800 ? '\u2026' + run.output.slice(-800) : run.output;
+    lines.push('');
+    lines.push('output (tail):');
+    lines.push(tail);
+  }
+  await sendMessage(chatId, lines.join('\n'));
+}
+
 /**
  * Validate + apply an agent change. Used by both the
  * `/agent <sId>` slash command and the inline-keyboard
@@ -355,6 +522,15 @@ export async function handleTelegramCallback(
       return;
     }
 
+    if (data.startsWith('run:')) {
+      const id = data.slice('run:'.length);
+      // Ack first to clear the spinner, THEN do the (slower) DB
+      // read for the detail message.
+      await answerCallbackQuery(cq.id);
+      await sendRunDetail(chatId, id);
+      return;
+    }
+
     console.warn(`[telegram] unknown callback_data: ${data}`);
     await answerCallbackQuery(cq.id);
   } catch (e) {
@@ -424,6 +600,8 @@ async function handleCommand(
           '/projects       pick a project (clickable list)',
           '/project <name> set the project context (fs tools chroot here)',
           '/project        clear project (global mode, no fs tools)',
+          '/runs           list recent task runs (clickable for details)',
+          '/run <id>       show details of a specific run',
           '/whoami         show chat id, agent, project, bound conv',
           '/stop           abort the current streaming reply',
           '/help           this message',
@@ -537,11 +715,24 @@ async function handleCommand(
       );
       return true;
     }
+    case '/runs': {
+      await sendRunsPicker(chatId);
+      return true;
+    }
+    case '/run': {
+      const id = args.trim().split(/\s+/)[0];
+      if (!id) {
+        await sendMessage(chatId, 'Usage: /run <run_id>  (use /runs to pick)');
+        return true;
+      }
+      await sendRunDetail(chatId, id);
+      return true;
+    }
     case '/stop': {
       const ac = inFlight.get(chatId);
       if (ac) {
         ac.abort();
-        await sendMessage(chatId, '🛑 Stopping...');
+        await sendMessage(chatId, '\ud83d\uded1 Stopping...');
       } else {
         await sendMessage(chatId, 'Nothing to stop.');
       }

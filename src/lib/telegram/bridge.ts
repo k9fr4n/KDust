@@ -66,6 +66,16 @@ const inFlight = new Map<string, AbortController>();
 // message the choice is persisted onto TelegramBinding.
 const pendingProject = new Map<string, string>();
 
+// Per-chat agent override pending for the next createBinding().
+// Populated by applyProjectChoice() when the picked Project has a
+// `defaultAgentSId` set: switching projects on Telegram should
+// also rebase the conversation onto the project's preferred agent
+// (Franck request 2026-04-27 18:01). Falls back to the global
+// telegramDefaultAgentSId when the project has no preference.
+// Process-local, consumed and cleared on the same createBinding()
+// call as pendingProject.
+const pendingAgent = new Map<string, string>();
+
 // ---- throttle config ----
 // Telegram per-chat rate limit is ~1 msg/s; we edit at 900ms so
 // the *last* edit (final answer) lands just under the budget and
@@ -172,8 +182,14 @@ async function sendAgentPicker(chatId: string): Promise<void> {
   );
   const cfg = await getAppConfig();
   const binding = await resolveBinding(chatId);
+  // Mirrors the resolution order used by the message handler so
+  // the \u2705 in the picker matches what the next turn will actually
+  // call: binding > pendingAgent (set by /project) > global default.
   const currentSId =
-    binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? null;
+    binding?.agentSId ??
+    pendingAgent.get(chatId) ??
+    cfg.telegramDefaultAgentSId ??
+    null;
   // 1 column, mark the current selection with a check.
   // Telegram caps inline_keyboard payloads at ~10kB; well under
   // for typical workspaces. If a workspace has >100 agents we
@@ -301,9 +317,11 @@ async function applyChatChoice(
       projectName: conv.projectName,
     },
   });
-  // Drop any pending project choice \u2014 we just rebound to a
-  // concrete conv, that conv's own projectName wins.
+  // Drop any pending project / agent choice \u2014 we just rebound
+  // to a concrete conv, that conv's own projectName + agentSId
+  // win.
   pendingProject.delete(chatId);
+  pendingAgent.delete(chatId);
   return {
     ok: true,
     title: conv.title,
@@ -511,6 +529,10 @@ async function applyAgentChoice(
     };
   }
   await dropBinding(chatId);
+  // An explicit /agent pick wins over any project-default agent
+  // queued by /project: clear the pending override so the next
+  // turn uses the global default we just wrote.
+  pendingAgent.delete(chatId);
   await db.appConfig.update({
     where: { id: 1 },
     data: { telegramDefaultAgentSId: sId },
@@ -548,6 +570,10 @@ async function applyProjectChoice(
   if (projectName === null) {
     await dropBinding(chatId);
     pendingProject.delete(chatId);
+    // Clearing the project context also drops any project-default
+    // agent override; the next conversation falls back to the
+    // global telegramDefaultAgentSId.
+    pendingAgent.delete(chatId);
     return {
       ok: true,
       message:
@@ -592,12 +618,29 @@ async function applyProjectChoice(
   // createBinding() picks it up.
   await dropBinding(chatId);
   pendingProject.set(chatId, canonical);
+
+  // Rebase to the project's default agent if it has one. Without
+  // this, switching projects would land back on the global
+  // telegramDefaultAgentSId \u2014 surprising behaviour when the
+  // project is set up with a specialised agent (e.g. an Infra-DevOps
+  // assistant for an SRE project, a TypeScript reviewer for a Next
+  // app, etc.). The user can still override per-conversation with
+  // /agent <sId>, which writes to TelegramBinding.agentSId on the
+  // next real message.
+  let agentSwitchedNote = '';
+  if (match.defaultAgentSId) {
+    pendingAgent.set(chatId, match.defaultAgentSId);
+    agentSwitchedNote = ` Agent rebased on the project default (${match.defaultAgentSId}).`;
+  } else {
+    pendingAgent.delete(chatId);
+  }
+
   return {
     ok: true,
     message:
       `\u2705 Project set to ${canonical}. The next message starts ` +
       `a fresh conversation with fs tools chrooted on ` +
-      `/projects/${canonical}.`,
+      `/projects/${canonical}.${agentSwitchedNote}`,
   };
 }
 
@@ -1138,7 +1181,11 @@ async function handleCommand(
       const cfg = await getAppConfig();
       const project =
         binding?.projectName ?? pendingProject.get(chatId) ?? null;
-      const agentSId = binding?.agentSId ?? cfg.telegramDefaultAgentSId ?? null;
+      const agentSId =
+        binding?.agentSId ??
+        pendingAgent.get(chatId) ??
+        cfg.telegramDefaultAgentSId ??
+        null;
       // Prefer the cached name on the Conversation row (set at
       // bind time). Fall back to a Dust lookup so the user
       // never sees a bare sId when the agent is resolvable.
@@ -1289,9 +1336,16 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
     if (await handleCommand(cmd, args, chatId)) return;
   }
 
-  // Resolve target agent: existing binding > AppConfig default.
+  // Resolve target agent. Priority order:
+  //   1. existing binding   (sticks until /project or /agent change)
+  //   2. pendingAgent       (set by /project when the project has a
+  //                          defaultAgentSId; consumed on createBinding)
+  //   3. global default     (cfg.telegramDefaultAgentSId)
   const binding = await resolveBinding(chatId);
-  const agentSId = binding?.agentSId ?? cfg.telegramDefaultAgentSId;
+  const agentSId =
+    binding?.agentSId ??
+    pendingAgent.get(chatId) ??
+    cfg.telegramDefaultAgentSId;
   if (!agentSId) {
     await sendMessage(
       chatId,
@@ -1333,8 +1387,10 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
         projectName,
         mcpServerIds,
       );
-      // Pending choice consumed; the binding row now carries it.
+      // Pending choices consumed; the binding row now carries
+      // both the project tenant and the resolved agent.
       pendingProject.delete(chatId);
+      pendingAgent.delete(chatId);
       stream = {
         conversation: created.dustConversation,
         userMessageSId: created.userMessageSId,
@@ -1359,6 +1415,7 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
           mcpServerIds,
         );
         pendingProject.delete(chatId);
+        pendingAgent.delete(chatId);
         stream = {
           conversation: created.dustConversation,
           userMessageSId: created.userMessageSId,

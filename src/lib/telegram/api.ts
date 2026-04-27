@@ -263,7 +263,16 @@ export async function editMessageText(
   chatId: string | number,
   messageId: number,
   text: string,
-  opts?: { parse_mode?: 'HTML' | 'MarkdownV2' },
+  opts?: {
+    parse_mode?: 'HTML' | 'MarkdownV2';
+    /**
+     * Optional inline keyboard. Used by interactive navigation
+     * surfaces (e.g. /projects folder browser) so we can mutate
+     * the existing message in place instead of stacking a fresh
+     * one for every drill-down.
+     */
+    reply_markup?: { inline_keyboard: { text: string; callback_data: string }[][] };
+  },
 ): Promise<void> {
   // editMessageText also goes through callGated so it respects
   // the global cooldown. We don't sleep-and-retry here \u2014 the
@@ -276,6 +285,7 @@ export async function editMessageText(
     text: text.length > 4096 ? text.slice(0, 4090) + '\u2026' : text,
     parse_mode: opts?.parse_mode,
     disable_web_page_preview: true,
+    reply_markup: opts?.reply_markup,
   });
 }
 

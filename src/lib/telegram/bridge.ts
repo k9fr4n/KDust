@@ -602,12 +602,171 @@ async function applyProjectChoice(
 }
 
 /**
+ * /projects browser \u2014 view builders.
+ *
+ * Telegram doesn't have native folder navigation, so we mimic it
+ * with a stack of inline keyboards backed by editMessageText:
+ *
+ *   Root view  : one button per L1 folder ("\ud83d\udcc1 clients (12)") +
+ *                inline projects directly under root (legacy /
+ *                un-foldered) + a "global / no project" exit.
+ *   L1 view    : one button per project under that L1 (label =
+ *                "L2/leaf" so duplicates across L2 are visible) +
+ *                "\u2190 back" to root.
+ *
+ * Re-rendering uses editMessageText with reply_markup to mutate
+ * the existing message in place. The user therefore sees a single
+ * scrolling-friendly bubble instead of a stack.
+ *
+ * callback_data scheme (Telegram caps at 64 bytes):
+ *   pnav:root            \u2014 redraw the root keyboard
+ *   pnav:l1:<name>       \u2014 drill into that L1 folder
+ *   proj:<fsPath>        \u2014 select a project (existing contract)
+ *   proj:__clear__       \u2014 clear current project (existing)
+ *
+ * The L1 \"name\" carries through as the key (folder names are
+ * validated [a-zA-Z0-9._-]+ by /api/folders so they're safe and
+ * short). We truncate defensively at 64 bytes, but a real-world
+ * L1 with a 50+ char name would be rejected by the folder API
+ * anyway.
+ */
+
+const PROJECTS_ROOT_LABEL = 'Pick a project:';
+
+/**
+ * Build the root keyboard: L1 folder buttons + "(unfiled)"
+ * projects (legacy) + the global-exit button.
+ *
+ * Returns null when the catalog is empty so the caller can short-
+ * circuit with an explanatory message.
+ */
+async function buildProjectsRootView(
+  chatId: string,
+): Promise<
+  | { text: string; markup: { inline_keyboard: { text: string; callback_data: string }[][] } }
+  | null
+> {
+  const projects = await listProjects();
+  if (projects.length === 0) return null;
+  const binding = await resolveBinding(chatId);
+  const current = binding?.projectName ?? null;
+
+  // Bucket projects under their L1 folder. fsPath shape:
+  //   "L1/L2/leaf"  -> bucket "L1"
+  //   "L1/leaf"     -> bucket "L1"   (depth-1 oddity, kept for fwd-compat)
+  //   "leaf"        -> bucket "(unfiled)"  (un-migrated rows)
+  const byL1 = new Map<string, typeof projects>();
+  for (const p of projects) {
+    const parts = p.relativePath.split('/');
+    const l1 = parts.length >= 2 ? parts[0] : '(unfiled)';
+    if (!byL1.has(l1)) byL1.set(l1, []);
+    byL1.get(l1)!.push(p);
+  }
+  const l1Names = [...byL1.keys()].sort((a, b) => {
+    if (a === '(unfiled)') return 1;
+    if (b === '(unfiled)') return -1;
+    return a.localeCompare(b);
+  });
+
+  const buttons: { text: string; callback_data: string }[][] = [];
+  for (const l1 of l1Names) {
+    const list = byL1.get(l1)!;
+    // For "(unfiled)" we expose projects directly at the root
+    // since there's no real folder to drill into. For real L1
+    // folders we render a single drill-in button per folder.
+    if (l1 === '(unfiled)') {
+      for (const p of list) {
+        const isCurrent = current === p.relativePath || current === p.name;
+        const label = p.name;
+        buttons.push([
+          {
+            text:
+              (isCurrent ? '\u2705 ' : '') +
+              (label.length > 50 ? label.slice(0, 47) + '\u2026' : label),
+            callback_data: `proj:${p.relativePath}`.slice(0, 64),
+          },
+        ]);
+      }
+      continue;
+    }
+    // Highlight the L1 with a checkmark when the current project
+    // lives inside it \u2014 lets the user spot their context at a glance.
+    const currentInL1 =
+      current && (current.startsWith(`${l1}/`) || current === l1);
+    const text =
+      (currentInL1 ? '\u2705 ' : '') +
+      `\ud83d\udcc1 ${l1} (${list.length})`;
+    buttons.push([
+      {
+        text: text.length > 60 ? text.slice(0, 59) + '\u2026' : text,
+        callback_data: `pnav:l1:${l1}`.slice(0, 64),
+      },
+    ]);
+  }
+  buttons.push([
+    {
+      text: (current === null ? '\u2705 ' : '') + '\u2014 global (no project) \u2014',
+      callback_data: 'proj:__clear__',
+    },
+  ]);
+  return {
+    text: PROJECTS_ROOT_LABEL,
+    markup: { inline_keyboard: buttons },
+  };
+}
+
+/**
+ * Build the drill-down keyboard for a specific L1 folder.
+ *
+ * Returns null when the L1 has no projects (e.g. the folder was
+ * just emptied via Move\u2026 and the user is on a stale keyboard).
+ */
+async function buildProjectsL1View(
+  chatId: string,
+  l1: string,
+): Promise<
+  | { text: string; markup: { inline_keyboard: { text: string; callback_data: string }[][] } }
+  | null
+> {
+  const projects = await listProjects();
+  const list = projects.filter((p) => p.relativePath.startsWith(`${l1}/`));
+  if (list.length === 0) return null;
+  const binding = await resolveBinding(chatId);
+  const current = binding?.projectName ?? null;
+
+  const sorted = [...list].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  const buttons: { text: string; callback_data: string }[][] = [];
+  for (const p of sorted) {
+    const isCurrent = current === p.relativePath || current === p.name;
+    const parts = p.relativePath.split('/');
+    // "L2/leaf" when depth-2; bare leaf when only L1/leaf.
+    const label = parts.length >= 3 ? `${parts[1]}/${parts[parts.length - 1]}` : p.name;
+    buttons.push([
+      {
+        text:
+          (isCurrent ? '\u2705 ' : '') +
+          (label.length > 50 ? label.slice(0, 47) + '\u2026' : label),
+        callback_data: `proj:${p.relativePath}`.slice(0, 64),
+      },
+    ]);
+  }
+  // Back button always last, on its own row.
+  buttons.push([{ text: '\u2190 back', callback_data: 'pnav:root' }]);
+  return {
+    text: `\ud83d\udcc1 ${l1} \u2014 pick a project:`,
+    markup: { inline_keyboard: buttons },
+  };
+}
+
+/**
  * Dispatch a Telegram callback_query (inline keyboard button
  * tap). We always answer the query first to clear the spinner
  * on the client, then act on the encoded `data` field.
  *
  * Recognised callback_data formats:
- *   proj:<name>      switch to that project
+ *   pnav:root        redraw the /projects root keyboard
+ *   pnav:l1:<name>   drill into an L1 folder
+ *   proj:<fsPath>    switch to that project
  *   proj:__clear__   clear the project (global mode)
  *
  * Unknown formats are quietly acked + logged so a stale
@@ -633,6 +792,47 @@ export async function handleTelegramCallback(
       console.warn(
         `[telegram] rejected callback from chat_id=${chatId} (not in whitelist)`,
       );
+      await answerCallbackQuery(cq.id);
+      return;
+    }
+
+    // Folder-browser navigation. We mutate the existing message in
+    // place via editMessageText so the user gets a single bubble
+    // that morphs as they drill down / back up. Failures here are
+    // logged but acked silently \u2014 a stale keyboard is not worth
+    // a scary error message.
+    if (data === 'pnav:root' || data.startsWith('pnav:l1:')) {
+      const messageId = cq.message?.message_id ?? null;
+      try {
+        if (data === 'pnav:root') {
+          const view = await buildProjectsRootView(chatId);
+          if (view && messageId !== null) {
+            await editMessageText(chatId, messageId, view.text, {
+              reply_markup: view.markup,
+            });
+          }
+        } else {
+          const l1 = data.slice('pnav:l1:'.length);
+          const view = await buildProjectsL1View(chatId, l1);
+          if (view && messageId !== null) {
+            await editMessageText(chatId, messageId, view.text, {
+              reply_markup: view.markup,
+            });
+          } else if (messageId !== null) {
+            // Folder is now empty (e.g. project was moved out
+            // while the user held the old keyboard). Bounce back
+            // to root so they have a fresh state.
+            const root = await buildProjectsRootView(chatId);
+            if (root) {
+              await editMessageText(chatId, messageId, root.text, {
+                reply_markup: root.markup,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`[telegram] pnav editMessageText failed: ${e instanceof Error ? e.message : e}`);
+      }
       await answerCallbackQuery(cq.id);
       return;
     }
@@ -771,77 +971,12 @@ async function handleCommand(
       return true;
     }
     case '/projects': {
-      const projects = await listProjects();
-      if (projects.length === 0) {
+      const view = await buildProjectsRootView(chatId);
+      if (!view) {
         await sendMessage(chatId, 'No projects under /projects yet.');
         return true;
       }
-      const binding = await resolveBinding(chatId);
-      const current = binding?.projectName ?? null;
-
-      // Phase 4 (2026-04-27): keyboard groups by L1 folder so the
-      // catalog stays scannable past ~10 projects. Each row shows
-      // the leaf name; the L1 path is rendered as a section header
-      // in the message body (Telegram inline keyboards have no
-      // group separator, so headers go in the text).
-      //
-      // callback_data carries the full fsPath ("L1/L2/leaf") which
-      // is the canonical identifier post-Phase-1. Telegram caps
-      // callback_data at 64 bytes; we keep that constraint by
-      // truncating the path defensively (any real-world fsPath at
-      // depth 2 with normal directory names fits comfortably).
-      const groups = new Map<string, typeof projects>();
-      for (const p of projects) {
-        const parts = p.relativePath.split('/');
-        const l1 = parts.length >= 2 ? parts[0] : '(unfiled)';
-        if (!groups.has(l1)) groups.set(l1, []);
-        groups.get(l1)!.push(p);
-      }
-      const sortedKeys = [...groups.keys()].sort((a, b) => {
-        if (a === '(unfiled)') return 1;
-        if (b === '(unfiled)') return -1;
-        return a.localeCompare(b);
-      });
-
-      const buttons: { text: string; callback_data: string }[][] = [];
-      const lines: string[] = ['Pick a project:'];
-      for (const l1 of sortedKeys) {
-        // No parse_mode is passed to sendMessage below, so we keep
-        // the header in plain text (markdown asterisks would
-        // render as literal characters).
-        lines.push('', `\ud83d\udcc1 ${l1}`);
-        const list = groups
-          .get(l1)!
-          .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-        for (const p of list) {
-          const isCurrent = current === p.relativePath || current === p.name;
-          // Show "L2/leaf" inside the button so two leaves with
-          // the same name (under different L2) are distinguishable
-          // at a glance.
-          const parts = p.relativePath.split('/');
-          const label =
-            parts.length >= 3
-              ? `${parts[1]}/${parts[parts.length - 1]}`
-              : p.name;
-          buttons.push([
-            {
-              text:
-                (isCurrent ? '\u2705 ' : '') +
-                (label.length > 50 ? label.slice(0, 47) + '\u2026' : label),
-              callback_data: `proj:${p.relativePath}`.slice(0, 64),
-            },
-          ]);
-        }
-      }
-      buttons.push([
-        {
-          text: (current === null ? '\u2705 ' : '') + '\u2014 global (no project) \u2014',
-          callback_data: 'proj:__clear__',
-        },
-      ]);
-      await sendMessage(chatId, lines.join('\n'), {
-        inline_keyboard: buttons,
-      });
+      await sendMessage(chatId, view.text, view.markup);
       return true;
     }
     case '/project': {

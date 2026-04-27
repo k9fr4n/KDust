@@ -57,6 +57,7 @@ import {
   branchExistsOnOrigin,
 } from '../git';
 import { resolveBranchPolicy } from '../branch-policy';
+import { resolveProjectByPathOrName } from '../folder-path';
 
 export interface TaskRunnerHandle {
   orchestratorRunId: string | null;
@@ -429,16 +430,36 @@ export async function startTaskRunnerServer(
           `refused: task "${child.name}" is a generic template and requires a "project" argument to supply its run context.`,
         );
       }
-      const projRow = await db.project.findFirst({
-        where: { name: projectArg },
-        select: { name: true },
-      });
+      // Phase 1+ (folder hierarchy): a project's canonical
+      // identifier is its fsPath ("L1/L2/leaf"). The agent may
+      // still pass the bare leaf name (legacy contract). We
+      // resolve through resolveProjectByPathOrName, but in MCP
+      // context we want to *refuse* ambiguous bare-leaf inputs
+      // — silently picking one project over another when two
+      // share a leaf name would be a footgun for the agent.
+      const projRow = await resolveProjectByPathOrName(projectArg);
       if (!projRow) {
         return err(
           `refused: unknown project "${projectArg}" (not declared in /settings/projects).`,
         );
       }
-      projectOverride = projRow.name;
+      // If the input was a bare leaf (not a path), check for
+      // collisions and demand the full path when we find more
+      // than one project sharing that name.
+      if (!projectArg.includes('/')) {
+        const candidates = await db.project.findMany({
+          where: { name: projectArg },
+          select: { fsPath: true, name: true },
+        });
+        if (candidates.length > 1) {
+          const paths = candidates.map((c) => c.fsPath ?? c.name).join(', ');
+          return err(
+            `refused: project name "${projectArg}" is ambiguous (matches: ${paths}). ` +
+              `Pass the full path "L1/L2/${projectArg}" instead.`,
+          );
+        }
+      }
+      projectOverride = projRow.fsPath ?? projRow.name;
     } else if (projectArg) {
       return err(
         `refused: task "${child.name}" is bound to a specific project; the "project" argument is only allowed for generic (template) tasks.`,
@@ -644,7 +665,11 @@ export async function startTaskRunnerServer(
               'child run will use and substitutes {{PROJECT}} in the prompt. ' +
               'MUST be omitted when the child task is project-bound: passing ' +
               'it for a bound task is rejected to prevent accidental ' +
-              'cross-project execution. Must be a project name known to KDust.',
+              'cross-project execution. Accepts either the full hierarchical ' +
+              'path ("L1/L2/leaf", e.g. "clients/acme/myapp") or the bare ' +
+              'leaf name (legacy contract); the bare name is rejected if ' +
+              'multiple projects share the same leaf, in which case the ' +
+              'full path must be supplied to disambiguate.',
           ),
         max_wait_ms: z
           .number()

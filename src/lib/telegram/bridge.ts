@@ -37,6 +37,7 @@ import {
 } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
 import { listProjects } from '@/lib/projects';
+import { resolveProjectByPathOrName } from '@/lib/folder-path';
 import {
   getFsServerId,
   getChatTaskRunnerServerId,
@@ -554,14 +555,35 @@ async function applyProjectChoice(
         'conversation in global mode (no fs tools).',
     };
   }
-  const projects = await listProjects();
-  const match = projects.find((p) => p.name === projectName);
+  // Phase 4 (2026-04-27): accept either the bare leaf name (legacy
+  // contract, /project myapp) or the full hierarchical path
+  // (/project clients/acme/myapp). resolveProjectByPathOrName tries
+  // fsPath first, then falls back to the leaf name. We refuse the
+  // bare-leaf form when ambiguous so the user knows to disambiguate
+  // — silent first-match would chroot fs tools on the wrong dir.
+  const match = await resolveProjectByPathOrName(projectName);
   if (!match) {
     return {
       ok: false,
       message: `\u274c Project "${projectName}" not found. Run /projects for the list.`,
     };
   }
+  if (!projectName.includes('/')) {
+    const collisions = await db.project.findMany({
+      where: { name: projectName },
+      select: { fsPath: true, name: true },
+    });
+    if (collisions.length > 1) {
+      const paths = collisions.map((c) => c.fsPath ?? c.name).join(', ');
+      return {
+        ok: false,
+        message:
+          `\u274c "${projectName}" is ambiguous (matches: ${paths}). ` +
+          `Use the full path, e.g. /project ${collisions[0].fsPath ?? collisions[0].name}.`,
+      };
+    }
+  }
+  const canonical = match.fsPath ?? match.name;
   // Switching project resets the conversation: a fresh fs-cli
   // chroot makes any reuse of the previous Dust conv tool
   // history misleading. The binding row will be recreated on
@@ -569,13 +591,13 @@ async function applyProjectChoice(
   // project choice in the in-memory pending map so
   // createBinding() picks it up.
   await dropBinding(chatId);
-  pendingProject.set(chatId, match.name);
+  pendingProject.set(chatId, canonical);
   return {
     ok: true,
     message:
-      `\u2705 Project set to ${match.name}. The next message starts ` +
+      `\u2705 Project set to ${canonical}. The next message starts ` +
       `a fresh conversation with fs tools chrooted on ` +
-      `/projects/${match.name}.`,
+      `/projects/${canonical}.`,
   };
 }
 
@@ -734,8 +756,8 @@ async function handleCommand(
           '/new            start a fresh conversation',
           '/agents         pick an agent (clickable list)',
           '/agent <sId>    switch agent directly (also resets the conversation)',
-          '/projects       pick a project (clickable list)',
-          '/project <name> set the project context (fs tools chroot here)',
+          '/projects       pick a project (clickable list, grouped by folder)',
+          '/project <path> set the project context (accepts L1/L2/leaf or bare leaf)',
           '/project        clear project (global mode, no fs tools)',
           '/chats          list recent conversations (clickable to enter)',
           '/chat <id>      enter an existing conversation by id',
@@ -756,29 +778,68 @@ async function handleCommand(
       }
       const binding = await resolveBinding(chatId);
       const current = binding?.projectName ?? null;
-      // Build a 1-column inline keyboard (one button per
-      // project). Telegram caps callback_data at 64 bytes; we
-      // prefix with `proj:` so the dispatcher can route the
-      // callback unambiguously, and we trust project names to
-      // be short directory identifiers (no risk of overflow at
-      // KDust\u2019s scale, but we truncate defensively).
-      const buttons = projects.map((p) => [
-        {
-          text:
-            (current === p.name ? '\u2705 ' : '') +
-            (p.name.length > 50 ? p.name.slice(0, 47) + '\u2026' : p.name),
-          callback_data: `proj:${p.name}`.slice(0, 64),
-        },
-      ]);
-      // Add a "Clear / global" button at the bottom so the
-      // user can drop the project context with one tap.
+
+      // Phase 4 (2026-04-27): keyboard groups by L1 folder so the
+      // catalog stays scannable past ~10 projects. Each row shows
+      // the leaf name; the L1 path is rendered as a section header
+      // in the message body (Telegram inline keyboards have no
+      // group separator, so headers go in the text).
+      //
+      // callback_data carries the full fsPath ("L1/L2/leaf") which
+      // is the canonical identifier post-Phase-1. Telegram caps
+      // callback_data at 64 bytes; we keep that constraint by
+      // truncating the path defensively (any real-world fsPath at
+      // depth 2 with normal directory names fits comfortably).
+      const groups = new Map<string, typeof projects>();
+      for (const p of projects) {
+        const parts = p.relativePath.split('/');
+        const l1 = parts.length >= 2 ? parts[0] : '(unfiled)';
+        if (!groups.has(l1)) groups.set(l1, []);
+        groups.get(l1)!.push(p);
+      }
+      const sortedKeys = [...groups.keys()].sort((a, b) => {
+        if (a === '(unfiled)') return 1;
+        if (b === '(unfiled)') return -1;
+        return a.localeCompare(b);
+      });
+
+      const buttons: { text: string; callback_data: string }[][] = [];
+      const lines: string[] = ['Pick a project:'];
+      for (const l1 of sortedKeys) {
+        // No parse_mode is passed to sendMessage below, so we keep
+        // the header in plain text (markdown asterisks would
+        // render as literal characters).
+        lines.push('', `\ud83d\udcc1 ${l1}`);
+        const list = groups
+          .get(l1)!
+          .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+        for (const p of list) {
+          const isCurrent = current === p.relativePath || current === p.name;
+          // Show "L2/leaf" inside the button so two leaves with
+          // the same name (under different L2) are distinguishable
+          // at a glance.
+          const parts = p.relativePath.split('/');
+          const label =
+            parts.length >= 3
+              ? `${parts[1]}/${parts[parts.length - 1]}`
+              : p.name;
+          buttons.push([
+            {
+              text:
+                (isCurrent ? '\u2705 ' : '') +
+                (label.length > 50 ? label.slice(0, 47) + '\u2026' : label),
+              callback_data: `proj:${p.relativePath}`.slice(0, 64),
+            },
+          ]);
+        }
+      }
       buttons.push([
         {
           text: (current === null ? '\u2705 ' : '') + '\u2014 global (no project) \u2014',
           callback_data: 'proj:__clear__',
         },
       ]);
-      await sendMessage(chatId, 'Pick a project:', {
+      await sendMessage(chatId, lines.join('\n'), {
         inline_keyboard: buttons,
       });
       return true;

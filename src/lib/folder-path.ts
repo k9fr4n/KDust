@@ -90,3 +90,41 @@ export async function resolveProjectByPathOrName(value: string): Promise<Project
   if (byPath) return byPath;
   return db.project.findFirst({ where: { name: value } });
 }
+
+/**
+ * Folder validation helpers for API layer (Phase 2, 2026-04-27).
+ * Centralises the depth-2 invariant check so /api/folders POST/PATCH
+ * and /api/projects/:id/move share the same logic.
+ */
+export type FolderDepth = 'root' /* L1 */ | 'leaf' /* L2 */ | 'invalid';
+
+export async function classifyFolderDepth(folderId: string): Promise<FolderDepth> {
+  const f = await db.folder.findUnique({
+    where: { id: folderId },
+    include: { parent: true },
+  });
+  if (!f) return 'invalid';
+  if (!f.parent) return 'root'; // L1
+  if (f.parent.parentId === null) return 'leaf'; // L2
+  return 'invalid'; // depth >= 3, schema-allowed but API-refused
+}
+
+/**
+ * Returns true when at least one TaskRun is currently 'running' or
+ * 'pending' for any of the given project fsPaths. Used as a guard
+ * before mv / rename operations: holding the directory open while
+ * the runner is mid-clone/checkout/push corrupts the worktree.
+ *
+ * Caller should respond 409 with a clear message; the UI / Telegram
+ * are expected to surface "wait for the run to finish, then retry".
+ */
+export async function hasActiveRunForFsPaths(fsPaths: string[]): Promise<boolean> {
+  if (fsPaths.length === 0) return false;
+  const n = await db.taskRun.count({
+    where: {
+      status: { in: ['running', 'pending'] },
+      task: { is: { projectPath: { in: fsPaths } } },
+    },
+  });
+  return n > 0;
+}

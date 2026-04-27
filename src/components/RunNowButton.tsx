@@ -26,7 +26,12 @@ export function RunNowButton({
 }) {
   const [state, setState] = useState<'idle' | 'running' | 'ok' | 'ko'>('idle');
   const [open, setOpen] = useState(false);
-  const [projects, setProjects] = useState<Array<{ name: string; branch: string }>>([]);
+  // Phase 3 (2026-04-27): projects now carry fsPath; we pass that
+  // (full hierarchy path, e.g. "clients/acme/myapp") to the run API
+  // so post-Phase-1 generic tasks resolve to the right working dir.
+  const [projects, setProjects] = useState<
+    Array<{ name: string; branch: string; fsPath: string | null }>
+  >([]);
   const [picked, setPicked] = useState('');
   const router = useRouter();
 
@@ -123,11 +128,30 @@ export function RunNowButton({
               autoFocus
             >
               <option value="">— select a project —</option>
-              {projects.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name} ({p.branch})
-                </option>
-              ))}
+              {/* Group projects by L1 folder for readability when
+                  the catalog grows. We derive the L1/L2 path from
+                  fsPath ("L1/L2/leaf"); legacy rows without fsPath
+                  end up in the implicit "(unfiled)" group at top. */}
+              {(() => {
+                const groups = new Map<string, typeof projects>();
+                for (const p of projects) {
+                  const parts = (p.fsPath ?? p.name).split('/');
+                  const groupKey =
+                    parts.length >= 2 ? parts.slice(0, parts.length - 1).join('/') : '(unfiled)';
+                  if (!groups.has(groupKey)) groups.set(groupKey, []);
+                  groups.get(groupKey)!.push(p);
+                }
+                const sortedKeys = [...groups.keys()].sort();
+                return sortedKeys.map((g) => (
+                  <optgroup key={g} label={g}>
+                    {groups.get(g)!.map((p) => (
+                      <option key={p.name} value={p.fsPath ?? p.name}>
+                        {p.name} ({p.branch})
+                      </option>
+                    ))}
+                  </optgroup>
+                ));
+              })()}
             </select>
             <div className="flex gap-1 justify-end">
               <button

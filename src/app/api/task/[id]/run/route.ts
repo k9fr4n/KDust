@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { runTask } from '@/lib/cron/runner';
 import { db } from '@/lib/db';
 import { getCurrentUserEmail } from '@/lib/dust/current-user';
+import { resolveProjectByPathOrName } from '@/lib/folder-path';
 export const runtime = 'nodejs';
 
 /**
@@ -35,21 +36,28 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   });
   if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  // Generic task → project arg is REQUIRED.
+  // Generic task → project arg is REQUIRED. Accept either the
+  // full fsPath (post Phase-1, e.g. "clients/acme/myapp") or the
+  // bare leaf name (legacy callers / Telegram bindings on names).
+  // resolveProjectByPathOrName tries fsPath first then falls back
+  // to name; on success we normalise projectArg to the canonical
+  // fsPath so the runner mounts the right directory.
+  let resolvedProjectArg: string | undefined = projectArg;
   if (task.projectPath === null) {
     if (!projectArg) {
       return NextResponse.json(
-        { error: `task "${task.name}" is generic and requires { project: "<name>" } in the body` },
+        { error: `task "${task.name}" is generic and requires { project: "<fsPath|name>" } in the body` },
         { status: 400 },
       );
     }
-    const ok = await db.project.findFirst({ where: { name: projectArg }, select: { name: true } });
+    const ok = await resolveProjectByPathOrName(projectArg);
     if (!ok) {
       return NextResponse.json(
         { error: `unknown project "${projectArg}"` },
         { status: 400 },
       );
     }
+    resolvedProjectArg = ok.fsPath ?? ok.name;
   } else if (projectArg && projectArg !== task.projectPath) {
     // Project-bound task → reject mismatching project arg.
     return NextResponse.json(
@@ -77,9 +85,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     /* ignore */
   }
   void runTask(id, {
-    ...(projectArg ? { projectOverride: projectArg } : {}),
+    ...(resolvedProjectArg ? { projectOverride: resolvedProjectArg } : {}),
     trigger: 'manual',
     triggeredBy,
   });
-  return NextResponse.json({ ok: true, triggered: id, project: projectArg ?? task.projectPath });
+  return NextResponse.json({ ok: true, triggered: id, project: resolvedProjectArg ?? task.projectPath });
 }

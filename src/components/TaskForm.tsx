@@ -95,6 +95,11 @@ type Project = {
   defaultBaseBranch: string;
   branchPrefix: string;
   protectedBranches: string;
+  // Phase 1 (2026-04-27): full path under /projects, e.g.
+  // "clients/acme/myapp". Null only for legacy rows not yet
+  // migrated. The picker uses this as the form value so a project
+  // is unambiguously identified across the folder hierarchy.
+  fsPath: string | null;
 };
 
 export function TaskForm({
@@ -338,11 +343,31 @@ export function TaskForm({
                 required={form.projectPath !== null}
               >
                 <option value="" className={optCls}>— select a project —</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.name} className={optCls}>
-                    {p.name} ({p.branch})
-                  </option>
-                ))}
+                {/* Phase 3 (2026-04-27): grouped by L1/L2 folder
+                    path so /clients/acme vs /internal/utils is
+                    obvious in the dropdown. Form value is the
+                    project's fsPath (canonical identifier across
+                    the folder hierarchy); legacy rows without
+                    fsPath fall back to the leaf name. */}
+                {(() => {
+                  const groups = new Map<string, Project[]>();
+                  for (const p of projects) {
+                    const parts = (p.fsPath ?? p.name).split('/');
+                    const groupKey =
+                      parts.length >= 2 ? parts.slice(0, parts.length - 1).join('/') : '(unfiled)';
+                    if (!groups.has(groupKey)) groups.set(groupKey, []);
+                    groups.get(groupKey)!.push(p);
+                  }
+                  return [...groups.keys()].sort().map((g) => (
+                    <optgroup key={g} label={g}>
+                      {groups.get(g)!.map((p) => (
+                        <option key={p.id} value={p.fsPath ?? p.name} className={optCls}>
+                          {p.name} ({p.branch})
+                        </option>
+                      ))}
+                    </optgroup>
+                  ));
+                })()}
               </select>
               {projects.length === 0 && (
                 <span className="text-xs text-amber-600 dark:text-amber-400">
@@ -627,7 +652,12 @@ export function TaskForm({
             default is shown as placeholder + hint text so the user
             knows exactly what the empty state resolves to. */}
         {(() => {
-          const proj = projects.find((p) => p.name === form.projectPath);
+          // Phase 3: form.projectPath now holds the project's fsPath
+          // (full hierarchy path). Match by fsPath first, fall back
+          // to leaf name for legacy un-migrated values.
+          const proj = projects.find(
+            (p) => (p.fsPath ?? p.name) === form.projectPath || p.name === form.projectPath,
+          );
           const projBase = proj?.defaultBaseBranch ?? 'main';
           const projPrefix = proj?.branchPrefix ?? 'kdust';
           const projProtected = proj?.protectedBranches ?? 'main,master,develop,production,prod';

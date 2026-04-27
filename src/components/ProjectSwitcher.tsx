@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, FolderGit2, Check } from 'lucide-react';
 
-type Project = { id: string; name: string; branch: string };
+type Project = { id: string; name: string; branch: string; fsPath: string | null };
 
 export function ProjectSwitcher() {
   const [open, setOpen] = useState(false);
@@ -69,7 +69,11 @@ export function ProjectSwitcher() {
         title="Current project"
       >
         <FolderGit2 size={14} />
-        <span className="max-w-[140px] truncate">{current ?? 'All projects'}</span>
+        {/* Show only the leaf for the trigger to keep it compact;
+            the dropdown reveals the full L1/L2/leaf path. */}
+        <span className="max-w-[140px] truncate">
+          {current ? current.split('/').pop() : 'All projects'}
+        </span>
         <ChevronDown size={14} className="text-slate-400" />
       </button>
 
@@ -85,20 +89,43 @@ export function ProjectSwitcher() {
           {projects.length > 0 && (
             <div className="border-t border-slate-200 dark:border-slate-800 my-1" />
           )}
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => select(p.name)}
-              className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <FolderGit2 size={14} className="text-slate-400 shrink-0" />
-                <span className="truncate">{p.name}</span>
-                <span className="text-xs text-slate-500 shrink-0">({p.branch})</span>
-              </span>
-              {current === p.name && <Check size={14} className="text-green-600" />}
-            </button>
-          ))}
+          {/* Phase 3 (2026-04-27): grouped by L1/L2 folder path so
+              same-named projects in different folders are visually
+              distinct. Cookie stores the canonical fsPath. */}
+          {(() => {
+            const groups = new Map<string, Project[]>();
+            for (const p of projects) {
+              const parts = (p.fsPath ?? p.name).split('/');
+              const k =
+                parts.length >= 2 ? parts.slice(0, parts.length - 1).join('/') : '(unfiled)';
+              if (!groups.has(k)) groups.set(k, []);
+              groups.get(k)!.push(p);
+            }
+            return [...groups.keys()].sort().map((g) => (
+              <div key={g}>
+                <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
+                  {g}
+                </div>
+                {groups.get(g)!.map((p) => {
+                  const value = p.fsPath ?? p.name;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => select(value)}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <FolderGit2 size={14} className="text-slate-400 shrink-0" />
+                        <span className="truncate">{p.name}</span>
+                        <span className="text-xs text-slate-500 shrink-0">({p.branch})</span>
+                      </span>
+                      {current === value && <Check size={14} className="text-green-600" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ));
+          })()}
           {projects.length === 0 && (
             <p className="px-3 py-2 text-xs text-slate-500">No projects yet.</p>
           )}

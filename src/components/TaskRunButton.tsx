@@ -32,7 +32,9 @@ export function TaskRunButton({
   const [msg, setMsg] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [picked, setPicked] = useState('');
-  const [projects, setProjects] = useState<{ name: string; branch: string }[]>([]);
+  const [projects, setProjects] = useState<
+    { name: string; branch: string; fsPath: string | null }[]
+  >([]);
 
   // Lazy-load the project list when the picker opens. Avoids a
   // useless /api/projects hit on every task page load.
@@ -127,11 +129,28 @@ export function TaskRunButton({
               autoFocus
             >
               <option value="">— select a project —</option>
-              {projects.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name} ({p.branch})
-                </option>
-              ))}
+              {/* Phase 3 (2026-04-27): grouped picker, fsPath as
+                  value so generic-task dispatch resolves under the
+                  folder hierarchy. Same pattern as RunNowButton. */}
+              {(() => {
+                const groups = new Map<string, typeof projects>();
+                for (const p of projects) {
+                  const parts = (p.fsPath ?? p.name).split('/');
+                  const k =
+                    parts.length >= 2 ? parts.slice(0, parts.length - 1).join('/') : '(unfiled)';
+                  if (!groups.has(k)) groups.set(k, []);
+                  groups.get(k)!.push(p);
+                }
+                return [...groups.keys()].sort().map((g) => (
+                  <optgroup key={g} label={g}>
+                    {groups.get(g)!.map((p) => (
+                      <option key={p.name} value={p.fsPath ?? p.name}>
+                        {p.name} ({p.branch})
+                      </option>
+                    ))}
+                  </optgroup>
+                ));
+              })()}
             </select>
             <div className="flex gap-1 justify-end">
               <button

@@ -716,10 +716,17 @@ async function buildProjectsRootView(
 }
 
 /**
- * Build the drill-down keyboard for a specific L1 folder.
+ * Build the keyboard for a specific L1 folder.
  *
- * Returns null when the L1 has no projects (e.g. the folder was
- * just emptied via Move\u2026 and the user is on a stale keyboard).
+ * Two-tier listing:
+ *   - L2 sub-folders are rendered as drill-in buttons "\ud83d\udcc1 <name> (N)"
+ *     so a deeply populated L1 stays scannable.
+ *   - Projects directly under L1 (depth-1 fsPath "L1/leaf", no L2)
+ *     appear inline as project buttons.
+ *
+ * "\u2190 back" returns to the root view. Returns null when the L1 is
+ * empty (e.g. last project moved out while keyboard was open) so
+ * the caller can bounce back to root with a fresh state.
  */
 async function buildProjectsL1View(
   chatId: string,
@@ -734,13 +741,55 @@ async function buildProjectsL1View(
   const binding = await resolveBinding(chatId);
   const current = binding?.projectName ?? null;
 
-  const sorted = [...list].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-  const buttons: { text: string; callback_data: string }[][] = [];
-  for (const p of sorted) {
-    const isCurrent = current === p.relativePath || current === p.name;
+  // Bucket by L2: depth-3 fsPath = "L1/L2/leaf" -> L2 group;
+  // depth-2 fsPath = "L1/leaf" -> rendered inline (no L2 layer).
+  const byL2 = new Map<string, typeof list>();
+  const direct: typeof list = [];
+  for (const p of list) {
     const parts = p.relativePath.split('/');
-    // "L2/leaf" when depth-2; bare leaf when only L1/leaf.
-    const label = parts.length >= 3 ? `${parts[1]}/${parts[parts.length - 1]}` : p.name;
+    if (parts.length >= 3) {
+      const l2 = parts[1];
+      if (!byL2.has(l2)) byL2.set(l2, []);
+      byL2.get(l2)!.push(p);
+    } else {
+      direct.push(p);
+    }
+  }
+
+  const buttons: { text: string; callback_data: string }[][] = [];
+
+  // L2 sub-folders first (drill-in). Highlight \u2705 if the current
+  // project lives under this L2.
+  const l2Names = [...byL2.keys()].sort((a, b) => a.localeCompare(b));
+  for (const l2 of l2Names) {
+    const sub = byL2.get(l2)!;
+    const currentInL2 =
+      current && current.startsWith(`${l1}/${l2}/`);
+    const text =
+      (currentInL2 ? '\u2705 ' : '') +
+      `\ud83d\udcc1 ${l2} (${sub.length})`;
+    buttons.push([
+      {
+        text: text.length > 60 ? text.slice(0, 59) + '\u2026' : text,
+        // pnav:l2:<l1>/<l2> \u2014 we keep the full L1/L2 pair in the
+        // callback to avoid an extra round-trip (the L1 view is
+        // stateless re: which root we came from). Telegram caps
+        // callback_data at 64 bytes; folder names are validated
+        // [a-zA-Z0-9._-]+ so two short folder names always fit.
+        callback_data: `pnav:l2:${l1}/${l2}`.slice(0, 64),
+      },
+    ]);
+  }
+
+  // Then projects living directly under L1 (no L2). Surfacing them
+  // inline avoids forcing a useless drill-step when the layout is
+  // shallow.
+  const directSorted = [...direct].sort((a, b) =>
+    a.relativePath.localeCompare(b.relativePath),
+  );
+  for (const p of directSorted) {
+    const isCurrent = current === p.relativePath || current === p.name;
+    const label = p.name;
     buttons.push([
       {
         text:
@@ -750,10 +799,66 @@ async function buildProjectsL1View(
       },
     ]);
   }
-  // Back button always last, on its own row.
+
   buttons.push([{ text: '\u2190 back', callback_data: 'pnav:root' }]);
   return {
-    text: `\ud83d\udcc1 ${l1} \u2014 pick a project:`,
+    text: `\ud83d\udcc1 ${l1}`,
+    markup: { inline_keyboard: buttons },
+  };
+}
+
+/**
+ * Build the keyboard for a specific L2 folder (drilled in from a
+ * given L1). Lists the projects directly under L1/L2 and ships an
+ * "\u2190 back" button that returns to the parent L1 view.
+ *
+ * Returns null when L1/L2 is empty (stale keyboard) so the caller
+ * can fall back gracefully.
+ */
+async function buildProjectsL2View(
+  chatId: string,
+  l1: string,
+  l2: string,
+): Promise<
+  | { text: string; markup: { inline_keyboard: { text: string; callback_data: string }[][] } }
+  | null
+> {
+  const projects = await listProjects();
+  const prefix = `${l1}/${l2}/`;
+  const list = projects.filter((p) => p.relativePath.startsWith(prefix));
+  if (list.length === 0) return null;
+  const binding = await resolveBinding(chatId);
+  const current = binding?.projectName ?? null;
+
+  const sorted = [...list].sort((a, b) =>
+    a.relativePath.localeCompare(b.relativePath),
+  );
+  const buttons: { text: string; callback_data: string }[][] = [];
+  for (const p of sorted) {
+    const isCurrent = current === p.relativePath || current === p.name;
+    buttons.push([
+      {
+        text:
+          (isCurrent ? '\u2705 ' : '') +
+          (p.name.length > 50 ? p.name.slice(0, 47) + '\u2026' : p.name),
+        callback_data: `proj:${p.relativePath}`.slice(0, 64),
+      },
+    ]);
+  }
+  buttons.push([
+    {
+      // Back to the parent L1 view (not all the way to root).
+      text: `\u2190 ${l1}`,
+      callback_data: `pnav:l1:${l1}`.slice(0, 64),
+    },
+    {
+      text: '\u2190\u2190 root',
+      callback_data: 'pnav:root',
+    },
+  ]);
+  return {
+    // Breadcrumb-ish title so the user knows where they are.
+    text: `\ud83d\udcc1 ${l1} / ${l2}`,
     markup: { inline_keyboard: buttons },
   };
 }
@@ -801,32 +906,56 @@ export async function handleTelegramCallback(
     // that morphs as they drill down / back up. Failures here are
     // logged but acked silently \u2014 a stale keyboard is not worth
     // a scary error message.
-    if (data === 'pnav:root' || data.startsWith('pnav:l1:')) {
+    if (
+      data === 'pnav:root' ||
+      data.startsWith('pnav:l1:') ||
+      data.startsWith('pnav:l2:')
+    ) {
       const messageId = cq.message?.message_id ?? null;
+      // Build the requested view, with graceful fallbacks when a
+      // node has been emptied since the keyboard was rendered:
+      //   l2 empty -> bounce up to l1 view
+      //   l1 empty -> bounce up to root view
+      //   root empty -> nothing to render, leave message as is
+      const renderRoot = async () => {
+        const v = await buildProjectsRootView(chatId);
+        if (v && messageId !== null) {
+          await editMessageText(chatId, messageId, v.text, { reply_markup: v.markup });
+        }
+      };
+      const renderL1 = async (l1: string) => {
+        const v = await buildProjectsL1View(chatId, l1);
+        if (v && messageId !== null) {
+          await editMessageText(chatId, messageId, v.text, { reply_markup: v.markup });
+        } else {
+          await renderRoot();
+        }
+      };
       try {
         if (data === 'pnav:root') {
-          const view = await buildProjectsRootView(chatId);
-          if (view && messageId !== null) {
-            await editMessageText(chatId, messageId, view.text, {
-              reply_markup: view.markup,
-            });
-          }
-        } else {
+          await renderRoot();
+        } else if (data.startsWith('pnav:l1:')) {
           const l1 = data.slice('pnav:l1:'.length);
-          const view = await buildProjectsL1View(chatId, l1);
-          if (view && messageId !== null) {
-            await editMessageText(chatId, messageId, view.text, {
-              reply_markup: view.markup,
-            });
-          } else if (messageId !== null) {
-            // Folder is now empty (e.g. project was moved out
-            // while the user held the old keyboard). Bounce back
-            // to root so they have a fresh state.
-            const root = await buildProjectsRootView(chatId);
-            if (root) {
-              await editMessageText(chatId, messageId, root.text, {
-                reply_markup: root.markup,
-              });
+          await renderL1(l1);
+        } else {
+          // pnav:l2:<l1>/<l2>
+          const tail = data.slice('pnav:l2:'.length);
+          const slash = tail.indexOf('/');
+          if (slash <= 0 || slash === tail.length - 1) {
+            // Malformed callback (truncation or stale keyboard from
+            // a future deploy). Bounce to root.
+            await renderRoot();
+          } else {
+            const l1 = tail.slice(0, slash);
+            const l2 = tail.slice(slash + 1);
+            const v = await buildProjectsL2View(chatId, l1, l2);
+            if (v && messageId !== null) {
+              await editMessageText(chatId, messageId, v.text, { reply_markup: v.markup });
+            } else {
+              // L2 emptied -> climb back to L1 (or root if L1 is
+              // also empty), preserving the user's place in the
+              // hierarchy as much as possible.
+              await renderL1(l1);
             }
           }
         }

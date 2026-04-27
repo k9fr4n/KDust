@@ -48,6 +48,47 @@ const FORBIDDEN_ORIGINS = new Set([
   'web',
 ]);
 
+/**
+ * Wrap a Dust SDK call that occasionally hits transient upstream
+ * 5xx (Google LB blips: "502 Server Error" HTML page) and retry
+ * with exponential backoff. The SDK reports those as either:
+ *   - dustError.type === 'unexpected_response_format' with
+ *     status \u2208 {502, 503, 504};
+ *   - or a generic Error whose message embeds the status.
+ *
+ * We retry up to 3 times (delays 500ms / 1500ms / 4000ms) which
+ * covers the ~5s window typical of LB / pod-restart blips. Non-
+ * retryable errors (auth, validation, real 4xx) bubble immediately.
+ */
+async function retryValidateAction<T>(fn: () => Promise<T>): Promise<T> {
+  const delays = [500, 1500, 4000];
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = (err as { status?: number })?.status;
+      const dustType = (err as { dustError?: { type?: string } })?.dustError?.type;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient =
+        status === 502 ||
+        status === 503 ||
+        status === 504 ||
+        dustType === 'unexpected_response_format' ||
+        /\b(502|503|504|Bad Gateway|Service Unavailable|Gateway Timeout)\b/i.test(msg);
+      if (!isTransient || attempt === delays.length) throw err;
+      const delay = delays[attempt];
+      console.warn(
+        `[chat/validateAction] transient upstream error (attempt ${attempt + 1}/${delays.length + 1}, sleeping ${delay}ms): ${msg.slice(0, 200)}`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  // Unreachable but keeps TS happy.
+  throw lastErr;
+}
+
 function safeOrigin(o: string | undefined | null): NonBilledOrigin {
   if (o && o !== 'cli') {
     console.warn(
@@ -340,17 +381,26 @@ export async function streamAgentReply(
             params: ev.inputs ?? ev.metadata?.inputs ?? null,
           }),
         );
+        // Dust's frontend (Google LB) occasionally returns transient
+        // 502/503/504 HTML error pages on this endpoint, which the
+        // SDK surfaces as { dustError.type: 'unexpected_response_format',
+        // status: 502 }. The agent BLOCKS until the action is
+        // approved/rejected, so we MUST retry rather than give up
+        // on the first failure. Exponential backoff up to 3 tries
+        // covers the typical Google LB blip (~5s window).
         try {
-          await ctx.client.validateAction({
-            conversationId: ev.conversationId,
-            messageId: ev.messageId,
-            actionId: ev.actionId,
-            approved: 'approved',
-          });
+          await retryValidateAction(() =>
+            ctx.client.validateAction({
+              conversationId: ev.conversationId,
+              messageId: ev.messageId,
+              actionId: ev.actionId,
+              approved: 'approved',
+            }),
+          );
         } catch (err) {
           onEvent(
             'error',
-            `Failed to approve tool action: ${
+            `Failed to approve tool action after retries: ${
               err instanceof Error ? err.message : String(err)
             }`,
           );

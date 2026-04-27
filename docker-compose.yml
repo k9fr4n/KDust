@@ -5,7 +5,7 @@ services:
     container_name: kdust
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     env_file: .env
     environment:
       # Si ssh-agent est lancé sur l'hôte et SSH_AUTH_SOCK exporté,

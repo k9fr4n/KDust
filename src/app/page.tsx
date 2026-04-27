@@ -46,7 +46,12 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
   if (current) {
     // --- Project-scoped dashboard ---
-    const projectRunsFilter = { task: { is: { projectPath: current.name } } };
+    // Phase 1 folder hierarchy (2026-04-27): tasks/conversations are
+    // joined to a project by `fsPath` (full slash path under
+    // /projects), not the leaf `name`. Use fsPath when set; legacy
+    // fallback on `name` for un-migrated rows.
+    const projKey = current.fsPath ?? current.name;
+    const projectRunsFilter = { task: { is: { projectPath: projKey } } };
     const [
       nbCrons,
       nbConvs,
@@ -58,13 +63,13 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       recentRuns,
       recentConvs,
     ] = await Promise.all([
-      db.task.count({ where: { projectPath: current.name } }),
-      db.conversation.count({ where: { projectName: current.name } }),
+      db.task.count({ where: { projectPath: projKey } }),
+      db.conversation.count({ where: { projectName: projKey } }),
       db.taskRun.count({ where: projectRunsFilter }),
       db.taskRun.count({ where: { ...projectRunsFilter, status: 'success' } }),
       db.taskRun.count({ where: { ...projectRunsFilter, status: 'failed' } }),
       db.taskRun.count({ where: { ...projectRunsFilter, status: 'running' } }),
-      db.conversation.count({ where: { projectName: current.name, pinned: true } }),
+      db.conversation.count({ where: { projectName: projKey, pinned: true } }),
       db.taskRun.findMany({
         where: projectRunsFilter,
         orderBy: { startedAt: 'desc' },
@@ -72,7 +77,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         include: { task: { select: { name: true } } },
       }),
       db.conversation.findMany({
-        where: { projectName: current.name },
+        where: { projectName: projKey },
         orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
         take: 8,
       }),

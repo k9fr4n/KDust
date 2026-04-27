@@ -1,6 +1,6 @@
 import { MessageSquare } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getCurrentProjectName } from '@/lib/current-project';
+import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
 // OpenConversationLink is still used by ConversationCard under the
 // hood; we render ConversationCard directly now so we inherit the
 // always-visible pin / delete action cluster (Franck 2026-04-20 17:45).
@@ -50,13 +50,17 @@ type SearchProps = {
 export default async function ConversationsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const cookieProject = await getCurrentProjectName();
+  // Phase 1 folder hierarchy (2026-04-27): Conversation.projectName
+  // holds the project's full fsPath post-migration. Filter on the
+  // normalised value so legacy cookies (leaf name) still resolve.
+  const cookieProjectFsPath = await getCurrentProjectFsPath();
   const agentFilter = sp.agent ?? undefined;
   const q = (sp.q ?? '').trim();
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
   const PAGE_SIZE = await getAdaptivePageSize(CONV_PAGE_SIZE_CFG);
 
   const where: Record<string, unknown> = {};
-  if (cookieProject) where.projectName = cookieProject;
+  if (cookieProjectFsPath) where.projectName = cookieProjectFsPath;
   if (agentFilter) where.agentSId = agentFilter;
   if (q) where.title = { contains: q };
 

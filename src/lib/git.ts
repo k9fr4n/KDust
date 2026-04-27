@@ -64,7 +64,11 @@ export async function cloneOrPull(
   branch: string,
 ): Promise<GitSyncResult> {
   const target = join(PROJECTS_ROOT, name);
-  await mkdir(PROJECTS_ROOT, { recursive: true });
+  // mkdir target's PARENT recursively so multi-segment fsPaths
+  // (e.g. "clients/acme/<repo>") have their intermediate folders
+  // ready before `git clone` runs. PROJECTS_ROOT alone was enough
+  // when projects lived flat under it; not anymore since 2026-04-27.
+  await mkdir(join(target, '..'), { recursive: true });
 
   let exists = false;
   try {

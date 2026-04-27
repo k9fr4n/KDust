@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Clock, ChevronUp, ChevronDown, MessageCircle } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getCurrentProjectName } from '@/lib/current-project';
+import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import { Pagination } from '@/components/Pagination';
@@ -106,6 +106,9 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const tz = await getAppTimezone();
   const cookieProject = await getCurrentProjectName();
+  // Phase 1 folder hierarchy: filter on canonical fsPath, not the
+  // raw cookie value (which may be a legacy leaf name pre-migration).
+  const cookieProjectFsPath = await getCurrentProjectFsPath();
   const q = (sp.q ?? '').trim();
   const kind: UiKind = normaliseKind(sp.kind);
   const enabled: EnabledFlag = sp.enabled ?? 'all';
@@ -119,7 +122,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   // Cookie-scoped project filter is skipped when the user explicitly
   // picks 'generic' (templates have no project by definition) so the
   // filter works even from within a project context.
-  if (cookieProject && kind !== 'generic') where.projectPath = cookieProject;
+  if (cookieProjectFsPath && kind !== 'generic') where.projectPath = cookieProjectFsPath;
   if (q) where.name = { contains: q };
   // The 'kind' filter drives Task.projectPath nullability.
   if (kind === 'generic') {

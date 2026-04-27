@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
-import { getCurrentProjectName } from '@/lib/current-project';
+import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
 import {
   Clock,
   MessageCircle,
@@ -178,7 +178,12 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         : cookieView === 'tree'
           ? 'tree'
           : 'flat';
+  // currentProject is the cookie value (used for UI scope label),
+  // currentProjectFsPath is the canonical fsPath used in DB filters
+  // — they agree post-migration, and the helper auto-normalises
+  // legacy cookies that still hold a leaf name.
   const currentProject = await getCurrentProjectName();
+  const currentProjectFsPath = await getCurrentProjectFsPath();
 
   // Free-text search across the fields users most commonly want to find
   // runs by: cron name, git branch, commit sha, or the live status
@@ -213,7 +218,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const runsWhere = {
     ...(statusFilter ? { status: statusFilter } : {}),
     ...(taskFilter ? { taskId: taskFilter } : {}),
-    ...(currentProject ? { task: { is: { projectPath: currentProject } } } : {}),
+    ...(currentProjectFsPath ? { task: { is: { projectPath: currentProjectFsPath } } } : {}),
     ...qClause,
   };
   const [totalRuns, runs] = await Promise.all([

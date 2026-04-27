@@ -119,8 +119,12 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   });
 
   // Resolve git links (best effort — project may have been deleted).
+  // Phase 1 folder hierarchy (2026-04-27): run.task.projectPath is
+  // a full fsPath ("L1/L2/leaf"), not the leaf name. Look up by
+  // fsPath; legacy fallback on `name` for un-migrated rows.
   const project = run.task?.projectPath
-    ? await db.project.findFirst({ where: { name: run.task.projectPath } })
+    ? (await db.project.findUnique({ where: { fsPath: run.task.projectPath } })) ??
+      (await db.project.findFirst({ where: { name: run.task.projectPath } }))
     : null;
   // `project.gitUrl` is nullable since 2026-04-19 (sandbox projects).
   // A sandbox project never produces MR/commit links, so we skip

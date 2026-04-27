@@ -14,8 +14,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  // Phase 1 folder hierarchy (2026-04-27): tasks reference projects
+  // by `fsPath` (full path). Fall back to leaf name for un-migrated
+  // rows so the project page never goes blank during the dry-run /
+  // apply transition window.
   const tasks = await db.task.findMany({
-    where: { projectPath: project.name },
+    where: { projectPath: project.fsPath ?? project.name },
     orderBy: [{ name: 'asc' }],
     select: {
       id: true,

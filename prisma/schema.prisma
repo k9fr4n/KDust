@@ -156,9 +156,56 @@ model Message {
   @@index([conversationId])
 }
 
+// ---------------------------------------------------------------
+// Project folders (Franck 2026-04-27).
+//
+// Hierarchical organisation of projects: max depth = 2 (L1 root +
+// L2 leaf). Projects can ONLY live in a L2 (leaf) folder — never
+// directly at the root. The depth invariant is enforced in the
+// API layer (POST/PATCH /api/folders); SQLite has no CHECK on
+// "parent.parentId IS NULL". No cascade on delete: a non-empty
+// folder cannot be removed (returns 409). See ADR in
+// src/lib/folder-path.ts header.
+// ---------------------------------------------------------------
+model Folder {
+  id        String    @id @default(cuid())
+  name      String
+  parentId  String?
+  parent    Folder?   @relation("FolderTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  Folder[]  @relation("FolderTree")
+  projects  Project[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([parentId, name])
+  @@index([parentId])
+}
+
 model Project {
   id             String    @id @default(cuid())
-  name           String    @unique  // utilise comme dossier dans /projects
+  // Display name. NO LONGER globally unique since 2026-04-27 —
+  // unique only within a given parent folder, see @@unique below.
+  // The global addressing key is `fsPath` (set by folder migration
+  // and on every CRUD), used as Task.projectPath / Conversation
+  // .projectName / cookie value / FS dir under /projects.
+  name           String
+  // ---- Folder hierarchy (2026-04-27) ----
+  // folderId points to a L2 (leaf) Folder. Nullable in the schema
+  // ONLY to tolerate the boot window between db push and the
+  // one-shot folder-migration script in instrumentation.ts. The
+  // application layer (POST /api/projects) requires a folderId
+  // and the migration backfills every legacy row to
+  // legacy/uncategorized.
+  folderId       String?
+  folder         Folder?   @relation(fields: [folderId], references: [id], onDelete: Restrict)
+  // Denormalised "<L1>/<L2>/<name>" relative path inside
+  // PROJECTS_ROOT. Single source of truth for FS access (git
+  // ops, MCP fs-server chroot, /projects mv) and for joining
+  // back to Task.projectPath / Conversation.projectName /
+  // TelegramBinding.projectName / kdust_project cookie value.
+  // Recomputed on every rename / move via the folder-path
+  // helpers; never edited directly by hand.
+  fsPath         String?   @unique
   // gitUrl optional since 2026-04-19 (Franck): projects can exist
   // without a git remote. When null, sync + push are skipped;
   // the local dir is still provisioned.
@@ -221,6 +268,14 @@ model Project {
   lastSyncError  String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  // Names are unique within a given folder (replacing the legacy
+  // global @unique on name, dropped 2026-04-27). Two projects with
+  // the same `name` may coexist as long as they live in different
+  // L2 folders; their `fsPath` (always unique) disambiguates them
+  // for FS / Telegram / MCP run_task addressing.
+  @@unique([folderId, name])
+  @@index([folderId])
 }
 
 // "Task" is the v2 name for what used to be CronJob. Tasks are

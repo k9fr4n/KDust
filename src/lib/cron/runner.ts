@@ -618,7 +618,15 @@ export async function runTask(
   // policy (Phase 1, Franck 2026-04-19). Project is the source of
   // truth for baseBranch/branchPrefix/protectedBranches; task rows
   // carry nullable overrides only. resolveBranchPolicy merges both.
-  const project = await db.project.findFirst({ where: { name: effectiveProjectPath } });
+  // Phase 1 folder hierarchy (2026-04-27): effectiveProjectPath is
+  // the fsPath of the project (e.g. "clients/acme/webapp"), NOT the
+  // leaf name. Look up by fsPath; fall back to legacy `name` for
+  // tasks whose projectPath wasn't yet migrated by folder-migration
+  // (e.g. when the operator runs in dry-run mode and triggers a run
+  // before flipping to apply).
+  const project =
+    (await db.project.findUnique({ where: { fsPath: effectiveProjectPath } })) ??
+    (await db.project.findFirst({ where: { name: effectiveProjectPath } }));
 
   // Fallback policy when no project row exists yet (edge case: legacy
   // tasks with a projectPath pointing nowhere). We still need defaults

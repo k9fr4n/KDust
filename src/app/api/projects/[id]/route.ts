@@ -216,9 +216,15 @@ export async function DELETE(
   // deleteMany is idempotent: if there are no matches, counts come back as 0.
   // Keeping the writes in one transaction ensures we don't end up with
   // orphaned tasks or conversations if the Project.delete step fails.
+  // Phase 1 folder hierarchy (2026-04-27): tasks/conversations are
+  // joined to a project by its `fsPath` (full path under /projects),
+  // not the leaf `name`. Use fsPath when available; fall back to
+  // name for un-migrated rows so deletion stays clean during the
+  // dry-run / apply transition window.
+  const projKey = p.fsPath ?? p.name;
   const [convs, tasks] = await db.$transaction([
-    db.conversation.deleteMany({ where: { projectName: p.name } }),
-    db.task.deleteMany({ where: { projectPath: p.name } }),
+    db.conversation.deleteMany({ where: { projectName: projKey } }),
+    db.task.deleteMany({ where: { projectPath: projKey } }),
     // Project row deleted last; result is ignored but still part of the tx
     // so a failure here rolls back the deleteManys above.
     db.project.delete({ where: { id } }),
@@ -228,10 +234,14 @@ export async function DELETE(
   // MCP server: drop the cached handle so next getFsServerId() for a
   // same-named project would start fresh (avoids holding a fd on a
   // deleted folder).
+  // MCP fs-server cache is keyed by the project's fsPath (the
+  // /projects/<…> chroot). Fall back to leaf name for legacy rows
+  // not yet migrated.
+  const fsKey = p.fsPath ?? p.name;
   try {
-    await invalidateFsServer(p.name);
+    await invalidateFsServer(fsKey);
   } catch (err) {
-    console.warn(`[projects/delete] invalidateFsServer failed for "${p.name}":`, err);
+    console.warn(`[projects/delete] invalidateFsServer failed for "${fsKey}":`, err);
   }
 
   // Reload the in-memory scheduler so deleted tasks stop firing.
@@ -245,7 +255,8 @@ export async function DELETE(
   // otherwise subsequent pages would show an "invalid project" state.
   try {
     const store = await cookies();
-    if (store.get(CURRENT_PROJECT_COOKIE)?.value === p.name) {
+    const cookieVal = store.get(CURRENT_PROJECT_COOKIE)?.value;
+    if (cookieVal === p.fsPath || cookieVal === p.name) {
       store.delete(CURRENT_PROJECT_COOKIE);
     }
   } catch {
@@ -257,10 +268,10 @@ export async function DELETE(
   let filesDeleted = false;
   if (deleteFiles) {
     try {
-      await rm(join(PROJECTS_ROOT, p.name), { recursive: true, force: true });
+      await rm(join(PROJECTS_ROOT, p.fsPath ?? p.name), { recursive: true, force: true });
       filesDeleted = true;
     } catch (err) {
-      console.warn(`[projects/delete] rm(${p.name}) failed:`, err);
+      console.warn(`[projects/delete] rm(${p.fsPath ?? p.name}) failed:`, err);
     }
   }
 

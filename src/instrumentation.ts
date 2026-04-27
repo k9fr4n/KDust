@@ -51,6 +51,24 @@ export async function register() {
       console.error('[instrumentation] unhandledRejection:', reason);
     });
 
+    // Folder hierarchy migration (Franck 2026-04-27, Phase 1).
+    // Idempotent one-shot that backfills Project.folderId / fsPath
+    // and physically moves /projects/<name> to /projects/legacy/
+    // uncategorized/<name>. Runs in dry-run mode by default; the
+    // operator flips KDUST_FOLDER_MIGRATION=apply once the dry-run
+    // log looks correct. See src/lib/folder-migration.ts for full
+    // doc + recommended deploy flow. Wrapped in try/catch so a
+    // schema lag (first boot, db push still propagating) cannot
+    // brick the whole instrumentation hook.
+    try {
+      const { runFolderMigration } = await import('./lib/folder-migration');
+      await runFolderMigration();
+    } catch (e) {
+      console.error(
+        `[instrumentation] folder migration failed: ${(e as Error).message}`,
+      );
+    }
+
     // Boot the task scheduler. Reinstated 2026-04-19 after the Dust
     // billing hold was lifted. reloadScheduler() reads every enabled
     // Task whose `schedule` is a valid cron expression and wires up

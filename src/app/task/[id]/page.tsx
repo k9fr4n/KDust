@@ -44,8 +44,11 @@ export default async function CronDetail({ params }: { params: Promise<{ id: str
   // values (task override or inherited from project) \u2014 Phase 1,
   // Franck 2026-04-19.
   // Generic tasks have no bound project — skip the lookup, policy stays null.
+  // Phase 1 folder hierarchy (2026-04-27): cron.projectPath is the
+  // project's full fsPath. Lookup by fsPath; legacy fallback by name.
   const project = cron.projectPath
-    ? await db.project.findFirst({ where: { name: cron.projectPath } })
+    ? (await db.project.findUnique({ where: { fsPath: cron.projectPath } })) ??
+      (await db.project.findFirst({ where: { name: cron.projectPath } }))
     : null;
   const policy = project
     ? resolveBranchPolicy(cron, project)

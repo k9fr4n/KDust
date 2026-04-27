@@ -66,7 +66,8 @@ async function dirExists(p: string): Promise<boolean> {
  */
 async function rewireProject(params: {
   projectId: string;
-  newFolderId: string;
+  /** Omit to keep the project's current folderId (e.g. rename in place). */
+  newFolderId?: string | null;
   oldFsPath: string;
   newFsPath: string;
 }): Promise<MoveResult> {
@@ -103,7 +104,9 @@ async function rewireProject(params: {
     await db.$transaction([
       db.project.update({
         where: { id: projectId },
-        data: { folderId: newFolderId, fsPath: newFsPath },
+        data: newFolderId !== undefined
+          ? { folderId: newFolderId, fsPath: newFsPath }
+          : { fsPath: newFsPath },
       }),
       db.task.updateMany({
         where: { projectPath: oldFsPath },
@@ -186,6 +189,118 @@ export async function moveProjectToFolder(
     oldFsPath,
     newFsPath,
   });
+}
+
+/**
+ * Rename a project's leaf name (Phase 4 follow-up, 2026-04-27).
+ *
+ * Operates within the same parent folder: only Project.name +
+ * Project.fsPath change. Internally delegates to rewireProject()
+ * which handles FS mv + DB rewiring (Task.projectPath,
+ * Conversation.projectName, TelegramBinding.projectName) atomically
+ * with FS rollback on tx failure.
+ *
+ * Validation:
+ *   - newName non-empty, trimmed.
+ *   - newName cannot contain '/' or null bytes (FS safety).
+ *   - Reserved characters refused: \\ : * ? " < > | (Windows-safe;
+ *     KDust is Linux-only today but the projects dir may be NFS-
+ *     mounted to a Windows runner via the WindowsRunner driver).
+ *   - Refused if any TaskRun is active on this project (busy).
+ *   - Refused if the destination fsPath collides with an existing
+ *     project (name_conflict, surfaced via P2002 from rewireProject).
+ *
+ * Returns { ok:true, oldFsPath, newFsPath } on success so the
+ * caller can refresh the UI / cookie / wherever the old path was
+ * cached.
+ */
+const PROJECT_NAME_FORBIDDEN = /[\/\\:*?"<>|\x00]/;
+
+export async function renameProject(
+  projectId: string,
+  rawNewName: string,
+): Promise<MoveResult> {
+  const project = await db.project.findUnique({ where: { id: projectId } });
+  if (!project) {
+    return { ok: false, reason: 'invalid_target', detail: 'project not found' };
+  }
+
+  const newName = rawNewName.trim();
+  if (!newName) {
+    return { ok: false, reason: 'invalid_target', detail: 'name must be non-empty' };
+  }
+  if (PROJECT_NAME_FORBIDDEN.test(newName)) {
+    return {
+      ok: false,
+      reason: 'invalid_target',
+      detail: 'name contains forbidden characters (/, \\, :, *, ?, ", <, >, |)',
+    };
+  }
+  if (newName === '.' || newName === '..') {
+    return { ok: false, reason: 'invalid_target', detail: 'reserved name' };
+  }
+
+  if (newName === project.name) {
+    return { ok: true, oldFsPath: project.fsPath ?? project.name, newFsPath: project.fsPath ?? project.name };
+  }
+
+  const oldFsPath = project.fsPath ?? project.name;
+  // The project may pre-date Phase 1 (folderId=null, fsPath=name);
+  // in that case the new fsPath is just the new leaf name. Otherwise
+  // it stays under the same folder.
+  const newFsPath = project.folderId
+    ? await computeProjectFsPath(project.folderId, newName)
+    : newName;
+
+  if (oldFsPath === newFsPath) {
+    return { ok: true, oldFsPath, newFsPath };
+  }
+
+  if (await hasActiveRunForFsPaths([oldFsPath])) {
+    return { ok: false, reason: 'busy', detail: oldFsPath };
+  }
+
+  // Update Project.name first (in the same tx as the rest below
+  // would be ideal, but rewireProject already wraps Project.update
+  // for fsPath/folderId — we extend that update with the new name
+  // by calling a dedicated path here).
+  // Strategy: set name now, then call rewireProject which only
+  // touches fsPath / folderId / cascades. If rewire fails it rolls
+  // back the FS but we must also revert the name change.
+  const oldName = project.name;
+  try {
+    await db.project.update({ where: { id: projectId }, data: { name: newName } });
+  } catch (e) {
+    // P2002 = unique constraint (name is unique on Project).
+    if ((e as { code?: string })?.code === 'P2002') {
+      return { ok: false, reason: 'name_conflict', detail: `a project named "${newName}" already exists` };
+    }
+    throw e;
+  }
+
+  // Don't pass newFolderId — same folder, only the leaf name (and
+  // therefore fsPath) changes. rewireProject will skip the
+  // folderId column in the UPDATE.
+  const r = await rewireProject({
+    projectId,
+    oldFsPath,
+    newFsPath,
+  });
+
+  if (!r.ok) {
+    // Roll back the name change so the row stays consistent with
+    // the un-moved FS dir.
+    try {
+      await db.project.update({ where: { id: projectId }, data: { name: oldName } });
+    } catch (err) {
+      console.error(
+        `[folder-ops] CRITICAL: rename rewire failed AND name rollback failed for project=${projectId}. ` +
+          `Manual cleanup required: name should be "${oldName}".`,
+        err,
+      );
+    }
+  }
+  return r;
 }
 
 /**

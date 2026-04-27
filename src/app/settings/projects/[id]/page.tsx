@@ -29,6 +29,10 @@ import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X } from 'lucide-
 type Project = {
   id: string;
   name: string;
+  // Phase 1 (folder hierarchy, 2026-04-27): canonical path under
+  // /projects, e.g. "clients/acme/myapp". Falls back to name on
+  // un-migrated rows.
+  fsPath: string | null;
   gitUrl: string | null;
   branch: string;
   description: string | null;
@@ -65,6 +69,13 @@ export default function ProjectSettingsPage({
   const [gitUrl, setGitUrl] = useState('');
   const [branch, setBranch] = useState('');
   const [description, setDescription] = useState('');
+  // Rename state (Phase 4 follow-up, 2026-04-27). Kept separate
+  // from the generic Save flow because a rename triggers an FS mv
+  // server-side that may fail with 409 (busy / name_conflict),
+  // making it useful to surface its own status independently.
+  const [name, setName] = useState('');
+  const [renameState, setRenameState] = useState<'idle' | 'saving' | 'ok' | 'ko'>('idle');
+  const [renameErr, setRenameErr] = useState<string | null>(null);
   // Phase 1: branch policy state.
   const [defaultBaseBranch, setDefaultBaseBranch] = useState('main');
   const [branchPrefix, setBranchPrefix] = useState('kdust');
@@ -96,6 +107,7 @@ export default function ProjectSettingsPage({
         if (!cancelled) {
           setP(found ?? null);
           if (found) {
+            setName(found.name);
             setGitUrl(found.gitUrl ?? '');
             setBranch(found.branch);
             setDescription(found.description ?? '');
@@ -193,6 +205,45 @@ export default function ProjectSettingsPage({
     }
   };
 
+  // Rename handler. Validates client-side then PATCHes name only.
+  // On success, refreshes local state with the new fsPath returned
+  // by the server (so the breadcrumb / Identity panel stay in sync).
+  const rename = async () => {
+    if (!p) return;
+    const newName = name.trim();
+    if (!newName || newName === p.name) return;
+    setRenameState('saving');
+    setRenameErr(null);
+    try {
+      const r = await fetch(`/api/projects/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const msg =
+          j?.error === 'busy'
+            ? 'Refused: a task is currently running on this project. Wait for it to finish, then retry.'
+            : j?.error === 'name_conflict'
+              ? `Refused: a project named "${newName}" already exists.`
+              : j?.error === 'fs_collision'
+                ? `Refused: filesystem destination already exists.`
+                : j?.detail || j?.error || `HTTP ${r.status}`;
+        setRenameState('ko');
+        setRenameErr(msg);
+        return;
+      }
+      setP(j.project);
+      setName(j.project.name);
+      setRenameState('ok');
+      setTimeout(() => setRenameState('idle'), 2000);
+    } catch (e: any) {
+      setRenameState('ko');
+      setRenameErr(e?.message ?? String(e));
+    }
+  };
+
   if (loading) {
     return <p className="text-slate-500 text-sm">Loading…</p>;
   }
@@ -227,9 +278,53 @@ export default function ProjectSettingsPage({
       <section className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-4">
         <h2 className="text-xs uppercase tracking-wide text-slate-500">Identity</h2>
         <div className="grid md:grid-cols-4 gap-3 text-sm">
-          <div>
-            <label className="text-slate-500 text-xs">Name</label>
-            <div className="font-mono mt-1">{p.name}</div>
+          {/* Editable Name (Phase 4 follow-up, 2026-04-27).
+              Input + Rename button; the action is gated by an FS
+              mv on the server (atomic with DB rewire). 409s are
+              surfaced inline so the user knows whether to wait
+              (busy) or pick another name (collision). */}
+          <div className="md:col-span-2">
+            <label htmlFor="rename-input" className="text-slate-500 text-xs">Name</label>
+            <div className="mt-1 flex gap-2">
+              <input
+                id="rename-input"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    rename();
+                  }
+                }}
+                className="flex-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-sm"
+                placeholder="project-name"
+                disabled={renameState === 'saving'}
+              />
+              <button
+                type="button"
+                onClick={rename}
+                disabled={
+                  renameState === 'saving' ||
+                  !name.trim() ||
+                  name.trim() === p.name
+                }
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {renameState === 'ok' ? <Check size={12} /> : <Save size={12} />}
+                {renameState === 'saving' ? 'Renaming…' : renameState === 'ok' ? 'Renamed' : 'Rename'}
+              </button>
+            </div>
+            {p.fsPath && p.fsPath !== p.name ? (
+              <div className="text-[11px] text-slate-400 mt-1 font-mono">path: {p.fsPath}</div>
+            ) : null}
+            {renameState === 'ko' && renameErr ? (
+              <div className="text-[11px] text-red-500 mt-1">{renameErr}</div>
+            ) : null}
+            <div className="text-[11px] text-slate-400 mt-1">
+              Renaming triggers an FS mv on /projects and rewires Task / Conversation / Telegram
+              records atomically. Refused while a run is in progress.
+            </div>
           </div>
           <div>
             <label className="text-slate-500 text-xs">ID</label>

@@ -7,6 +7,7 @@ import { PROJECTS_ROOT } from '@/lib/projects';
 import { CURRENT_PROJECT_COOKIE } from '@/lib/current-project';
 import { invalidateFsServer } from '@/lib/mcp/registry';
 import { reloadScheduler } from '@/lib/cron/scheduler';
+import { renameProject } from '@/lib/folder-ops';
 
 export const runtime = 'nodejs';
 
@@ -42,13 +43,15 @@ export const runtime = 'nodejs';
  *                      the MCP fs server so cached roots aren't reused)
  *   - branch: string  (implies reset of working copy on next sync)
  *
+ * Phase 4 follow-up (2026-04-27): `name` IS editable now and
+ * triggers an atomic FS mv + DB rewire via renameProject() in
+ * lib/folder-ops.ts. Refused with 409 when the project has an
+ * active TaskRun ('busy') or when the new name collides with an
+ * existing project ('name_conflict'). The project's folder
+ * placement is preserved; to also move it, call
+ * /api/projects/:id/move in addition.
+ *
  * Intentionally NOT editable via this route:
- *   - name        — doubles as FS path and scope key for Task,
- *                   Conversation, ProjectAudit, the current-project
- *                   cookie and MCP fs mount. A rename would have to
- *                   update 5 tables + mv a directory + invalidate
- *                   cookies. Out of scope; must be done via a
- *                   dedicated migration endpoint.
  *   - createdAt / updatedAt / lastSync*: auto-managed by Prisma or
  *                   the sync runner.
  *
@@ -60,6 +63,7 @@ export async function PATCH(
 ) {
   const { id } = await ctx.params;
   const body = await req.json().catch(() => ({})) as {
+    name?: unknown;
     gitUrl?: unknown;
     branch?: unknown;
     description?: unknown;
@@ -176,14 +180,67 @@ export async function PATCH(
     data.prLabels = body.prLabels.trim();
   }
 
-  if (Object.keys(data).length === 0) {
+  // Rename handling (Phase 4 follow-up). Must run BEFORE the
+  // generic Prisma update so subsequent calls in this handler see
+  // the renamed Project row (fsPath rewritten, FS mv applied).
+  // Skipped silently when `name` is not provided OR when it equals
+  // the current name. Mutually exclusive with the generic update
+  // path for `name` (we never let renameProject and Prisma update
+  // both touch the column).
+  let renameHappened: { oldFsPath: string; newFsPath: string } | null = null;
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string') {
+      return NextResponse.json({ error: 'name must be a string' }, { status: 400 });
+    }
+    const r = await renameProject(id, body.name);
+    if (!r.ok) {
+      const status =
+        r.reason === 'invalid_target' ? 400
+          : r.reason === 'busy' || r.reason === 'name_conflict' || r.reason === 'fs_collision'
+            ? 409
+            : 500;
+      return NextResponse.json({ error: r.reason, detail: r.detail }, { status });
+    }
+    if (r.oldFsPath !== r.newFsPath) {
+      renameHappened = { oldFsPath: r.oldFsPath, newFsPath: r.newFsPath };
+    }
+  }
+
+  if (Object.keys(data).length === 0 && !renameHappened) {
     return NextResponse.json({ error: 'no_editable_fields' }, { status: 400 });
   }
 
   const before = await db.project.findUnique({ where: { id } });
   if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const updated = await db.project.update({ where: { id }, data });
+  const updated = Object.keys(data).length > 0
+    ? await db.project.update({ where: { id }, data })
+    : before;
+
+  // If the project was renamed we also need to:
+  //   - reload the scheduler so cron jobs cached with the old
+  //     projectPath get rebuilt against the new one;
+  //   - clear the current-project cookie if it pointed at the old
+  //     fsPath (the next page load will land on the picker).
+  if (renameHappened) {
+    try {
+      await reloadScheduler();
+    } catch (err) {
+      console.warn('[projects/patch] reloadScheduler failed after rename:', err);
+    }
+    try {
+      const store = await cookies();
+      const cookieVal = store.get(CURRENT_PROJECT_COOKIE)?.value;
+      if (cookieVal === renameHappened.oldFsPath) {
+        store.set(CURRENT_PROJECT_COOKIE, renameHappened.newFsPath, {
+          path: '/',
+          sameSite: 'lax',
+        });
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
 
   // If gitUrl changed the working copy is now talking to the wrong
   // remote; invalidate the MCP fs handle so next /chat resolves a
@@ -198,6 +255,7 @@ export async function PATCH(
     reSyncRecommended:
       (!!data.gitUrl && data.gitUrl !== before.gitUrl) ||
       (!!data.branch && data.branch !== before.branch),
+    renamed: renameHappened ?? undefined,
   });
 }
 

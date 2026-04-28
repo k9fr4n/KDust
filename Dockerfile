@@ -15,7 +15,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npx prisma generate
-RUN npm run build
+# Cache mount on .next/cache → reuses SWC/Webpack compilation artifacts across
+# CI runs (per-platform scope provided by buildx). Cuts incremental builds by
+# 1–3 min. The cache is NOT baked into the image (mount is build-time only).
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 # ---- runner ----
 FROM node:22-bookworm-slim AS runner

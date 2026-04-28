@@ -1,9 +1,21 @@
 name: Build & Publish Docker image
 
-# Déclenché sur :
-#   - tout push sur main (image :latest + :sha)
-#   - tout tag vX.Y.Z (image :vX.Y.Z + :latest)
-#   - workflow_dispatch (bouton manuel depuis l'UI GitHub)
+# Triggered on:
+#   - any push to main          → image :latest + :sha-<short>
+#   - any tag vX.Y.Z            → image :vX.Y.Z + :latest
+#   - workflow_dispatch         → manual button (same rules as main)
+#
+# Architecture:
+#   1. `build` job — matrix amd64/arm64 on NATIVE runners (no QEMU).
+#      Each leg builds and pushes its image BY DIGEST only (no tag yet).
+#   2. `merge` job — assembles the final multi-arch manifest from both
+#      digests and applies the human-readable tags via
+#      `docker buildx imagetools create`.
+#
+# Why: building arm64 under QEMU on a single amd64 runner takes ~15 min for
+# this app (npm + next build are JS-heavy, awful under emulation). Splitting
+# on native arm64 runners brings the wall-clock down to ~6–8 min cold and
+# ~2–3 min warm.
 on:
   push:
     branches:
@@ -14,50 +26,38 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # Lowercase obligatoire pour ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
-    name: Build & push
-    runs-on: ubuntu-latest
-    # Permissions minimales : lecture du repo + écriture sur le registry
+  # -------------------------------------------------------------------- #
+  # 1. Per-platform build → push by digest only                          #
+  # -------------------------------------------------------------------- #
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm   # GitHub-hosted native arm64 (free on public repos)
     steps:
-      # ------------------------------------------------------------------ #
-      # 1. Checkout                                                          #
-      # ------------------------------------------------------------------ #
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------ #
-      # 2. QEMU — émulation arm64 sur le runner amd64 GitHub              #
-      # ------------------------------------------------------------------ #
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      # ------------------------------------------------------------------ #
-      # 3. Docker Buildx (requis pour --cache-to/from et multi-plateforme) #
-      # ------------------------------------------------------------------ #
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ------------------------------------------------------------------ #
-      # 4. Calcul du nom d'image en minuscules                             #
-      #    github.repository conserve la casse (k9fr4n/KDust) mais        #
-      #    ghcr.io exige du lowercase pour les cache refs.                 #
-      # ------------------------------------------------------------------ #
       - name: Lowercase image name
         run: echo "IMAGE_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
 
-      # ------------------------------------------------------------------ #
-      # 5. Login → ghcr.io avec le GITHUB_TOKEN (aucun secret à créer)     #
-      # ------------------------------------------------------------------ #
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -65,50 +65,92 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ------------------------------------------------------------------ #
-      # 6. Calcul des tags et labels OCI                                    #
-      #    - push sur main  → :latest  + :sha-<short>                       #
-      #    - tag vX.Y.Z     → :vX.Y.Z  + :latest                           #
-      #    - workflow_dispatch → même règle que main                        #
-      # ------------------------------------------------------------------ #
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          # Push the per-platform image WITHOUT a tag, only by digest.
+          # The merge job assembles the final tagged manifest.
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_LC }},push-by-digest=true,name-canonical=true,push=true
+          # Per-arch cache scope so legs don't overwrite each other.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:buildcache-${{ matrix.arch }}
+          cache-to:   type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:buildcache-${{ matrix.arch }},mode=max
+          # Disable provenance + sbom: saves 30–60s per leg, we don't consume them.
+          provenance: false
+          sbom: false
+          build-args: |
+            NEXT_TELEMETRY_DISABLED=1
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # -------------------------------------------------------------------- #
+  # 2. Merge per-arch digests into a single multi-arch manifest          #
+  # -------------------------------------------------------------------- #
+  merge:
+    name: Merge multi-arch manifest
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Lowercase image name
+        run: echo "IMAGE_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # tag semver complet sur les tags Git vX.Y.Z
             type=semver,pattern={{version}}
-            # tag majeur + mineur (v1.2)
             type=semver,pattern={{major}}.{{minor}}
-            # sha court sur les branches
             type=sha,prefix=sha-,format=short
-            # :latest sur main et sur les tags
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
           labels: |
             org.opencontainers.image.title=KDust
             org.opencontainers.image.description=Self-hosted Dust agent scheduler with push pipeline and MCP servers
             org.opencontainers.image.vendor=Ecritel
 
-      # ------------------------------------------------------------------ #
-      # 7. Build + push avec cache GitHub Actions (registry cache)          #
-      #    Le Dockerfile est multi-stage (deps → builder → runner) :        #
-      #    on cache chaque stage pour accélérer les builds incrémentiels.   #
-      # ------------------------------------------------------------------ #
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          # amd64 = serveur/PC Linux  |  arm64 = Raspberry Pi 4/5 64-bit
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # Cache partagé entre runs via le registry ghcr.io
-          # (pas de quota séparé, stocké dans le même package)
-          # IMAGE_LC = version lowercase de IMAGE_NAME (calculée à l'étape 4)
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:buildcache
-          cache-to:   type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:buildcache,mode=max
-          # Expose le build-time arg pour que Next.js telemetry reste off
-          build-args: |
-            NEXT_TELEMETRY_DISABLED=1
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_LC }}@sha256:%s ' *)
+
+      - name: Inspect resulting image
+        run: |
+          docker buildx imagetools inspect \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:${{ steps.meta.outputs.version }}

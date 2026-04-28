@@ -1,0 +1,44 @@
+# docker-compose.prod.yml — Raspberry Pi 4 (arm64) ou tout hôte sans build local
+#
+# Pré-requis sur le Pi :
+#   1. docker login ghcr.io -u <ton-github-login> -p <PAT>
+#      (le PAT GitHub doit avoir le scope read:packages)
+#   2. cp .env.example .env && nano .env   (remplir tous les secrets)
+#   3. mkdir -p data projects
+#
+# Démarrage :
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+
+services:
+  kdust:
+    # Pas de build: — on tire l'image pré-buildée depuis ghcr.io
+    # L'image est multi-arch (amd64 + arm64) : Docker choisit automatiquement
+    # la bonne variante selon l'hôte.
+    image: ghcr.io/k9fr4n/kdust:latest
+    container_name: kdust
+    restart: unless-stopped
+    pull_policy: always          # tire la dernière image à chaque `up`
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
+      # Chemin HÔTE du répertoire projects (résolu par Compose via ${PWD}).
+      # Nécessaire pour les montages DooD (-v host_path:container_path).
+      - KDUST_HOST_PROJECTS_ROOT=${PWD}/projects
+    volumes:
+      - ./data:/data
+      - ./projects:/projects
+      # Clefs SSH de l'hôte (read-only, copiées par l'entrypoint)
+      - ${HOME}/.ssh:/host-ssh:ro
+      # Socket ssh-agent (optionnel)
+      - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
+      # Docker socket — DooD (accès = root sur l'hôte, cf. Dockerfile)
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

@@ -34,13 +34,21 @@ jobs:
         uses: actions/checkout@v4
 
       # ------------------------------------------------------------------ #
-      # 2. Docker Buildx (requis pour --cache-to/from et multi-plateforme) #
+      # 2. QEMU — émulation arm64 sur le runner amd64 GitHub              #
+      # ------------------------------------------------------------------ #
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # ------------------------------------------------------------------ #
+      # 3. Docker Buildx (requis pour --cache-to/from et multi-plateforme) #
       # ------------------------------------------------------------------ #
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # ------------------------------------------------------------------ #
-      # 3. Login → ghcr.io avec le GITHUB_TOKEN (aucun secret à créer)     #
+      # 4. Login → ghcr.io avec le GITHUB_TOKEN (aucun secret à créer)     #
       # ------------------------------------------------------------------ #
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -50,7 +58,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ------------------------------------------------------------------ #
-      # 4. Calcul des tags et labels OCI                                    #
+      # 5. Calcul des tags et labels OCI                                    #
       #    - push sur main  → :latest  + :sha-<short>                       #
       #    - tag vX.Y.Z     → :vX.Y.Z  + :latest                           #
       #    - workflow_dispatch → même règle que main                        #
@@ -75,7 +83,7 @@ jobs:
             org.opencontainers.image.vendor=Ecritel
 
       # ------------------------------------------------------------------ #
-      # 5. Build + push avec cache GitHub Actions (registry cache)          #
+      # 6. Build + push avec cache GitHub Actions (registry cache)          #
       #    Le Dockerfile est multi-stage (deps → builder → runner) :        #
       #    on cache chaque stage pour accélérer les builds incrémentiels.   #
       # ------------------------------------------------------------------ #
@@ -84,7 +92,8 @@ jobs:
         with:
           context: .
           push: true
-          platforms: linux/amd64
+          # amd64 = serveur/PC Linux  |  arm64 = Raspberry Pi 4/5 64-bit
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Cache partagé entre runs via le registry ghcr.io

@@ -201,7 +201,14 @@ export async function resolveB2B3(
 
   // Resolve project defaults to spot "parent is already on default"
   // cases where auto-inherit would be a no-op.
-  const project = await db.project.findFirst({ where: { name: projectName } });
+  // `projectName` is actually the project's fsPath (Phase 1 folder
+  // hierarchy, Franck 2026-04-27). The runner.ts caller now passes
+  // project.fsPath everywhere a path is needed; this lookup follows
+  // suit. Fallback to legacy `name` for tasks whose projectPath
+  // wasn't yet migrated.
+  const project =
+    (await db.project.findUnique({ where: { fsPath: projectName } })) ??
+    (await db.project.findFirst({ where: { name: projectName } }));
   let projectDefaultBase = 'main';
   if (project) {
     const policy = resolveBranchPolicy(

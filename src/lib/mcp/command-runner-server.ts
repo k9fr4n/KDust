@@ -53,9 +53,17 @@ const MAX_TIMEOUT_MS = Math.max(
 // stdout/stderr soft cap before truncation. Full size is recorded in
 // stdoutBytes/stderrBytes; the stored text keeps a head+tail around the
 // cap to stay useful in the UI without bloating the SQLite DB.
+//
+// Default lowered from 32KB to 8KB on 2026-04-28 (Franck) after a
+// provider-coder run blew the model's context window: 48 cumulated
+// run_command outputs at 32KB each saturated the conversation
+// history. 8KB is enough to surface compile errors / test
+// failures (which are tail-heavy) while keeping room for a long
+// agent loop. Override via KDUST_CMD_OUTPUT_MAX_BYTES if needed
+// (e.g. for an interactive session that genuinely needs more).
 const OUTPUT_MAX_BYTES = Math.max(
   4_096,
-  Number(process.env.KDUST_CMD_OUTPUT_MAX_BYTES ?? 32 * 1024),
+  Number(process.env.KDUST_CMD_OUTPUT_MAX_BYTES ?? 8 * 1024),
 );
 
 // Denylist of argv fragments. Matched case-insensitively against the

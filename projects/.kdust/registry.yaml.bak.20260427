@@ -35,7 +35,7 @@ version: 1
 projects:
 
   PSWinOps:
-    path: /projects/Perso/fsallet/PSWinOps
+    path: /projects/PSWinOps
     type: powershell-module
     remote: https://github.com/k9fr4n/WindowsRunner.git
     branch_default: main
@@ -55,7 +55,7 @@ projects:
       iac: false
 
   EUDONET_Terraform:
-    path: /projects/Clients/EUDONET/EUDONET_Terraform
+    path: /projects/EUDONET_Terraform
     type: terraform
     lint:
       tool: tflint
@@ -69,7 +69,7 @@ projects:
       tool: terraform-plan
 
   terraform-provider-windows:
-    path: /projects/Perso/fsallet/terraform-provider-windows
+    path: /projects/terraform-provider-windows
     type: go
     test:
       framework: go-test
@@ -82,8 +82,20 @@ projects:
     build:
       tool: go build
 
+  Pacman:
+    path: /projects/Pacman
+    type: misc
+    audit:
+      secrets: true
+
+  RexGame:
+    path: /projects/RexGame
+    type: misc
+    audit:
+      secrets: true
+
   Interne:
-    path: /projects/Ecritel/Interne/Interne
+    path: /projects/Interne
     type: misc
     audit:
       secrets: true

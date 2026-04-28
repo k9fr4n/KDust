@@ -42,9 +42,23 @@ function runGit(args: string[], cwd?: string, timeoutMs = 120_000): Promise<{ co
     };
     const p = spawn('git', args, { cwd, env });
     let out = '';
-    p.stdout.on('data', (d) => (out += d.toString()));
-    p.stderr.on('data', (d) => (out += d.toString()));
+    p.stdout?.on('data', (d) => (out += d.toString()));
+    p.stderr?.on('data', (d) => (out += d.toString()));
     const to = setTimeout(() => p.kill('SIGKILL'), timeoutMs);
+    // Defense-in-depth (Franck 2026-04-27): without an 'error' handler
+    // a failed spawn (ENOENT on cwd or on the binary itself, EACCES,
+    // EMFILE…) becomes an uncaughtException that kills the whole Node
+    // process — taking down every cron AND the Next.js server with it.
+    // Witnessed live when a stale project path was passed as cwd:
+    // Node reports `path: 'git'` in the error, which is misleading
+    // (the binary IS in PATH; it's the cwd that doesn't exist).
+    // We map any spawn error to a synthetic non-zero exit so callers
+    // (cloneOrPull, resetToBase, etc.) treat it like any other git
+    // failure and surface a clean error in the run's output.
+    p.on('error', (err) => {
+      clearTimeout(to);
+      resolve({ code: -1, out: `${out}\nspawn error: ${(err as Error).message} (cwd=${cwd ?? '<inherited>'})` });
+    });
     p.on('close', (code) => {
       clearTimeout(to);
       resolve({ code: code ?? -1, out });

@@ -1,4 +1,5 @@
 import { getDustClient } from './client';
+import { getDustMe } from './me';
 
 export interface StartMessageResult {
   dustConversationSId: string;
@@ -115,11 +116,14 @@ async function userContext(
     /* degrade gracefully; AppConfig lookup is not on the
        critical path for a chat turn */
   }
+  // Resolve real Dust identity (Franck 2026-04-28). Falls back to
+  // 'kdust'/'KDust' on API-key auth or `.me()` errors. See me.ts.
+  const me = await getDustMe();
   return {
-    username: 'kdust',
+    username: me.username,
     timezone,
-    email: null,
-    fullName: 'KDust',
+    email: me.email,
+    fullName: me.fullName,
     profilePictureUrl: null,
     // Always 'cli' (human usage bucket, matches Dust CLI interactive
     // TUI). Verified against dust-cli v0.4.5 dist/index.js.

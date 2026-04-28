@@ -793,6 +793,16 @@ export async function runTask(
       throw new Error(`project "${effectiveProjectPath}" not found in DB; add it in Projects first`);
     }
 
+    // Phase 1 folder hierarchy (Franck 2026-04-27): all FS / git
+    // helpers must receive the project's full path under
+    // /projects (e.g. "Perso/fsallet/repo"), NOT the leaf `name`.
+    // The leaf alone yields cwd=/projects/repo which doesn't exist
+    // post-migration → spawn ENOENT (with a misleading
+    // `path: 'git'` field that hides the real culprit).
+    // Fallback to `name` so legacy rows with null fsPath still
+    // work during the dry-run / apply transition window.
+    const projectFsPath: string = project.fsPath ?? project.name;
+
     // [2] Pre-run sync --------------------------------------------------------
     // For audit tasks we still want an up-to-date working copy so the
     // agent analyses the latest main, but we go through a lighter path:
@@ -800,7 +810,12 @@ export async function runTask(
     // call then a new working branch.
     await setPhase('syncing', `git fetch + reset --hard origin/${policy.baseBranch}`);
     console.log(`[cron] git sync base=${policy.baseBranch}`);
-    const sync = await resetToBase(project.name, policy.baseBranch);
+    // Phase 1 folder hierarchy (Franck 2026-04-27): pass projectFsPath
+    // (e.g. "Perso/fsallet/terraform-provider-windows") rather than the
+    // leaf `name`. The git helpers compose `cwd = join(PROJECTS_ROOT, x)`
+    // and an out-of-date leaf-only value points at an inexistent dir,
+    // surfacing as the misleading `spawn git ENOENT`.
+    const sync = await resetToBase(projectFsPath, policy.baseBranch);
     if (!sync.ok) throw new Error(`pre-sync failed: ${sync.error}\n${sync.output}`);
 
     // [2b] Audit short-circuit REMOVED 2026-04-22 (full nuke).
@@ -829,7 +844,7 @@ export async function runTask(
         throw new Error(`refusing to work on protected branch "${branch}"`);
       }
       await setPhase('branching', `Creating work branch ${branch}`);
-      const co = await checkoutWorkingBranch(project.name, branch);
+      const co = await checkoutWorkingBranch(projectFsPath, branch);
       if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
       console.log(`[cron] branch=${branch}`);
       // Persist the working branch IMMEDIATELY (Franck 2026-04-25
@@ -853,7 +868,7 @@ export async function runTask(
     await setPhase('mcp', 'Registering fs-cli MCP server');
     let mcpServerIds: string[] | null = null;
     try {
-      const id = await getFsServerId(project.name);
+      const id = await getFsServerId(projectFsPath);
       mcpServerIds = [id];
       console.log(`[cron] mcp serverId=${id}`);
     } catch (e) {
@@ -867,7 +882,7 @@ export async function runTask(
     // link without trusting the agent to pass it.
     if (job.taskRunnerEnabled) {
       try {
-        const trId = await getTaskRunnerServerId(run.id, project.name);
+        const trId = await getTaskRunnerServerId(run.id, projectFsPath);
         mcpServerIds = [...(mcpServerIds ?? []), trId];
         console.log(`[cron] task-runner serverId=${trId}`);
       } catch (e) {
@@ -882,7 +897,7 @@ export async function runTask(
     if (job.commandRunnerEnabled) {
       try {
         const { getCommandRunnerServerId } = await import('../mcp/registry');
-        const crId = await getCommandRunnerServerId(run.id, project.name);
+        const crId = await getCommandRunnerServerId(run.id, projectFsPath);
         mcpServerIds = [...(mcpServerIds ?? []), crId];
         console.log(`[cron] command-runner serverId=${crId}`);
       } catch (e) {
@@ -932,7 +947,10 @@ export async function runTask(
           agentSId: job.agentSId,
           agentName: job.agentName ?? null,
           title: convTitle,
-          projectName: project.name,
+          // Conversation.projectName stores the project's fsPath
+          // post-migration (the column name is historical — kept
+          // for back-compat). See app/api/projects/[id]/route.ts.
+          projectName: projectFsPath,
           messages: { create: [{ role: 'user', content: agentPrompt }] },
         },
         update: {
@@ -940,7 +958,7 @@ export async function runTask(
           // current model, but be idempotent anyway.
           agentName: job.agentName ?? undefined,
           title: convTitle,
-          projectName: project.name,
+          projectName: projectFsPath,
         },
       })
       .catch((e) => {
@@ -1084,7 +1102,7 @@ export async function runTask(
           agentSId: job.agentSId,
           agentName: job.agentName ?? null,
           title: convTitle,
-          projectName: project.name,
+          projectName: projectFsPath,
           // If we land here via the "create" branch, the early
           // upsert didn't happen — recreate the user message so
           // the audit trail still shows both sides of the
@@ -1171,7 +1189,7 @@ export async function runTask(
 
     // [6] Diff measurement ---------------------------------------------------
     await setPhase('diff', 'Computing diff');
-    const diff = await diffStatFromHead(project.name);
+    const diff = await diffStatFromHead(projectFsPath);
     filesChanged = diff.filesChanged;
     linesAdded = diff.linesAdded;
     linesRemoved = diff.linesRemoved;
@@ -1231,7 +1249,7 @@ export async function runTask(
     const totalLines = linesAdded + linesRemoved;
     if (totalLines > job.maxDiffLines) {
       throw new Error(
-        `diff too large: +${linesAdded}/-${linesRemoved} over ${filesChanged} file(s) exceeds maxDiffLines=${job.maxDiffLines}. Refusing to commit/push. Review the agent's work manually in /projects/${project.name}.`,
+        `diff too large: +${linesAdded}/-${linesRemoved} over ${filesChanged} file(s) exceeds maxDiffLines=${job.maxDiffLines}. Refusing to commit/push. Review the agent's work manually in /projects/${projectFsPath}.`,
       );
     }
 
@@ -1243,7 +1261,7 @@ export async function runTask(
       `Agent: ${job.agentName ?? job.agentSId}\n` +
       `Base: origin/${policy.baseBranch}\n` +
       `Files: ${filesChanged} | +${linesAdded} / -${linesRemoved}`;
-    commitSha = await commitAll(project.name, commitMsg, 'KDust Bot', 'kdust-bot@ecritel.net');
+    commitSha = await commitAll(projectFsPath, commitMsg, 'KDust Bot', 'kdust-bot@ecritel.net');
     if (!commitSha) throw new Error('commitAll returned null despite diff being non-empty');
     console.log(`[cron] commit ${commitSha.slice(0, 8)}`);
 
@@ -1271,7 +1289,7 @@ export async function runTask(
         );
       } else {
         await setPhase('pushing', `git push origin ${branch}`);
-        const push = await pushBranch(project.name, branch, job.branchMode === 'stable');
+        const push = await pushBranch(projectFsPath, branch, job.branchMode === 'stable');
         if (!push.ok) throw new Error(`push failed: ${push.error}\n${push.output}`);
         pushedToOrigin = true;
         console.log(`[cron] pushed ${branch}`);
@@ -1385,13 +1403,13 @@ export async function runTask(
       } else {
         await setPhase('merging', `FF-merging ${branch} into ${mergeTarget}`);
         console.log(`[cron] B3: checkout ${mergeTarget} + ff-merge ${branch}`);
-        const co = await checkoutExistingBranch(project.name, mergeTarget);
+        const co = await checkoutExistingBranch(projectFsPath, mergeTarget);
         if (!co.ok) {
           mergeBackStatus = 'failed';
           mergeBackDetails = `checkout ${mergeTarget} failed: ${co.error}\n${co.output}`;
           console.warn(`[cron] B3: ${mergeBackDetails}`);
         } else {
-          const merge = await mergeFastForward(project.name, branch);
+          const merge = await mergeFastForward(projectFsPath, branch);
           if (!merge.ok) {
             mergeBackStatus = 'refused';
             mergeBackDetails =
@@ -1409,7 +1427,7 @@ export async function runTask(
                   `"${branch}" to preserve work on origin`,
               );
               const fallback = await pushBranch(
-                project.name,
+                projectFsPath,
                 branch,
                 job.branchMode === 'stable',
               );
@@ -1423,7 +1441,7 @@ export async function runTask(
               }
             }
           } else {
-            const pushBack = await pushBranch(project.name, mergeTarget, false);
+            const pushBack = await pushBranch(projectFsPath, mergeTarget, false);
             if (!pushBack.ok) {
               mergeBackStatus = 'failed';
               mergeBackDetails = `push ${mergeTarget} failed: ${pushBack.error}\n${pushBack.output}`;
@@ -1451,7 +1469,7 @@ export async function runTask(
               // instead of N. Idempotent: noop if the branch was
               // never pushed (the common leaf-worker case).
               if (opts?.skipChildPush) {
-                const cleanup = await deleteRemoteBranch(project.name, branch);
+                const cleanup = await deleteRemoteBranch(projectFsPath, branch);
                 if (cleanup.ok) {
                   if (!cleanup.error) {
                     console.log(

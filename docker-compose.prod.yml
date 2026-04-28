@@ -7,8 +7,11 @@
 #   3. mkdir -p data projects
 #
 # Démarrage :
-#   docker compose -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.prod.yml up -d
+#
+# Mise à jour automatique :
+#   Watchtower vérifie ghcr.io toutes les 5 minutes.
+#   Dès qu'une nouvelle image :latest est disponible, il pull + redémarre kdust.
 
 services:
   kdust:
@@ -19,6 +22,9 @@ services:
     container_name: kdust
     restart: unless-stopped
     pull_policy: always          # tire la dernière image à chaque `up`
+    # Label Watchtower : ce conteneur sera surveillé et mis à jour automatiquement
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     ports:
       - "3000:3000"
     env_file: .env
@@ -42,3 +48,33 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # -------------------------------------------------------------------------- #
+  # Watchtower — mise à jour automatique du conteneur kdust                    #
+  # Surveille ghcr.io toutes les 5 minutes (300s).                             #
+  # Dès qu'une nouvelle image est détectée : pull silencieux + redémarrage.    #
+  # -------------------------------------------------------------------------- #
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      # Accès au daemon Docker pour inspecter et redémarrer les conteneurs
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Credentials Docker de l'hôte (docker login ghcr.io fait plus haut)
+      # Watchtower les lit pour pouvoir puller des images privées
+      - ${HOME}/.docker/config.json:/config.json:ro
+    environment:
+      # Ne surveille QUE le conteneur kdust (pas watchtower lui-même, etc.)
+      WATCHTOWER_SCOPE: kdust-autoupdate
+      # Vérifie toutes les 5 minutes
+      WATCHTOWER_POLL_INTERVAL: "300"
+      # Supprime l'ancienne image après mise à jour (libère de la place)
+      WATCHTOWER_CLEANUP: "true"
+      # Log level lisible
+      WATCHTOWER_DEBUG: "false"
+      # Notifie dans les logs Docker (visible via `docker logs watchtower`)
+      WATCHTOWER_NOTIFICATIONS: "shoutrrr"
+      WATCHTOWER_NOTIFICATION_URL: ""   # laisser vide = logs uniquement
+    # Watchtower ne surveille que les conteneurs qui portent ce label
+    command: --label-enable --interval 300 --cleanup

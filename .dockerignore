@@ -1,6 +1,7 @@
 node_modules
 .next
 .git
+.github
 .env
 .env.local
 data
@@ -8,3 +9,8 @@ projects
 Dockerfile
 docker-compose.yml
 *.md
+docs
+tests
+coverage
+*.log
+.kdust

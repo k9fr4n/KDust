@@ -1,0 +1,96 @@
+name: Build & Publish Docker image
+
+# Déclenché sur :
+#   - tout push sur main (image :latest + :sha)
+#   - tout tag vX.Y.Z (image :vX.Y.Z + :latest)
+#   - workflow_dispatch (bouton manuel depuis l'UI GitHub)
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # Lowercase obligatoire pour ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build & push
+    runs-on: ubuntu-latest
+    # Permissions minimales : lecture du repo + écriture sur le registry
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # 1. Checkout                                                          #
+      # ------------------------------------------------------------------ #
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------ #
+      # 2. Docker Buildx (requis pour --cache-to/from et multi-plateforme) #
+      # ------------------------------------------------------------------ #
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ------------------------------------------------------------------ #
+      # 3. Login → ghcr.io avec le GITHUB_TOKEN (aucun secret à créer)     #
+      # ------------------------------------------------------------------ #
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ------------------------------------------------------------------ #
+      # 4. Calcul des tags et labels OCI                                    #
+      #    - push sur main  → :latest  + :sha-<short>                       #
+      #    - tag vX.Y.Z     → :vX.Y.Z  + :latest                           #
+      #    - workflow_dispatch → même règle que main                        #
+      # ------------------------------------------------------------------ #
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # tag semver complet sur les tags Git vX.Y.Z
+            type=semver,pattern={{version}}
+            # tag majeur + mineur (v1.2)
+            type=semver,pattern={{major}}.{{minor}}
+            # sha court sur les branches
+            type=sha,prefix=sha-,format=short
+            # :latest sur main et sur les tags
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+          labels: |
+            org.opencontainers.image.title=KDust
+            org.opencontainers.image.description=Self-hosted Dust agent scheduler with push pipeline and MCP servers
+            org.opencontainers.image.vendor=Ecritel
+
+      # ------------------------------------------------------------------ #
+      # 5. Build + push avec cache GitHub Actions (registry cache)          #
+      #    Le Dockerfile est multi-stage (deps → builder → runner) :        #
+      #    on cache chaque stage pour accélérer les builds incrémentiels.   #
+      # ------------------------------------------------------------------ #
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache partagé entre runs via le registry ghcr.io
+          # (pas de quota séparé, stocké dans le même package)
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to:   type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          # Expose le build-time arg pour que Next.js telemetry reste off
+          build-args: |
+            NEXT_TELEMETRY_DISABLED=1

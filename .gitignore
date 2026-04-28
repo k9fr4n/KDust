@@ -13,8 +13,10 @@ prisma/migrations/dev.db*
 # Attention: le slash initial est indispensable pour ne pas masquer
 # accidentellement src/app/api/projects/ ni src/app/projects/.
 /projects/*
+!/projects/.gitkeep
 !/projects/.kdust/
-/data/
+/data/*
+!/data/.gitkeep
 tsconfig.tsbuildinfo
 prisma/dev.db
 prisma/prisma/

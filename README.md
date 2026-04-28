@@ -1,7 +1,6 @@
 # KDust
 
-Web UI perso qui remplace `@dust-tt/dust-cli` avec en plus un scheduler de crons
-qui fait éditer des projets locaux par des agents Dust et poste un rapport Teams.
+Web UI perso
 
 ## Documentation
 

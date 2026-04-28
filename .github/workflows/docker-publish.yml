@@ -48,7 +48,15 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ------------------------------------------------------------------ #
-      # 4. Login → ghcr.io avec le GITHUB_TOKEN (aucun secret à créer)     #
+      # 4. Calcul du nom d'image en minuscules                             #
+      #    github.repository conserve la casse (k9fr4n/KDust) mais        #
+      #    ghcr.io exige du lowercase pour les cache refs.                 #
+      # ------------------------------------------------------------------ #
+      - name: Lowercase image name
+        run: echo "IMAGE_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------ #
+      # 5. Login → ghcr.io avec le GITHUB_TOKEN (aucun secret à créer)     #
       # ------------------------------------------------------------------ #
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -58,7 +66,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ------------------------------------------------------------------ #
-      # 5. Calcul des tags et labels OCI                                    #
+      # 6. Calcul des tags et labels OCI                                    #
       #    - push sur main  → :latest  + :sha-<short>                       #
       #    - tag vX.Y.Z     → :vX.Y.Z  + :latest                           #
       #    - workflow_dispatch → même règle que main                        #
@@ -83,7 +91,7 @@ jobs:
             org.opencontainers.image.vendor=Ecritel
 
       # ------------------------------------------------------------------ #
-      # 6. Build + push avec cache GitHub Actions (registry cache)          #
+      # 7. Build + push avec cache GitHub Actions (registry cache)          #
       #    Le Dockerfile est multi-stage (deps → builder → runner) :        #
       #    on cache chaque stage pour accélérer les builds incrémentiels.   #
       # ------------------------------------------------------------------ #
@@ -98,8 +106,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           # Cache partagé entre runs via le registry ghcr.io
           # (pas de quota séparé, stocké dans le même package)
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to:   type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          # IMAGE_LC = version lowercase de IMAGE_NAME (calculée à l'étape 4)
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:buildcache
+          cache-to:   type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_LC }}:buildcache,mode=max
           # Expose le build-time arg pour que Next.js telemetry reste off
           build-args: |
             NEXT_TELEMETRY_DISABLED=1

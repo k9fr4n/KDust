@@ -5,6 +5,7 @@ import { DustMcpServerTransport } from '@dust-tt/client';
 import { getDustClient } from '../dust/client';
 import { allFsTools } from './fs-tools';
 import { PROJECTS_ROOT } from '../projects';
+import { byteLen, logMcpCall } from '../logs/mcp-calls';
 
 export interface FsServerHandle {
   projectName: string;
@@ -37,7 +38,50 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
         description: `${tool.description} (project root: ${root})`,
         inputSchema: tool.schema.shape as any,
       },
-      (args: any) => tool.execute(root, args),
+      // Layer-1 observability (Franck 2026-04-28): wrap every tool
+      // execution to emit a normalized `[mcp]` log line with
+      // bytes_in/bytes_out/duration. fs-cli is per-PROJECT not per-
+      // run, so runId stays unknown here \u2014 the projectName tag is
+      // enough to correlate against /run/<id> after the fact.
+      async (args: any) => {
+        const start = Date.now();
+        const requestBytes = byteLen(args);
+        let responseBytes = 0;
+        let success = true;
+        let errorCode: string | null = null;
+        try {
+          const result = await tool.execute(root, args);
+          // Tool result shape is { content: [{type:'text', text}], isError? }
+          // We sum the text bytes of every content fragment.
+          if (result && Array.isArray((result as any).content)) {
+            for (const part of (result as any).content) {
+              if (part && typeof part.text === 'string') {
+                responseBytes += Buffer.byteLength(part.text, 'utf-8');
+              }
+            }
+          }
+          if ((result as any)?.isError) {
+            success = false;
+            errorCode = 'tool-error';
+          }
+          return result;
+        } catch (e: any) {
+          success = false;
+          errorCode = e?.code ?? 'throw';
+          throw e;
+        } finally {
+          logMcpCall({
+            server: 'fs-cli',
+            tool: tool.name,
+            projectName,
+            requestBytes,
+            responseBytes,
+            durationMs: Date.now() - start,
+            success,
+            errorCode,
+          });
+        }
+      },
     );
   }
 

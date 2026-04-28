@@ -26,6 +26,7 @@ import { getDustClient } from '../dust/client';
 import { db } from '../db';
 import { resolveForRun, type ResolvedSecrets } from '../secrets/repo';
 import { buildRedactor, noopRedactor } from '../secrets/redact';
+import { byteLen, logMcpCall } from '../logs/mcp-calls';
 
 const pExecFile = promisify(execFile);
 
@@ -214,6 +215,11 @@ export async function startCommandRunnerServer(
       },
     },
     async (input) => {
+      // Layer-1 observability (Franck 2026-04-28): start time is
+      // captured BEFORE chroot/denylist so even denied calls are
+      // measured.
+      const toolStart = Date.now();
+      const requestBytes = byteLen(input);
       const cmd = input.command as string;
       const argv = (input.args as string[] | undefined) ?? [];
       const requestedCwd = input.cwd as string | undefined;
@@ -230,16 +236,23 @@ export async function startCommandRunnerServer(
       try {
         cwd = chroot(projectRoot, requestedCwd);
       } catch (e: any) {
+        const text = JSON.stringify({
+          status: 'denied',
+          error: e?.message ?? 'cwd escapes project root',
+        });
+        logMcpCall({
+          runId,
+          server: 'command-runner',
+          tool: 'run_command',
+          projectName,
+          requestBytes,
+          responseBytes: byteLen(text),
+          durationMs: Date.now() - toolStart,
+          success: false,
+          errorCode: 'chroot',
+        });
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                status: 'denied',
-                error: e?.message ?? 'cwd escapes project root',
-              }),
-            },
-          ],
+          content: [{ type: 'text' as const, text }],
           isError: true,
         };
       }
@@ -259,17 +272,24 @@ export async function startCommandRunnerServer(
             durationMs: 0,
           },
         });
+        const text = JSON.stringify({
+          command_id: row.id,
+          status: 'denied',
+          error: `KDust denylist blocked this command (pattern: ${hit.source}). Revise args or adjust KDUST_CMD_DENYLIST if this was a false positive.`,
+        });
+        logMcpCall({
+          runId,
+          server: 'command-runner',
+          tool: 'run_command',
+          projectName,
+          requestBytes,
+          responseBytes: byteLen(text),
+          durationMs: Date.now() - toolStart,
+          success: false,
+          errorCode: 'denylist',
+        });
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                command_id: row.id,
-                status: 'denied',
-                error: `KDust denylist blocked this command (pattern: ${hit.source}). Revise args or adjust KDUST_CMD_DENYLIST if this was a false positive.`,
-              }),
-            },
-          ],
+          content: [{ type: 'text' as const, text }],
           isError: true,
         };
       }
@@ -374,10 +394,20 @@ export async function startCommandRunnerServer(
         truncated_stderr: trimmedStderr.bytes > OUTPUT_MAX_BYTES,
         error: errorMessage ?? undefined,
       };
+      const responseText = JSON.stringify(payload, null, 2);
+      logMcpCall({
+        runId,
+        server: 'command-runner',
+        tool: 'run_command',
+        projectName,
+        requestBytes,
+        responseBytes: byteLen(responseText),
+        durationMs: Date.now() - toolStart,
+        success: status === 'success',
+        errorCode: status === 'success' ? null : status,
+      });
       return {
-        content: [
-          { type: 'text' as const, text: JSON.stringify(payload, null, 2) },
-        ],
+        content: [{ type: 'text' as const, text: responseText }],
         isError: status !== 'success',
       };
     },

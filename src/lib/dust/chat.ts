@@ -1,5 +1,10 @@
 import { getDustClient } from './client';
 import { getDustMe } from './me';
+import {
+  byteLen,
+  logDustOverflow,
+  looksLikeContextOverflow,
+} from '../logs/mcp-calls';
 
 export interface StartMessageResult {
   dustConversationSId: string;
@@ -199,7 +204,20 @@ export async function createDustConversation(
     contentFragments,
     blocking: false,
   });
-  if (res.isErr()) throw new Error(`Dust createConversation: ${res.error.message}`);
+  if (res.isErr()) {
+    // Layer-0 observability (Franck 2026-04-28): surface context-window
+    // overflows distinctively so /logs can filter on `[dust-overflow]`.
+    if (looksLikeContextOverflow(res.error.message)) {
+      logDustOverflow({
+        agentSId,
+        conversationSId: null,
+        messageBytes: byteLen(content),
+        fileCount: fileIds?.length ?? 0,
+        upstreamMessage: res.error.message,
+      });
+    }
+    throw new Error(`Dust createConversation: ${res.error.message}`);
+  }
   const { conversation, message } = res.value;
   return {
     dustConversationSId: conversation.sId,
@@ -254,7 +272,19 @@ export async function postUserMessage(
       context: await userContext(mcpServerIds, origin),
     },
   });
-  if (res.isErr()) throw new Error(`Dust postUserMessage: ${res.error.message}`);
+  if (res.isErr()) {
+    // Layer-0 observability: see createDustConversation.
+    if (looksLikeContextOverflow(res.error.message)) {
+      logDustOverflow({
+        agentSId,
+        conversationSId: dustConversationSId,
+        messageBytes: byteLen(content),
+        fileCount: fileIds?.length ?? 0,
+        upstreamMessage: res.error.message,
+      });
+    }
+    throw new Error(`Dust postUserMessage: ${res.error.message}`);
+  }
   const userMessage = res.value;
 
   // On refetch la conversation pour avoir l'objet complet attendu par streamAgentAnswerEvents
@@ -424,8 +454,23 @@ export async function streamAgentReply(
       case 'agent_error':
       case 'user_message_error': {
         const ev: any = event;
-        onEvent('error', ev.error?.message ?? 'agent error');
-        throw new Error(ev.error?.message ?? 'agent error');
+        const msg: string = ev.error?.message ?? 'agent error';
+        // Layer-0 observability (Franck 2026-04-28): in practice the
+        // \"Your message or retrieved data is too large\" rejection
+        // surfaces HERE \u2014 mid-stream, after the agent has made
+        // enough tool calls to push the cumulative context past the
+        // model window \u2014 not at postUserMessage. Log distinctively.
+        if (looksLikeContextOverflow(msg)) {
+          logDustOverflow({
+            conversationSId: conversation?.sId ?? null,
+            agentSId: null,
+            messageBytes: 0,
+            fileCount: 0,
+            upstreamMessage: msg,
+          });
+        }
+        onEvent('error', msg);
+        throw new Error(msg);
       }
     }
   }

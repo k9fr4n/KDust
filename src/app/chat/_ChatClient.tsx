@@ -1782,9 +1782,12 @@ function ChatPageInner({
           )}
 
           <div className="flex gap-2 items-end">
-            {/* Hidden input + clickable paperclip button. Multiple
-                selection supported; re-opening the picker does NOT
-                reset existing chips (onChange appends). */}
+            {/* Hidden input for the paperclip button rendered on the
+                right side of the composer (Franck 2026-04-29: both
+                action buttons grouped on the right to free horizontal
+                space for the textarea). Multiple selection supported;
+                re-opening the picker does NOT reset existing chips
+                (onChange appends). */}
             <input
               ref={fileInputRef}
               type="file"
@@ -1797,16 +1800,6 @@ function ChatPageInner({
                 e.target.value = '';
               }}
             />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={streaming}
-              className="h-[2.75rem] px-2.5 rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-              title="Attach files"
-              aria-label="Attach files"
-            >
-              <Paperclip size={16} />
-            </button>
             <textarea
               ref={textareaRef}
               className={field + ' resize-none leading-relaxed'}
@@ -1883,6 +1876,16 @@ function ChatPageInner({
               placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
               disabled={streaming || !agentSId}
             />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming}
+              className="h-[2.75rem] px-2.5 rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              <Paperclip size={16} />
+            </button>
             <Button
               type="submit"
               disabled={
@@ -1891,8 +1894,15 @@ function ChatPageInner({
                 !agentSId ||
                 attachments.some((a) => a.status === 'uploading')
               }
+              title={streaming ? 'Streaming…' : 'Send'}
+              aria-label={streaming ? 'Streaming' : 'Send'}
+              className="px-2.5"
             >
-              <Send size={14} /> {streaming ? 'Streaming…' : 'Send'}
+              {streaming ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Send size={16} />
+              )}
             </Button>
           </div>
         </form>

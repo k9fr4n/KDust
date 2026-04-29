@@ -165,6 +165,70 @@ async function resolveMcpServerIds(
 }
 
 /**
+ * Picker helpers (#13, 2026-04-29). Pre-refactor the three sibling
+ * pickers (sendAgentPicker / sendChatsPicker / sendRunsPicker) all
+ * spelled out:
+ *   1. empty-state guard
+ *   2. 1-column inline_keyboard build with subtly different label
+ *      caps (50 then 64 in agents, 64 only in chats, none explicit
+ *      in runs)
+ *   3. sendMessage(header, { inline_keyboard })
+ * Centralised below so adding a 4th picker is data-only.
+ *
+ * truncateLabel enforces Telegram's 64-byte button label budget
+ * uniformly across all pickers (was best-effort and inconsistent
+ * pre-refactor). The 64-char count is a proxy for the underlying
+ * UTF-8 byte count \u2014 cap is conservative for ASCII-heavy labels
+ * which is the common case here (project names, run statuses,
+ * agent names).
+ */
+function truncateLabel(s: string, max = 64): string {
+  return s.length > max ? s.slice(0, max - 1) + '\u2026' : s;
+}
+
+interface PickerItem {
+  label: string;
+  callbackData: string;
+}
+
+/**
+ * Render a list of items as a Telegram inline keyboard with an
+ * empty-state fallback. Defaults to 1 column to match the existing
+ * picker UX; pass `columns: 2+` for denser grids.
+ *
+ * Each item.label is truncated to 64 chars, and callbackData is
+ * sliced to 64 bytes to match Telegram's hard limits. Callers are
+ * still responsible for formatting the label (emoji, check mark,
+ * relative time, etc.) and the callbackData prefix (`agent:`,
+ * `chat:`, `run:` ...).
+ */
+async function sendInlineKeyboard(
+  chatId: string,
+  opts: {
+    header: string;
+    items: PickerItem[];
+    emptyMessage: string;
+    columns?: number;
+  },
+): Promise<void> {
+  if (opts.items.length === 0) {
+    await sendMessage(chatId, opts.emptyMessage);
+    return;
+  }
+  const cols = Math.max(1, opts.columns ?? 1);
+  const rows: { text: string; callback_data: string }[][] = [];
+  for (let i = 0; i < opts.items.length; i += cols) {
+    rows.push(
+      opts.items.slice(i, i + cols).map((it) => ({
+        text: truncateLabel(it.label),
+        callback_data: it.callbackData.slice(0, 64),
+      })),
+    );
+  }
+  await sendMessage(chatId, opts.header, { inline_keyboard: rows });
+}
+
+/**
  * Fetch the visible agents from Dust and render them as an
  * inline keyboard so the user can switch with one tap. Mirrors
  * the /projects picker UX. Bound by Telegram's 64-byte
@@ -190,10 +254,6 @@ async function sendAgentPicker(chatId: string): Promise<void> {
     );
     return;
   }
-  if (agents.length === 0) {
-    await sendMessage(chatId, 'No agents visible to this user.');
-    return;
-  }
   // Sort alphabetically for stable, predictable order.
   agents.sort((a, b) =>
     a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
@@ -201,27 +261,23 @@ async function sendAgentPicker(chatId: string): Promise<void> {
   const cfg = await getAppConfig();
   const binding = await resolveBinding(chatId);
   // Mirrors the resolution order used by the message handler so
-  // the \u2705 in the picker matches what the next turn will actually
+  // the ✅ in the picker matches what the next turn will actually
   // call: binding > pendingAgent (set by /project) > global default.
   const currentSId =
     binding?.agentSId ??
     pendingAgent.get(chatId) ??
     cfg.telegramDefaultAgentSId ??
     null;
-  // 1 column, mark the current selection with a check.
   // Telegram caps inline_keyboard payloads at ~10kB; well under
   // for typical workspaces. If a workspace has >100 agents we
-  // would need pagination \u2014 out of scope for v1.
-  const buttons = agents.map((a) => [
-    {
-      text:
-        (currentSId === a.sId ? '\u2705 ' : '') +
-        (a.name.length > 50 ? a.name.slice(0, 47) + '\u2026' : a.name),
-      callback_data: `agent:${a.sId}`.slice(0, 64),
-    },
-  ]);
-  await sendMessage(chatId, 'Pick an agent:', {
-    inline_keyboard: buttons,
+  // would need pagination — out of scope for v1.
+  await sendInlineKeyboard(chatId, {
+    header: 'Pick an agent:',
+    emptyMessage: 'No agents visible to this user.',
+    items: agents.map((a) => ({
+      label: (currentSId === a.sId ? '✅ ' : '') + a.name,
+      callbackData: `agent:${a.sId}`,
+    })),
   });
 }
 
@@ -271,47 +327,34 @@ async function sendChatsPicker(chatId: string): Promise<void> {
       pinned: true,
     },
   });
-  if (convs.length === 0) {
-    await sendMessage(
-      chatId,
-      project
-        ? `No conversations in [${project}]. Use /project to switch or /projects for the list.`
-        : 'No conversations yet.',
-    );
-    return;
-  }
   // Surface the currently-bound conversation so the operator
   // sees "you're already in here" without re-tapping.
   const currentBinding = await resolveBinding(chatId);
   const currentConvId = currentBinding?.conversationId ?? null;
-  const buttons = convs.map((c) => {
-    const isCurrent = currentConvId === c.id;
-    const pin = c.pinned ? '\ud83d\udccc ' : '';
-    // Compose: "<check> <pin> <title> \u00b7 <agent> \u00b7 <time>"
-    // capped to fit within Telegram's button label budget.
-    const title =
-      c.title.length > 32 ? c.title.slice(0, 29) + '\u2026' : c.title;
-    const agentTag = c.agentName ? ` \u00b7 ${c.agentName}` : '';
-    const projectTag = c.projectName ? ` [${c.projectName}]` : '';
-    const label =
-      (isCurrent ? '\u2705 ' : '') +
-      pin +
-      title +
-      agentTag +
-      projectTag +
-      ` \u00b7 ${fmtRelative(c.updatedAt)}`;
-    return [
-      {
-        text: label.length > 64 ? label.slice(0, 61) + '\u2026' : label,
-        callback_data: `chat:${c.id}`.slice(0, 64),
-      },
-    ];
+  await sendInlineKeyboard(chatId, {
+    header: `Recent conversations${project ? ` in [${project}]` : ''}:`,
+    emptyMessage: project
+      ? `No conversations in [${project}]. Use /project to switch or /projects for the list.`
+      : 'No conversations yet.',
+    items: convs.map((c) => {
+      const isCurrent = currentConvId === c.id;
+      const pin = c.pinned ? '📌 ' : '';
+      // Compose: "<check> <pin> <title> · <agent> · <time>"
+      const title = c.title.length > 32 ? c.title.slice(0, 29) + '…' : c.title;
+      const agentTag = c.agentName ? ` · ${c.agentName}` : '';
+      const projectTag = c.projectName ? ` [${c.projectName}]` : '';
+      return {
+        label:
+          (isCurrent ? '✅ ' : '') +
+          pin +
+          title +
+          agentTag +
+          projectTag +
+          ` · ${fmtRelative(c.updatedAt)}`,
+        callbackData: `chat:${c.id}`,
+      };
+    }),
   });
-  await sendMessage(
-    chatId,
-    `Recent conversations${project ? ` in [${project}]` : ''}:`,
-    { inline_keyboard: buttons },
-  );
 }
 
 async function applyChatChoice(
@@ -437,42 +480,31 @@ async function sendRunsPicker(chatId: string): Promise<void> {
       task: { select: { name: true } },
     },
   });
-  if (recent.length === 0) {
-    await sendMessage(
-      chatId,
-      project ? `No runs in [${project}].` : 'No task runs yet.',
-    );
-    return;
-  }
   recent.sort((a, b) => {
     const aRunning = a.status === 'running' ? 0 : 1;
     const bRunning = b.status === 'running' ? 0 : 1;
     if (aRunning !== bRunning) return aRunning - bRunning;
     return b.startedAt.getTime() - a.startedAt.getTime();
   });
-  const buttons = recent.map((r) => {
-    const emoji = RUN_STATUS_EMOJI[r.status] ?? '\u2753';
-    const when =
-      r.status === 'running'
-        ? `running ${fmtDuration(r.startedAt, null)}`
-        : fmtRelative(r.finishedAt ?? r.startedAt);
-    // Cap label so the row stays readable on mobile. Telegram
-    // truncates labels at ~64 chars anyway; we leave headroom
-    // for the emoji and separator.
-    const taskName =
-      r.task.name.length > 36 ? r.task.name.slice(0, 33) + '\u2026' : r.task.name;
-    return [
-      {
-        text: `${emoji} ${taskName} \u00b7 ${when}`,
-        callback_data: `run:${r.id}`.slice(0, 64),
-      },
-    ];
+  await sendInlineKeyboard(chatId, {
+    header: `Recent runs${project ? ` in [${project}]` : ''}:`,
+    emptyMessage: project ? `No runs in [${project}].` : 'No task runs yet.',
+    items: recent.map((r) => {
+      const emoji = RUN_STATUS_EMOJI[r.status] ?? '❓';
+      const when =
+        r.status === 'running'
+          ? `running ${fmtDuration(r.startedAt, null)}`
+          : fmtRelative(r.finishedAt ?? r.startedAt);
+      // Cap task name aggressively so the row stays readable on
+      // mobile; sendInlineKeyboard re-caps the full label at 64.
+      const taskName =
+        r.task.name.length > 36 ? r.task.name.slice(0, 33) + '…' : r.task.name;
+      return {
+        label: `${emoji} ${taskName} · ${when}`,
+        callbackData: `run:${r.id}`,
+      };
+    }),
   });
-  await sendMessage(
-    chatId,
-    `Recent runs${project ? ` in [${project}]` : ''}:`,
-    { inline_keyboard: buttons },
-  );
 }
 
 async function sendRunDetail(chatId: string, runId: string): Promise<void> {

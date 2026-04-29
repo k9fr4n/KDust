@@ -113,12 +113,37 @@ function dustRoleToLocal(type: string): 'user' | 'agent' | null {
   return null; // content_fragment, etc. — skipped
 }
 
+/**
+ * Options for syncMessagesFromDust.
+ *
+ *   activeStream — when the caller knows that a Dust stream is
+ *   currently producing an agent reply for this conversation, the
+ *   sync MUST NOT insert a brand-new local row for that in-flight
+ *   message. The /stream endpoint owns its persistence and will
+ *   create the row at stream-end with the final content + stats.
+ *   Inserting concurrently here triggers two visible bugs (Franck
+ *   2026-04-29): "empty bubble" (Dust exposes the agent message
+ *   early with partial content) and P2002 on stream-end (unique
+ *   constraint on dustMessageSId fires). Linking (backfilling sId
+ *   on a pre-existing local row) is still safe and remains enabled.
+ */
+export interface SyncOpts {
+  activeStream?: {
+    active: boolean;
+    agentMessageSId?: string;
+  };
+}
+
 export async function syncMessagesFromDust(
   localConvId: string,
   dustConv: DustConvLite,
+  opts: SyncOpts = {},
 ): Promise<SyncStats> {
   const stats: SyncStats = { created: 0, linked: 0, skipped: 0 };
   if (!dustConv.content || dustConv.content.length === 0) return stats;
+
+  const streamActive = opts.activeStream?.active === true;
+  const streamAgentSId = opts.activeStream?.agentMessageSId;
 
   const dustMessages = latestPerRank(dustConv.content).filter(
     (m) => dustRoleToLocal(m.type) !== null && typeof m.sId === 'string',
@@ -191,6 +216,31 @@ export async function syncMessagesFromDust(
         );
         // fall through to create a fresh row
       }
+    }
+
+    // Stream-race guard (Franck 2026-04-29). When a Dust stream is
+    // currently producing an agent reply for this conv, the
+    // /stream endpoint owns the persistence of its agent_message
+    // and will write the final content at stream-end. Inserting a
+    // partial snapshot here would either create an empty bubble
+    // (Dust exposes the message early with no content) or trigger
+    // P2002 when the stream's own create runs. We therefore skip
+    // CREATE for any agent_message during an active stream.
+    //
+    // Be precise when we know the in-flight sId; otherwise fall
+    // back to skipping all agent creates while a stream is active
+    // (the few hundred ms before markStreamAgentMessage fires).
+    // User messages are never affected — they're persisted by the
+    // POST /messages handler before the stream starts, so by the
+    // time we reach this code path their row already exists and
+    // the linker above has either matched it or skipped it.
+    if (
+      role === 'agent' &&
+      streamActive &&
+      (streamAgentSId === undefined || streamAgentSId === sId)
+    ) {
+      stats.skipped += 1;
+      continue;
     }
 
     // Otherwise — message that originated outside KDust (Dust web,

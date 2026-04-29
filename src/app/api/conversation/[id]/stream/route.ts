@@ -104,18 +104,41 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         // (the pull-on-open sync will backfill it next time the
         // conv is opened).
         const dustAgentSId = getActiveStream(id)?.agentMessageSId ?? null;
-        await db.message.create({
-          data: {
-            conversationId: id,
-            role: 'agent',
-            content: finalContent,
-            streamStats: JSON.stringify(stats.eventCounts),
-            toolCalls: stats.toolCalls,
-            toolNames: JSON.stringify(stats.toolNames),
-            durationMs: stats.durationMs,
-            dustMessageSId: dustAgentSId,
-          },
-        });
+        // Persist the final agent message. When we have a Dust sId,
+        // use upsert keyed on that sId (Franck 2026-04-29) so we
+        // remain idempotent against any prior write that already
+        // claimed it — typically the pull-on-open sync racing with
+        // a still-running stream. Without an sId (Dust never emitted
+        // a messageId before stream end) we fall back to a plain
+        // create; nothing else can collide because the only other
+        // writer keys on dustMessageSId.
+        const messageData = {
+          content: finalContent,
+          streamStats: JSON.stringify(stats.eventCounts),
+          toolCalls: stats.toolCalls,
+          toolNames: JSON.stringify(stats.toolNames),
+          durationMs: stats.durationMs,
+        };
+        if (dustAgentSId) {
+          await db.message.upsert({
+            where: { dustMessageSId: dustAgentSId },
+            update: messageData,
+            create: {
+              ...messageData,
+              conversationId: id,
+              role: 'agent',
+              dustMessageSId: dustAgentSId,
+            },
+          });
+        } else {
+          await db.message.create({
+            data: {
+              ...messageData,
+              conversationId: id,
+              role: 'agent',
+            },
+          });
+        }
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });
 
         // Title sync (Franck 2026-04-23 21:59). Dust auto-generates a

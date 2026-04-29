@@ -72,8 +72,17 @@ async function syncFromDust(
 
     // Messages sync first — it produces no user-facing string but
     // mutates the DB before we re-read messages in the GET handler.
+    // Pass active-stream info so the sync skips creating a row for
+    // an agent_message currently being produced by /stream (Franck
+    // 2026-04-29: was triggering "empty bubble" + P2002 on stream
+    // end — see sync-messages.ts header).
+    const activeNow = getActiveStream(conv.id);
     try {
-      const stats = await syncMessagesFromDust(conv.id, dustConv);
+      const stats = await syncMessagesFromDust(conv.id, dustConv, {
+        activeStream: activeNow
+          ? { active: true, agentMessageSId: activeNow.agentMessageSId }
+          : undefined,
+      });
       if (stats.created > 0 || stats.linked > 0) {
         console.log(
           `[conv/:id] messages synced conv=${conv.id} created=${stats.created} linked=${stats.linked}`,

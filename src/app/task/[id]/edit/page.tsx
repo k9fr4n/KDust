@@ -33,6 +33,25 @@ export default async function EditCronPage({ params }: { params: Promise<{ id: s
         maxDiffLines: cron.maxDiffLines,
         protectedBranches: cron.protectedBranches,
         maxRuntimeMs: cron.maxRuntimeMs,
+        // ADR-0002 routing metadata. tags is JSON-encoded in DB
+        // (e.g. ["lint","ci"]). The form stores a comma-separated
+        // edit buffer (tagsInput) — parse here, re-serialise on
+        // submit. Malformed JSON falls back to an empty buffer
+        // rather than crashing the edit page (defensive: only
+        // happens if someone hand-edited the row).
+        description: cron.description,
+        tagsInput: (() => {
+          try {
+            const v: unknown = cron.tags ? JSON.parse(cron.tags) : null;
+            return Array.isArray(v) ? v.filter((s) => typeof s === 'string').join(', ') : '';
+          } catch {
+            return '';
+          }
+        })(),
+        inputsSchema: cron.inputsSchema,
+        sideEffects: (cron.sideEffects === 'readonly' || cron.sideEffects === 'pushes'
+          ? cron.sideEffects
+          : 'writes') as 'readonly' | 'writes' | 'pushes',
       }}
     />
   );

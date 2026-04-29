@@ -106,6 +106,25 @@ Scheduler tick frequency: 30s (see `src/lib/cron/scheduler.ts`).
 | `secretBindings`       | TaskSecret[] | per-task env injection for `commandRunnerEnabled` children |
 | `maxRuntimeMs`         | int? | wall-clock cap in ms. Null = env default. See "Runtime cap" below |
 
+### Routing metadata (ADR-0002, 2026-04-29)
+
+Optional fields that surface in the task-runner MCP server
+(`list_tasks` / `describe_task`) so an orchestrator agent — or the
+chat assistant — can pick the right task without parsing the full
+prompt. The prompt is written for the *executing* agent; the
+routing layer needs a different view of the task.
+
+| Field          | Type                                    | Notes |
+|----------------|-----------------------------------------|-------|
+| `description`  | string?                                 | 1-3 sentences "what is this task for", written for the routing layer. Distinct from `prompt`. |
+| `tags`         | JSON array of strings (stored as text)  | Cheap keyword matching: `["lint", "ci", "audit"]`. Empty list = `null`. |
+| `inputsSchema` | JSON Schema (stored as text)            | Shape expected for the `input` override on dispatch. Server rejects malformed JSON. |
+| `sideEffects`  | `'readonly' \| 'writes' \| 'pushes'`    | Default `'writes'`. Drives the orchestrator's confirmation gate: `readonly` may be auto-dispatched, `pushes` is the highest gate. |
+
+The full schema is exposed only via `describe_task`; `list_tasks`
+returns `has_inputs_schema: true|false` to keep its payload bounded
+when an installation has dozens of tasks.
+
 ### Runtime cap (wall-clock timeout)
 
 Every run has a hard kill-timer. When it fires, the run is aborted

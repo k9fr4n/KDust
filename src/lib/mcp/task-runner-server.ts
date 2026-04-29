@@ -58,6 +58,7 @@ import {
 } from '../git';
 import { resolveBranchPolicy } from '../branch-policy';
 import { resolveProjectByPathOrName } from '../folder-path';
+import { parseTags, parseInputsSchema } from '../task-routing';
 
 export interface TaskRunnerHandle {
   orchestratorRunId: string | null;
@@ -528,6 +529,15 @@ export async function startTaskRunnerServer(
   //   - prompt_preview   : first ~200 chars of the stored prompt so
   //                        the agent has a hint of what the task does
   //                        without needing to fetch the full prompt
+  //   - description      : ADR-0002 routing metadata. 1-3 sentences
+  //                        written for the routing layer (not the
+  //                        executing agent). Null when unset.
+  //   - tags             : string[] for keyword matching ([] when unset).
+  //   - side_effects     : 'readonly' | 'writes' | 'pushes'. Drives
+  //                        the orchestrator's confirmation gate.
+  //   - has_inputs_schema: boolean. The full schema is exposed by
+  //                        describe_task to keep list_tasks payload
+  //                        small.
   //
   // Self-listing is allowed (the calling orchestrator appears in
   // its own list_tasks output). Filtering it out would be a footgun:
@@ -546,7 +556,9 @@ export async function startTaskRunnerServer(
         `('bound' to a project vs 'generic' template needing a ` +
         `\`project\` arg). Output: { tasks: [{id, name, scope, ` +
         `project_path, agent_name, is_orchestrator, push_enabled, ` +
-        `prompt_preview}] }.`,
+        `prompt_preview, description, tags, side_effects, ` +
+        `has_inputs_schema}] }. Use describe_task(id_or_name) for ` +
+        `the full prompt + JSON Schema of any task.`,
       inputSchema: {
         scope: z
           .enum(['all', 'bound', 'generic'])
@@ -595,6 +607,10 @@ export async function startTaskRunnerServer(
           taskRunnerEnabled: true,
           pushEnabled: true,
           prompt: true,
+          description: true,
+          tags: true,
+          inputsSchema: true,
+          sideEffects: true,
         },
         orderBy: [{ projectPath: 'asc' }, { name: 'asc' }],
       });
@@ -609,6 +625,15 @@ export async function startTaskRunnerServer(
         push_enabled: !!t.pushEnabled,
         prompt_preview:
           t.prompt.length > 200 ? `${t.prompt.slice(0, 200).trim()}\u2026` : t.prompt.trim(),
+        // ADR-0002 routing metadata. description/tags/side_effects
+        // are surfaced inline because they're cheap and central to
+        // the picking decision; the full inputs schema is gated
+        // behind describe_task to keep list_tasks bounded in size
+        // when an installation has dozens of tasks.
+        description: t.description,
+        tags: parseTags(t.tags),
+        side_effects: t.sideEffects,
+        has_inputs_schema: !!t.inputsSchema,
       }));
 
       return {
@@ -616,6 +641,313 @@ export async function startTaskRunnerServer(
           {
             type: 'text' as const,
             text: JSON.stringify({ tasks: summaries }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // describe_task (Franck 2026-04-29, ADR-0002)
+  //
+  // Companion to list_tasks. Returns the FULL detail of a single
+  // task — most importantly the full prompt and the parsed
+  // inputsSchema (JSON Schema). Resolution rules mirror run_task:
+  //   1. exact id
+  //   2. exact (case-insensitive) name in project + generics, with
+  //      project-bound winning over generic on collision.
+  //
+  // Self-describe is allowed (orchestrator can read its own task
+  // row). The tool is read-only, no write, no dispatch.
+  // ---------------------------------------------------------------
+  server.registerTool(
+    'describe_task',
+    {
+      description:
+        `Return the full detail of a single KDust task — including ` +
+        `the full prompt, the JSON Schema for its expected input ` +
+        `(if any), tags, description, schedule, and the side-effects ` +
+        `class. Use after list_tasks when you need more than the ` +
+        `inline summary to decide whether to dispatch a task or ` +
+        `which 'input' override to pass. Resolves task ids and ` +
+        `case-insensitive names against project "${projectName}" ` +
+        `tasks first, then generic (projectPath=null) tasks.`,
+      inputSchema: {
+        task: z
+          .string()
+          .min(1)
+          .describe('Task ID or exact (case-insensitive) name.'),
+      },
+    },
+    async (args) => {
+      const taskRef = String(args.task ?? '').trim();
+      if (!taskRef) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ error: 'task argument is required' }),
+            },
+          ],
+        };
+      }
+      // Cross-project lookup by ID is allowed for describe_task
+      // (Franck 2026-04-29). Rationale: it's read-only metadata,
+      // not execution, so the project guard that protects run_task
+      // doesn't apply. Falls back to project-scoped resolution
+      // (project + generics, project-bound wins on name collision)
+      // when no exact-id match — keeps name-based discovery
+      // unambiguous within the orchestrator's scope.
+      const byIdAny = await db.task.findUnique({
+        where: { id: taskRef },
+        select: { id: true },
+      });
+      const resolvedId = byIdAny
+        ? byIdAny.id
+        : (await resolveTaskForProject(projectName, taskRef))?.id;
+      if (!resolvedId) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: `task "${taskRef}" not found (id, or name in project="${projectName}" + generics)`,
+              }),
+            },
+          ],
+        };
+      }
+      const row = await db.task.findUnique({
+        where: { id: resolvedId },
+        select: {
+          id: true,
+          name: true,
+          projectPath: true,
+          agentName: true,
+          agentSId: true,
+          enabled: true,
+          schedule: true,
+          timezone: true,
+          taskRunnerEnabled: true,
+          commandRunnerEnabled: true,
+          pushEnabled: true,
+          dryRun: true,
+          maxRuntimeMs: true,
+          prompt: true,
+          description: true,
+          tags: true,
+          inputsSchema: true,
+          sideEffects: true,
+        },
+      });
+      if (!row) {
+        // Race: row deleted between resolve and findUnique. Treat
+        // as not-found rather than 500 — the agent should re-list.
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ error: `task "${taskRef}" disappeared` }),
+            },
+          ],
+        };
+      }
+      const detail = {
+        id: row.id,
+        name: row.name,
+        scope: row.projectPath ? 'bound' : 'generic',
+        project_path: row.projectPath,
+        agent_name: row.agentName ?? row.agentSId,
+        enabled: row.enabled,
+        schedule: row.schedule,
+        timezone: row.timezone,
+        is_orchestrator: !!row.taskRunnerEnabled,
+        command_runner_enabled: !!row.commandRunnerEnabled,
+        push_enabled: !!row.pushEnabled,
+        dry_run: !!row.dryRun,
+        max_runtime_ms: row.maxRuntimeMs,
+        prompt: row.prompt,
+        description: row.description,
+        tags: parseTags(row.tags),
+        // Parsed JSON Schema object (or null when unset / malformed).
+        // The agent receives a typed object, not a JSON string, so
+        // it can be fed directly to a schema-aware validator on the
+        // call site without re-parsing.
+        inputs_schema: parseInputsSchema(row.inputsSchema),
+        side_effects: row.sideEffects,
+      };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(detail, null, 2) },
+        ],
+      };
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // update_task_routing (Franck 2026-04-29, ADR-0002)
+  //
+  // Targeted write tool: edits ONLY the four routing-metadata
+  // columns of a Task row. Intended for the "task-routing-backfill"
+  // assistant — an agent that walks the catalogue and fills
+  // description/tags/inputsSchema/sideEffects on legacy rows.
+  //
+  // Why a dedicated tool instead of a generic "patch_task":
+  //   - the surface area is bounded (4 fields, all sanitised by
+  //     task-routing.ts) — no risk of an agent flipping pushEnabled
+  //     or projectPath by accident
+  //   - cross-project by ID (same rationale as describe_task: it's
+  //     metadata, not execution)
+  //   - no generic-task invariant interaction (none of the 4
+  //     fields participate in those invariants)
+  //
+  // The HTTP API (/api/task/[id]) accepts the same payload but is
+  // gated by APP_PASSWORD; an agent running inside a TaskRun has
+  // no easy way to authenticate against it. This MCP tool short-
+  // circuits that constraint safely.
+  // ---------------------------------------------------------------
+  server.registerTool(
+    'update_task_routing',
+    {
+      description:
+        `Update the routing metadata (description, tags, inputs ` +
+        `schema, side-effects) of a single task. Cross-project by ` +
+        `id. Other Task columns are left untouched. Pass only the ` +
+        `fields you want to change; omitted fields are not modified ` +
+        `(use null explicitly to clear a field). Returns the post- ` +
+        `update routing view of the task.`,
+      inputSchema: {
+        task: z
+          .string()
+          .min(1)
+          .describe('Task ID or exact (case-insensitive) name. ID lookup is cross-project.'),
+        description: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('1-3 sentences for the routing layer. null clears.'),
+        tags: z
+          .array(z.string())
+          .nullable()
+          .optional()
+          .describe('Array of keyword strings. null or [] clears.'),
+        inputs_schema: z
+          .record(z.unknown())
+          .nullable()
+          .optional()
+          .describe('JSON Schema object describing the expected `input` override. null clears.'),
+        side_effects: z
+          .enum(['readonly', 'writes', 'pushes'])
+          .optional()
+          .describe('readonly | writes | pushes. Drives the orchestrator confirmation gate.'),
+      },
+    },
+    async (args) => {
+      const taskRef = String(args.task ?? '').trim();
+      if (!taskRef) {
+        return {
+          isError: true,
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'task argument is required' }) }],
+        };
+      }
+      // Same cross-project-by-id resolution as describe_task.
+      const byIdAny = await db.task.findUnique({
+        where: { id: taskRef },
+        select: { id: true },
+      });
+      const resolvedId = byIdAny
+        ? byIdAny.id
+        : (await resolveTaskForProject(projectName, taskRef))?.id;
+      if (!resolvedId) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ error: `task "${taskRef}" not found` }),
+            },
+          ],
+        };
+      }
+      // Build a partial update payload. Each field is processed
+      // independently so a caller can clear one and set another in
+      // the same call. Tags and inputs_schema are serialised here
+      // (DB stores them as JSON-encoded strings).
+      const data: {
+        description?: string | null;
+        tags?: string | null;
+        inputsSchema?: string | null;
+        sideEffects?: string;
+      } = {};
+      if ('description' in args) {
+        const d = args.description;
+        data.description = typeof d === 'string' && d.trim() ? d.trim() : null;
+      }
+      if ('tags' in args) {
+        const t = args.tags;
+        if (t == null) data.tags = null;
+        else {
+          const cleaned = (t as string[]).map((s) => String(s).trim()).filter(Boolean);
+          data.tags = cleaned.length ? JSON.stringify(cleaned) : null;
+        }
+      }
+      if ('inputs_schema' in args) {
+        const s = args.inputs_schema;
+        data.inputsSchema = s == null ? null : JSON.stringify(s);
+      }
+      if ('side_effects' in args && typeof args.side_effects === 'string') {
+        data.sideEffects = args.side_effects;
+      }
+      if (Object.keys(data).length === 0) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                error: 'no field to update (pass description, tags, inputs_schema, or side_effects)',
+              }),
+            },
+          ],
+        };
+      }
+      const updated = await db.task.update({
+        where: { id: resolvedId },
+        data,
+        select: {
+          id: true,
+          name: true,
+          projectPath: true,
+          description: true,
+          tags: true,
+          inputsSchema: true,
+          sideEffects: true,
+        },
+      });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                ok: true,
+                task: {
+                  id: updated.id,
+                  name: updated.name,
+                  scope: updated.projectPath ? 'bound' : 'generic',
+                  project_path: updated.projectPath,
+                  description: updated.description,
+                  tags: parseTags(updated.tags),
+                  inputs_schema: parseInputsSchema(updated.inputsSchema),
+                  side_effects: updated.sideEffects,
+                },
+              },
+              null,
+              2,
+            ),
           },
         ],
       };

@@ -47,6 +47,55 @@ Ouvrir http://localhost:3000, se connecter (mot de passe applicatif), puis
 - Les tokens OAuth sont chiffrés AES-256-GCM avec `APP_ENCRYPTION_KEY`.
 - Aucune clé n'est committée. Rotation : changer `APP_ENCRYPTION_KEY` **invalide la session Dust** (relogin nécessaire).
 - Le port 3000 ne doit **jamais** être exposé sur Internet sans reverse-proxy TLS + auth.
+
+## ADRs
+
+### ADR-0002 — Task routing metadata (2026-04-29)
+
+**Status**: Accepted
+**Date**: 2026-04-29
+**Context**: An orchestrator agent (or the chat assistant) deciding
+which child task to dispatch via the task-runner MCP server only had
+access to a 200-char `prompt_preview`. The full prompt is written for
+the *executing* agent (instructions, constraints, tool patterns) — not
+for the *picker*. Names alone aren't enough either: two tasks called
+`audit` can have very different scopes. Result: orchestrators had to
+hard-code child task names in their prompt, which defeats the purpose
+of `list_tasks`.
+
+**Decision**: Add four additive columns to `Task`:
+
+- `description` (`String?`) — 1-3 sentences for the routing layer.
+- `tags` (`String?` JSON-encoded array) — keyword matching.
+- `inputsSchema` (`String?` serialised JSON Schema) — contract for the
+  `input` override at dispatch.
+- `sideEffects` (`String` default `"writes"`, enum
+  `'readonly'|'writes'|'pushes'`) — confirmation gate driver.
+
+Surfaced in the MCP server through:
+
+- `list_tasks` — adds `description`, `tags`, `side_effects`,
+  `has_inputs_schema` to each summary.
+- `describe_task(task)` (new tool) — returns the FULL task detail
+  (full prompt, parsed JSON Schema, all flags) for one task.
+
+Storage convention follows `Message.toolNames`: JSON-encoded
+strings rather than relational tables, kept SQLite-friendly.
+
+**Consequences**:
+
+- Existing rows are unaffected (additive migration, conservative
+  defaults). No backfill required.
+- Generic tasks that already use `{{PROJECT}}` substitution gain a
+  natural place to declare their input contract via `inputsSchema`.
+- The `sideEffects` field is a hint, not an enforcement: it's the
+  orchestrator's responsibility to honour the confirmation gate. The
+  push pipeline still gates the actual `git push` independently.
+- Migration history has a pre-existing shadow-DB error
+  (`20260422170000`); the new migration was written manually and
+  applied via `prisma db push`. The migration SQL is preserved under
+  `prisma/migrations/20260429120700_task_routing_metadata/` for
+  parity with history.
     rafales d'environ 1 update/seconde.
   - Une seule instance KDust à la fois peut long-poll un même
     bot (Telegram renvoie 409 sur deux `getUpdates` parallèles).

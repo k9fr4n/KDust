@@ -398,6 +398,32 @@ model Task {
   // Opt-in per task, always safe default (false).
   commandRunnerEnabled Boolean @default(false)
 
+  // --- Routing metadata for MCP task discovery (Franck 2026-04-29) ---
+  // ADR-0002: task-routing-metadata. These four columns let an
+  // orchestrator agent (or the chat assistant) pick the right
+  // task from list_tasks/describe_task without having to parse
+  // the prompt — which is written for the CHILD agent, not for
+  // the routing layer. All additive, all nullable except
+  // sideEffects which carries a conservative default.
+  //
+  //   description : 1-3 sentences "what is this task for", written
+  //                 for the routing layer. Distinct from `prompt`
+  //                 which addresses the executing agent.
+  //   tags        : JSON-encoded string[] (e.g. ["lint","ci","audit"])
+  //                 for cheap keyword matching. Stored as String
+  //                 (SQLite-friendly, same convention as Message.toolNames).
+  //   inputsSchema: JSON Schema (serialised) describing the shape
+  //                 expected when the orchestrator passes `input`
+  //                 override. Null = free-form / no override expected.
+  //   sideEffects : 'readonly' | 'writes' | 'pushes'. Drives
+  //                 confirmation requirements in the orchestrator
+  //                 layer. Default 'writes' is the conservative
+  //                 fallback for legacy rows.
+  description    String?
+  tags           String?
+  inputsSchema   String?
+  sideEffects    String   @default("writes")
+
   // --- Secret env bindings (Franck 2026-04-21 21:30) ---
   // Per-task mapping "env var name -> global secret name". When the
   // command-runner MCP spawns a child process for this task, it

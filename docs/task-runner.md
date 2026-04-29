@@ -74,7 +74,11 @@ Output:
       "agent_name": "Coder",
       "is_orchestrator": false,
       "push_enabled": false,
-      "prompt_preview": "Audit IAM policies in {{PROJECT}} and produce…"
+      "prompt_preview": "Audit IAM policies in {{PROJECT}} and produce…",
+      "description": "Read-only IAM posture audit. Outputs a markdown report listing risky policies.",
+      "tags": ["audit", "iam", "readonly"],
+      "side_effects": "readonly",
+      "has_inputs_schema": false
     }
   ]
 }
@@ -84,6 +88,60 @@ Output:
 > is allowed by design (different input, same agent); runaway
 > recursion is bounded by the existing `runDepth` guard, not by
 > filtering here.
+
+#### Routing metadata fields (ADR-0002, 2026-04-29)
+
+The four ADR-0002 fields (`description`, `tags`, `side_effects`,
+`has_inputs_schema`) let an orchestrator pick the right task
+without parsing the prompt — which is written for the executing
+agent, not for the routing layer.
+
+| Field               | Purpose                                                                 |
+|---------------------|-------------------------------------------------------------------------|
+| `description`       | 1-3 sentences "what is this task for", written for the routing layer.   |
+| `tags`              | `string[]` for cheap keyword matching (`["lint", "ci", "audit"]`).      |
+| `side_effects`      | `'readonly' \| 'writes' \| 'pushes'`. Drives the orchestrator's confirmation gate. |
+| `has_inputs_schema` | Boolean; full schema is gated behind `describe_task` to keep payload bounded. |
+
+### `describe_task` — full detail of a single task
+
+Companion to `list_tasks`. Returns the full prompt, the parsed JSON
+Schema for the expected input override, and the complete routing
+metadata. Use when the inline `list_tasks` summary isn't enough to
+decide whether to dispatch a task or which `input` to pass.
+
+| Arg    | Type   | Required | Description |
+|--------|--------|:--------:|-------------|
+| `task` | string |    ✓     | Task id or exact (case-insensitive) name. Same resolution scope as `run_task`. |
+
+**Returns**:
+
+```json
+{
+  "id": "cmoxxxx",
+  "name": "audit-iam",
+  "scope": "generic",
+  "project_path": null,
+  "agent_name": "Coder",
+  "enabled": true,
+  "schedule": "manual",
+  "timezone": "Europe/Paris",
+  "is_orchestrator": false,
+  "command_runner_enabled": true,
+  "push_enabled": false,
+  "dry_run": false,
+  "max_runtime_ms": null,
+  "prompt": "(full prompt as stored)",
+  "description": "Read-only IAM posture audit…",
+  "tags": ["audit", "iam", "readonly"],
+  "inputs_schema": { "type": "object", "properties": { "scope": { "type": "string" } } },
+  "side_effects": "readonly"
+}
+```
+
+`inputs_schema` is the parsed JSON Schema object (or `null` when
+unset / malformed) — not a JSON string. Feed it directly to a
+schema-aware validator on the call site.
 
 ### `run_task` — synchronous dispatch
 

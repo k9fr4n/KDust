@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { isValidCronExpression } from '@/lib/cron/validator';
+import { validateRoutingMetadata } from '@/lib/task-routing';
 
 export const runtime = 'nodejs';
 
@@ -93,6 +94,57 @@ const TaskInput = z.object({
   dryRun: z.boolean().default(false),
   maxDiffLines: z.number().int().positive().default(2000),
   protectedBranches: z.string().nullable().optional().transform((v) => (v ? v : null)),
+  // Routing metadata (Franck 2026-04-29, ADR-0002). Optional fields
+  // surfaced by the task-runner MCP server (list_tasks /
+  // describe_task) so an orchestrator agent can pick the right
+  // task without parsing the prompt. Validation:
+  //   - description : free text, trimmed; empty => null
+  //   - tags        : array of strings on the wire OR JSON-encoded
+  //                   string; stored as JSON-encoded string for
+  //                   SQLite friendliness (same convention as
+  //                   Message.toolNames). Empty list => null.
+  //   - inputsSchema: JSON Schema as object/string; stored as
+  //                   serialised JSON string. Must be valid JSON.
+  //   - sideEffects : 'readonly' | 'writes' | 'pushes', default
+  //                   'writes' (conservative).
+  description: z
+    .string()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim() : null)),
+  tags: z
+    .union([z.array(z.string()), z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      if (v == null) return null;
+      if (Array.isArray(v)) {
+        const cleaned = v.map((s) => s.trim()).filter(Boolean);
+        return cleaned.length ? JSON.stringify(cleaned) : null;
+      }
+      const t = v.trim();
+      return t ? t : null;
+    }),
+  inputsSchema: z
+    .union([z.record(z.unknown()), z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      if (v == null) return null;
+      if (typeof v === 'object') return JSON.stringify(v);
+      const t = v.trim();
+      return t ? t : null;
+    }),
+  sideEffects: z.enum(['readonly', 'writes', 'pushes']).default('writes'),
+}).superRefine((v, ctx) => {
+  // Routing metadata sanity (ADR-0002). Runs before generic-task
+  // invariants because the same payload is rejected for both
+  // reasons in worst case; surfacing both helps the UI.
+  const issues = validateRoutingMetadata({
+    tags: v.tags,
+    inputsSchema: v.inputsSchema,
+  });
+  for (const it of issues) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [it.path], message: it.message });
+  }
 }).superRefine((v, ctx) => {
   // Generic-task invariants (Franck 2026-04-22).
   // A task with projectPath=null is a reusable template dispatched

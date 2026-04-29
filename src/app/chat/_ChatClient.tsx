@@ -1591,7 +1591,7 @@ function ChatPageInner({
 
           {streamedText && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 [overflow-wrap:anywhere] min-w-0">
+              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 break-words min-w-0 overflow-hidden">
                 <MessageMarkdown tone="agent">{streamedText}</MessageMarkdown>
                 <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
               </div>
@@ -1858,6 +1858,8 @@ function ChatPageInner({
                   if (it.kind !== 'file') continue;
                   const f = it.getAsFile();
                   if (!f) continue;
+                  // Rename clipboard images so each paste yields a
+                  // unique, recognizable filename.
                   const isGeneric = !f.name || /^image\.[a-z0-9]+$/i.test(f.name);
                   if (isGeneric && f.type.startsWith('image/')) {
                     const ext = f.type.split('/')[1] || 'png';

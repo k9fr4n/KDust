@@ -129,7 +129,14 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
                 : role === 'system'
                   ? 'px-3 py-2 rounded-2xl text-sm bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
                   : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
-              ' break-words min-w-0 overflow-hidden'
+              // [overflow-wrap:anywhere] is more aggressive than
+              // break-words: it can break inside an otherwise
+              // unbreakable token (long URL, hash, base64) so very
+              // long messages stay inside the bubble. We dropped
+              // overflow-hidden because it was masking the tail of
+              // the message when the wrap heuristic failed instead
+              // of expanding to a new line. (Franck 2026-04-29)
+              ' [overflow-wrap:anywhere] min-w-0'
             }
           >
             {role === 'system' ? (

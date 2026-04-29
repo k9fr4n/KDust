@@ -1781,7 +1781,7 @@ function ChatPageInner({
             </div>
           )}
 
-          <div className="flex gap-2 items-start">
+          <div className="flex gap-2 items-stretch">
             {/* Hidden input for the paperclip button rendered on the
                 right side of the composer (Franck 2026-04-29: both
                 action buttons grouped on the right to free horizontal
@@ -1808,7 +1808,12 @@ function ChatPageInner({
               // on `draft`). max-height is set inline because tailwind's
               // max-h-[Xpx] works but duplicating the constant here
               // keeps the JS ceiling and the CSS ceiling in sync.
-              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '2.75rem' }}
+              // minHeight 5rem (80px) matches the stacked button
+              // column on the right (h-9 + gap-2 + h-9 = 36+8+36 =
+              // 80px) so the composer stays visually balanced at
+              // rest. The column uses flex-1 inside, so it tracks
+              // the textarea if autoResize grows it taller.
+              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '5rem' }}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onInput={autoResize}
@@ -1876,13 +1881,15 @@ function ChatPageInner({
               placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
               disabled={streaming || !agentSId}
             />
-            {/* Stacked action buttons (Franck 2026-04-29). Both
-                buttons share the same square footprint (h-9 w-9)
-                so the column stays visually balanced regardless
-                of streaming/disabled state. Send sits on top to
-                stay closest to the natural eye-line of the reply
-                cursor; paperclip below as the secondary action. */}
-            <div className="flex flex-col gap-1.5 self-stretch">
+            {/* Stacked action buttons (Franck 2026-04-29). The
+                column shares the textarea height (items-stretch on
+                the parent) and each button uses flex-1 so they
+                always split that height evenly. At rest the column
+                is 80px tall (matching textarea minHeight 5rem); if
+                the textarea grows via autoResize, both buttons grow
+                proportionally and stay aligned with its top/bottom
+                edges. w-9 keeps them square at rest. */}
+            <div className="flex flex-col gap-2 w-9 shrink-0">
               <Button
                 type="submit"
                 disabled={
@@ -1893,7 +1900,7 @@ function ChatPageInner({
                 }
                 title={streaming ? 'Streaming…' : 'Send'}
                 aria-label={streaming ? 'Streaming' : 'Send'}
-                className="h-9 w-9 p-0"
+                className="flex-1 w-full p-0"
               >
                 {streaming ? (
                   <Loader2 size={16} className="animate-spin" />
@@ -1908,7 +1915,7 @@ function ChatPageInner({
                 disabled={streaming}
                 title="Attach files"
                 aria-label="Attach files"
-                className="h-9 w-9 p-0"
+                className="flex-1 w-full p-0"
               >
                 <Paperclip size={16} />
               </Button>

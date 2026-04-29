@@ -53,7 +53,21 @@ export async function GET() {
       if (cli) {
         const res = await cli.client.me();
         if (!res.isErr()) {
-          const u: any = res.value;
+          // The SDK shape evolves between versions (camel vs snake,
+          // `user` wrapper vs flat). We narrow defensively to a
+          // best-effort union and probe the fields below.
+          type MeShape = {
+            email?: string;
+            firstName?: string;
+            first_name?: string;
+            lastName?: string;
+            last_name?: string;
+            fullName?: string;
+            full_name?: string;
+            name?: string;
+            user?: { email?: string; fullName?: string };
+          };
+          const u = res.value as MeShape;
           // Dust's UserType exposes fullName/firstName/lastName/email.
           // We defensively cover a few shapes in case the SDK evolves.
           email = u?.email ?? u?.user?.email ?? null;

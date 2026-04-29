@@ -122,7 +122,10 @@ export function registerWaitForRunTool(
   
         // Progress heartbeat for this tool too — same rationale as
         // run_task. Different phase label for observability.
-        const progressToken = (extra?._meta as any)?.progressToken;
+        // _meta.progressToken comes from the SDK as `unknown` (its
+        // shape is open by spec). Narrow to the only field we use.
+        const meta = extra?._meta as { progressToken?: string | number } | undefined;
+        const progressToken = meta?.progressToken;
         let hbId: NodeJS.Timeout | null = null;
         if (progressToken) {
           let t = 0;

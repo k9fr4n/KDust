@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { RefreshCw, Check, X } from 'lucide-react';
+import { errMessage } from '@/lib/errors';
 
 export function SyncProjectButton({ projectId }: { projectId: string }) {
   const [state, setState] = useState<'idle' | 'running' | 'ok' | 'ko'>('idle');
@@ -22,9 +23,9 @@ export function SyncProjectButton({ projectId }: { projectId: string }) {
         setState('idle');
         router.refresh();
       }, 1200);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setState('ko');
-      setErr(e?.message ?? String(e));
+      setErr(errMessage(e));
       setTimeout(() => setState('idle'), 3000);
     }
   };

@@ -71,13 +71,12 @@ import {
   LayoutDashboard,
   Lightbulb,
   Activity,
+  type LucideIcon,
 } from 'lucide-react';
 
-// Use `any` for the map value: lucide's ForwardRefExoticComponent doesn't
-// directly satisfy ComponentType<{size?:number}>, and we don't need the
-// finer typing here — we only ever pass `size`.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ICONS: Record<string, any> = {
+// We only call these icons with `size`; reuse lucide's own LucideIcon
+// type so the map is typed without the open `any` escape hatch.
+const ICONS: Record<string, LucideIcon> = {
   MessageSquare,
   Clock,
   LayoutDashboard,

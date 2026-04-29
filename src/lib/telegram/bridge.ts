@@ -1549,7 +1549,7 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
   const mcpServerIds = await resolveMcpServerIds(projectName);
 
   try {
-    let stream: { conversation: unknown; userMessageSId: string; conversationId: string };
+    let stream: { conversation: import('@dust-tt/client').ConversationPublicType; userMessageSId: string; conversationId: string };
     if (!binding) {
       const created = await createBinding(
         chatId,

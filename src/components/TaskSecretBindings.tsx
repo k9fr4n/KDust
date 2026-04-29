@@ -21,6 +21,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, KeyRound, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
+import { errMessage } from '@/lib/errors';
 
 export interface BindingDraft {
   envName: string;
@@ -71,14 +72,19 @@ export function TaskSecretBindings({
     if (deferred) onBindingsChange?.(next.map(({ envName, secretName }) => ({ envName, secretName })));
   }
 
+  // Wire shape returned by GET /api/secrets — narrow to the two
+  // fields we render rather than `any`-mapping.
+  type SecretRow = { name: string; description: string | null };
+  type SecretsResp = { secrets?: SecretRow[] };
+
   async function reload() {
     try {
       if (deferred) {
         // Only fetch the secrets list; bindings are local.
         const sRes = await fetch('/api/secrets', { cache: 'no-store' });
         if (!sRes.ok) throw new Error(`secrets HTTP ${sRes.status}`);
-        const sJ = await sRes.json();
-        setSecrets((sJ.secrets ?? []).map((s: any) => ({ name: s.name, description: s.description })));
+        const sJ = (await sRes.json()) as SecretsResp;
+        setSecrets((sJ.secrets ?? []).map((s) => ({ name: s.name, description: s.description })));
         return;
       }
       const [bRes, sRes] = await Promise.all([
@@ -88,11 +94,11 @@ export function TaskSecretBindings({
       if (!bRes.ok) throw new Error(`bindings HTTP ${bRes.status}`);
       if (!sRes.ok) throw new Error(`secrets HTTP ${sRes.status}`);
       const bJ = await bRes.json();
-      const sJ = await sRes.json();
+      const sJ = (await sRes.json()) as SecretsResp;
       setBindings(bJ.bindings ?? []);
-      setSecrets((sJ.secrets ?? []).map((s: any) => ({ name: s.name, description: s.description })));
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+      setSecrets((sJ.secrets ?? []).map((s) => ({ name: s.name, description: s.description })));
+    } catch (e: unknown) {
+      setError(errMessage(e));
     }
   }
 

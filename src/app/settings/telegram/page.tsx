@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
+import type { AppConfig } from '@prisma/client';
 
 /**
  * Telegram chat bridge settings (Franck 2026-04-25 22:00).
@@ -14,19 +15,22 @@ import { Button } from '@/components/Button';
  * never round-trip through React state).
  */
 export default function TelegramSettingsPage() {
-  const [cfg, setCfg] = useState<any>(null);
+  const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [agents, setAgents] = useState<Array<{ sId: string; name: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    void fetch('/api/settings').then((r) => r.json()).then((j) => setCfg(j.config));
+    void fetch('/api/settings')
+      .then((r) => r.json() as Promise<{ config: AppConfig }>)
+      .then((j) => setCfg(j.config));
     void fetch('/api/agents')
       .then((r) => (r.ok ? r.json() : { agents: [] }))
       .then((j) => setAgents(j.agents ?? []));
   }, []);
 
   const save = async () => {
+    if (!cfg) return;
     setSaving(true);
     setMsg(null);
     const res = await fetch('/api/settings', {

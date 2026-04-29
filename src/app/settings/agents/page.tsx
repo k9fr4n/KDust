@@ -22,6 +22,7 @@ import {
   ArrowLeft, Bot, Plus, RefreshCw, Search, X,
   Sparkles, Star, ExternalLink, Pencil, Trash2, Save,
 } from 'lucide-react';
+import { errMessage } from '@/lib/errors';
 
 type Agent = {
   sId: string;
@@ -144,8 +145,8 @@ export default function AgentsSettingsPage() {
       setShowCreate(false);
       setC({ name: '', description: '', instructions: '', emoji: '' });
       await refresh();
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setErr(errMessage(e));
     } finally {
       setCreating(false);
     }

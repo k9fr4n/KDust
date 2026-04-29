@@ -1,8 +1,9 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Settings as SettingsIcon } from 'lucide-react';
 import { Button } from '@/components/Button';
+import type { AppConfig } from '@prisma/client';
 
 /**
  * Global application settings — moved out of the /settings index page
@@ -10,14 +11,22 @@ import { Button } from '@/components/Button';
  * own route. The payload matches AppConfig (dustBaseUrl, WorkOS, …);
  * the PATCH endpoint validates and persists to the appConfig table.
  */
+// Only the string-typed fields of AppConfig are bound by the form
+// below. The numeric runtime caps are handled in a separate UI; we
+// constrain `bind()` to keys whose value is a string to keep the
+// generic event handler type-safe.
+type AppConfigStringKey = {
+  [K in keyof AppConfig]: AppConfig[K] extends string | null ? K : never;
+}[keyof AppConfig];
+
 export default function GlobalSettingsPage() {
-  const [cfg, setCfg] = useState<any>(null);
+  const [cfg, setCfg] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
     void fetch('/api/settings')
-      .then((r) => r.json())
+      .then((r) => r.json() as Promise<{ config: AppConfig }>)
       .then((j) => setCfg(j.config));
   }, []);
 
@@ -35,9 +44,10 @@ export default function GlobalSettingsPage() {
 
   const field =
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
-  const bind = (k: string) => ({
-    value: cfg?.[k] ?? '',
-    onChange: (e: any) => setCfg({ ...cfg, [k]: e.target.value }),
+  const bind = (k: AppConfigStringKey) => ({
+    value: (cfg?.[k] as string | null) ?? '',
+    onChange: (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+      cfg && setCfg({ ...cfg, [k]: e.target.value }),
   });
 
   return (
@@ -117,11 +127,18 @@ export default function GlobalSettingsPage() {
               runtimes can still type a valid IANA name. */}
           <label className="block">
             <span className="text-sm">Default timezone</span>
-            {typeof (Intl as any).supportedValuesOf === 'function' ? (
+            {/*
+              `Intl.supportedValuesOf` is in lib.es2022.intl but not
+              every TS lib target exposes it; narrow once via a typed
+              guard rather than dropping to `any`.
+            */}
+            {(() => {
+              const intl = Intl as unknown as {
+                supportedValuesOf?: (k: 'timeZone') => string[];
+              };
+              return typeof intl.supportedValuesOf === 'function' ? (
               <select className={field} {...bind('timezone')}>
-                {(Intl as any)
-                  .supportedValuesOf('timeZone')
-                  .map((tz: string) => (
+                {intl.supportedValuesOf('timeZone').map((tz: string) => (
                     <option key={tz} value={tz}>
                       {tz}
                     </option>
@@ -133,7 +150,8 @@ export default function GlobalSettingsPage() {
                 placeholder="Europe/Paris"
                 {...bind('timezone')}
               />
-            )}
+            );
+            })()}
             <span className="block mt-1 text-[11px] text-slate-500">
               Applied when a Task does not set its own timezone.
               Also injected into Dust chat user-context so agents

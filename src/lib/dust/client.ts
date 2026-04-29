@@ -130,7 +130,19 @@ export async function getDustClient(): Promise<{
           : typeof first === 'string'
             ? first
             : '';
-      const errObj = (first as any)?.error ?? first;
+      // The SDK calls error(arg) sometimes with a wrapper { error: Error,
+      // ... } and sometimes with the Error itself; structurally narrow
+      // both shapes through one optional field path.
+      type LoggerErrorShape = {
+        name?: string;
+        code?: number | string;
+        message?: string;
+        kind?: string;
+        cause?: { code?: string };
+        error?: { name?: string; code?: number | string; message?: string; kind?: string; cause?: { code?: string } };
+      };
+      const wrapper = first as LoggerErrorShape;
+      const errObj: LoggerErrorShape = wrapper?.error ?? wrapper;
       const isAbort =
         errObj?.name === 'AbortError' ||
         errObj?.code === 20 ||
@@ -187,9 +199,17 @@ export async function getDustClient(): Promise<{
         'User-Agent': DUST_CLI_USER_AGENT,
         'X-Dust-CLI-Version': DUST_CLI_VERSION,
       },
-    } as any,
+      // Cast narrowed to the credentials parameter shape: the SDK
+      // types `apiKey` strictly as a function-or-string union and
+      // doesn't always surface `extraHeaders` in older versions.
+    } as ConstructorParameters<typeof DustAPI>[1],
     // logger — `error` is wrapped to demote AbortError chatter.
-    { error: smartErrorLogger, info: console.log } as any,
+    // Cast through the SDK's expected logger signature so the call
+    // shape (multi-arg variadic) we actually use stays static.
+    {
+      error: smartErrorLogger,
+      info: console.log,
+    } as unknown as ConstructorParameters<typeof DustAPI>[2],
   );
 
   // ---------------------------------------------------------------
@@ -211,13 +231,26 @@ export async function getDustClient(): Promise<{
   // Total worst-case latency added: ~23s, comfortably under the
   // ~30s window Dust suggests.
   // ---------------------------------------------------------------
-  const original = client.postMCPResults.bind(client);
-  (client as any).postMCPResults = async (args: any) => {
+  // Type the original method via `typeof` rather than `any` — both
+  // the args and the return type then stay aligned with the SDK.
+  type PostMCPResults = typeof client.postMCPResults;
+  const original: PostMCPResults = client.postMCPResults.bind(client);
+  // The SDK's APIError shape varies slightly across versions (some
+  // expose `dustError` at the top level, some nest it). We narrow
+  // through this structural type rather than `any`-blanketing.
+  type DustErrLike = {
+    status?: number;
+    type?: string;
+    dustError?: { type?: string };
+  };
+  (client as unknown as { postMCPResults: PostMCPResults }).postMCPResults = (async (
+    args: Parameters<PostMCPResults>[0],
+  ) => {
     const delays = [2000, 6000, 15000];
     for (let attempt = 0; attempt <= delays.length; attempt++) {
       const res = await original(args);
       if (!res.isErr()) return res;
-      const err: any = res.error;
+      const err = res.error as DustErrLike;
       // Only retry on clearly-transient conditions. Everything else
       // (auth error, schema error, unknown serverId) returns now so
       // the caller can fail fast.
@@ -240,7 +273,7 @@ export async function getDustClient(): Promise<{
     }
     // Unreachable (loop always returns), but keeps TS happy.
     return original(args);
-  };
+  }) as PostMCPResults;
 
   return { client, workspaceId: stored.workspaceId };
 }

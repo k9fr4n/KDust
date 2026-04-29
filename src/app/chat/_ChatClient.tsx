@@ -2,6 +2,7 @@
 import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
+import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { ChatMessageBubble } from '@/components/ChatMessageBubble';
 import {
@@ -770,8 +771,8 @@ function ChatPageInner({
           }
         }
       }
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errMessage(e));
     } finally {
       setStreaming(false);
       setLocalStreamStartedAt(null);
@@ -1063,8 +1064,8 @@ function ChatPageInner({
         const j = await r.json();
         await consumeStream(currentId, j.userMessageSId);
       }
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setError(errMessage(e));
     }
   };
 

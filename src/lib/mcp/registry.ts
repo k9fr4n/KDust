@@ -62,7 +62,9 @@ if (!g.__kdustFsSweeper) {
   // unref so the sweeper doesn\u0027t keep the process alive in tests or
   // one-shot scripts. In a Next.js server the HTTP listener already
   // holds the event loop.
-  (timer as any).unref?.();
+  // setInterval returns Timeout in Node, number in browser DOM lib. We
+  // run only on the server, so cast to NodeJS.Timeout for `unref()`.
+  (timer as NodeJS.Timeout).unref?.();
   g.__kdustFsSweeper = timer;
 }
 

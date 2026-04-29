@@ -329,7 +329,19 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
   );
 }
 
-function RecentConvs({ items }: { items: Array<any> }) {
+// Subset of the fields hydrated by the dashboard's `db.conversation
+// .findMany()` query, matching ConversationCard's ConvSummary contract.
+type RecentConvItem = {
+  id: string;
+  title: string;
+  agentName: string | null;
+  agentSId: string;
+  projectName: string | null;
+  pinned: boolean;
+  updatedAt: Date;
+};
+
+function RecentConvs({ items }: { items: RecentConvItem[] }) {
   if (items.length === 0)
     return (
       <p className="text-sm text-slate-500 italic rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-4">
@@ -458,7 +470,25 @@ const STATUS_CLASS: Record<string, string> = {
   skipped: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400',
 };
 
-function RecentRuns({ items }: { items: Array<any> }) {
+// Subset of the fields hydrated by `db.taskRun.findMany({ include:
+// { task: { select: { name, projectPath } } } })` on the dashboard,
+// reshaped to match RunCard's RunCardData contract.
+type RecentRunItem = {
+  id: string;
+  status: string;
+  startedAt: Date;
+  filesChanged: number | null;
+  linesAdded: number | null;
+  linesRemoved: number | null;
+  pinned: boolean;
+  taskId: string;
+  // The dashboard query only selects { name } today; projectPath is
+  // optional so this type stays accurate without forcing a query
+  // change in the same patch.
+  task: { name: string; projectPath?: string | null } | null;
+};
+
+function RecentRuns({ items }: { items: RecentRunItem[] }) {
   if (items.length === 0)
     return (
       <p className="text-sm text-slate-500 italic rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-4">

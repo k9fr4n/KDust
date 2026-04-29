@@ -1,16 +1,48 @@
 import { getDustClient } from './client';
+import type {
+  AgentActionSpecificEvent,
+  AgentErrorEvent,
+  AgentMessageSuccessEvent,
+  ConversationPublicType,
+  GenerationTokensEvent,
+  UserMessageErrorEvent,
+} from '@dust-tt/client';
 import { getDustMe } from './me';
 import {
   byteLen,
   logDustOverflow,
   looksLikeContextOverflow,
 } from '../logs/mcp-calls';
+import { errMessage } from '../errors';
 
 export interface StartMessageResult {
   dustConversationSId: string;
   userMessageSId: string;
-  conversation: any; // ConversationPublicType (pour streamAgentAnswerEvents)
+  // Re-stream into streamAgentAnswerEvents below; type comes from the SDK.
+  conversation: ConversationPublicType;
 }
+
+/**
+ * Subset of `AgentEvent` (the SDK's stream union) we explicitly handle.
+ * Listing the variants here gives us:
+ *   1. exhaustive discriminated narrowing in the switch below;
+ *   2. a single place to extend when Dust ships new event types.
+ *
+ * Variants we DON'T handle (agent_action_specific other than
+ * tool_approve_execution, agent_action_success, agent_generation_cancelled,
+ * agent_message_done, tool_error) flow through unchanged — only their
+ * `type` is read for stats counting.
+ */
+type ToolApproveExecutionEvent = Extract<
+  AgentActionSpecificEvent,
+  { type: 'tool_approve_execution' }
+>;
+type HandledStreamEvent =
+  | GenerationTokensEvent
+  | ToolApproveExecutionEvent
+  | AgentMessageSuccessEvent
+  | AgentErrorEvent
+  | UserMessageErrorEvent;
 
 /**
  * Non-programmatic message origins only. Dust's billing policy splits
@@ -328,7 +360,7 @@ export interface StreamStats {
  * duration, per-event-type cardinality.
  */
 export async function streamAgentReply(
-  conversation: any,
+  conversation: ConversationPublicType,
   userMessageSId: string,
   signal: AbortSignal,
   onEvent: (
@@ -345,7 +377,7 @@ export async function streamAgentReply(
     signal,
   });
   if (streamRes.isErr())
-    throw new Error(`Dust streamAgentAnswerEvents: ${(streamRes.error as any).message}`);
+    throw new Error(`Dust streamAgentAnswerEvents: ${errMessage(streamRes.error)}`);
 
   let finalContent = '';
   let agentMessageSIdEmitted = false;
@@ -360,9 +392,16 @@ export async function streamAgentReply(
     genEvents: seenTypes.get('generation_tokens') ?? 0,
     durationMs: Date.now() - startedAt,
   });
-  const maybeEmitAgentMessageId = (ev: any) => {
+  // The agent message sId surfaces on different events depending on
+  // the variant. We accept any event that *might* carry it and read
+  // through a structural narrow rather than a per-variant switch.
+  type WithAgentMessageId = {
+    messageId?: string;
+    message?: { sId?: string };
+  };
+  const maybeEmitAgentMessageId = (ev: WithAgentMessageId) => {
     if (agentMessageSIdEmitted) return;
-    const mid = ev?.messageId ?? ev?.message?.sId;
+    const mid = ev.messageId ?? ev.message?.sId;
     if (typeof mid === 'string' && mid.length > 0) {
       agentMessageSIdEmitted = true;
       onEvent('agent_message_id', mid);
@@ -373,20 +412,25 @@ export async function streamAgentReply(
     if (signal.aborted) break;
     if (!event) continue;
 
-    const et = (event as any).type;
+    const et = event.type;
     seenTypes.set(et, (seenTypes.get(et) ?? 0) + 1);
     // Debug: log every event type once (and tool-related events always) to diagnose MCP wiring
-    if (et?.startsWith('tool_') || et === 'agent_action_success' || seenTypes.get(et) === 1) {
+    if (et.startsWith('tool_') || et === 'agent_action_success' || seenTypes.get(et) === 1) {
       console.log(`[chat/stream] event=${et}`, JSON.stringify(event).slice(0, 500));
     }
 
     // Any event that references the agent message gives us its sId.
     // Emit once so the client/cancel endpoint can target it.
-    maybeEmitAgentMessageId(event);
+    maybeEmitAgentMessageId(event as WithAgentMessageId);
 
-    switch (et) {
+    // We narrow back to the variants we actively handle. Other
+    // event types (tool_error, agent_action_specific other than
+    // tool_approve_execution, agent_action_success, etc.) flow
+    // through the count above and are otherwise ignored.
+    const handled = event as Partial<HandledStreamEvent> & { type: string };
+    switch (handled.type) {
       case 'generation_tokens': {
-        const ev: any = event;
+        const ev = handled as GenerationTokensEvent;
         // Dust streams 4 classifications: tokens, chain_of_thought,
         // opening_delimiter, closing_delimiter. The delimiters also carry text
         // (typically markdown wrappers around tool calls / citations) and must
@@ -407,12 +451,12 @@ export async function streamAgentReply(
       case 'tool_approve_execution': {
         // Auto-approve MCP tool calls so the agent can actually use the fs tools.
         // Without this, the agent waits for approval forever and aborts.
-        const ev: any = event;
+        const ev = handled as ToolApproveExecutionEvent;
         onEvent(
           'tool_call',
           JSON.stringify({
-            tool: ev.metadata?.toolName ?? ev.toolName ?? 'tool',
-            params: ev.inputs ?? ev.metadata?.inputs ?? null,
+            tool: ev.metadata?.toolName ?? 'tool',
+            params: ev.inputs ?? null,
           }),
         );
         // Dust's frontend (Google LB) occasionally returns transient
@@ -434,15 +478,13 @@ export async function streamAgentReply(
         } catch (err) {
           onEvent(
             'error',
-            `Failed to approve tool action after retries: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
+            `Failed to approve tool action after retries: ${errMessage(err)}`,
           );
         }
         break;
       }
       case 'agent_message_success': {
-        const ev: any = event;
+        const ev = handled as AgentMessageSuccessEvent;
         if (ev.message?.content) finalContent = ev.message.content;
         console.log(
           '[chat/stream] done. event counts:',
@@ -453,7 +495,7 @@ export async function streamAgentReply(
       }
       case 'agent_error':
       case 'user_message_error': {
-        const ev: any = event;
+        const ev = handled as AgentErrorEvent | UserMessageErrorEvent;
         const msg: string = ev.error?.message ?? 'agent error';
         // Layer-0 observability (Franck 2026-04-28): in practice the
         // \"Your message or retrieved data is too large\" rejection

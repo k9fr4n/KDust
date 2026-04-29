@@ -16,7 +16,10 @@ export default function DustConnect() {
   const router = useRouter();
   const [device, setDevice] = useState<Device | null>(null);
   const [step, setStep] = useState<'idle' | 'polling' | 'ok' | 'error'>('idle');
-  const [workspaces, setWorkspaces] = useState<any[] | null>(null);
+  // Subset of the workspace shape returned by GET /api/dust/workspaces.
+  // Extra fields are ignored by the picker UI.
+  type Workspace = { sId: string; name: string };
+  const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const start = async () => {
@@ -147,7 +150,7 @@ export default function DustConnect() {
 
           <p className="text-sm text-slate-500 pt-2">Pick a workspace:</p>
           <ul className="space-y-2">
-            {(workspaces ?? []).map((w: any) => (
+            {(workspaces ?? []).map((w) => (
               <li key={w.sId}>
                 <button
                   onClick={() => pickWorkspace(w.sId)}

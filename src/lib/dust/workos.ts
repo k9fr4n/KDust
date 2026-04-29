@@ -49,7 +49,11 @@ export async function pollDeviceToken(deviceCode: string): Promise<
       client_id: cfg.workosClientId,
     }),
   });
-  const data = (await res.json()) as any;
+  // WorkOS token endpoint returns either a TokenResponse on success
+  // or { error, error_description? } on the documented error states
+  // (authorization_pending, slow_down, expired_token, access_denied…).
+  type WorkosTokenError = { error: string; error_description?: string };
+  const data = (await res.json()) as Partial<TokenResponse> & Partial<WorkosTokenError>;
 
   if (data?.error === 'authorization_pending') return { status: 'pending' };
   if (data?.error === 'slow_down') return { status: 'slow_down' };

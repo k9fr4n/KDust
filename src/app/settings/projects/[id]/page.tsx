@@ -25,6 +25,7 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X } from 'lucide-react';
+import { errMessage } from '@/lib/errors';
 
 type Project = {
   id: string;
@@ -81,7 +82,10 @@ export default function ProjectSettingsPage({
   const [branchPrefix, setBranchPrefix] = useState('kdust');
   const [protectedBranches, setProtectedBranches] = useState('main,master,develop,production,prod');
   // Phase 2: platform state. Empty strings map to null server-side.
-  const [platform, setPlatform] = useState<'auto' | 'github' | 'gitlab' | 'none'>('auto');
+  type GitPlatform = 'auto' | 'github' | 'gitlab' | 'none';
+  const isGitPlatform = (s: unknown): s is GitPlatform =>
+    s === 'auto' || s === 'github' || s === 'gitlab' || s === 'none';
+  const [platform, setPlatform] = useState<GitPlatform>('auto');
   const [platformApiUrl, setPlatformApiUrl] = useState('');
   const [platformTokenRef, setPlatformTokenRef] = useState('');
   const [remoteProjectRef, setRemoteProjectRef] = useState('');
@@ -116,7 +120,7 @@ export default function ProjectSettingsPage({
             setBranchPrefix(found.branchPrefix);
             setProtectedBranches(found.protectedBranches);
             // Phase 2: platform hydration.
-            setPlatform((found.platform as any) ?? 'auto');
+            setPlatform(isGitPlatform(found.platform) ? found.platform : 'auto');
             setPlatformApiUrl(found.platformApiUrl ?? '');
             setPlatformTokenRef(found.platformTokenRef ?? '');
             setRemoteProjectRef(found.remoteProjectRef ?? '');
@@ -199,9 +203,9 @@ export default function ProjectSettingsPage({
       setSaveState('ok');
       setReSyncHint(!!j.reSyncRecommended);
       setTimeout(() => setSaveState('idle'), 2000);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setSaveState('ko');
-      setErr(e?.message ?? String(e));
+      setErr(errMessage(e));
     }
   };
 
@@ -238,9 +242,9 @@ export default function ProjectSettingsPage({
       setName(j.project.name);
       setRenameState('ok');
       setTimeout(() => setRenameState('idle'), 2000);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setRenameState('ko');
-      setRenameErr(e?.message ?? String(e));
+      setRenameErr(errMessage(e));
     }
   };
 
@@ -450,8 +454,8 @@ export default function ProjectSettingsPage({
                 const lj = await lr.json();
                 const found: Project | undefined = (lj.projects ?? []).find((x: Project) => x.id === id);
                 if (found) setP(found);
-              } catch (e: any) {
-                setErr(e?.message ?? String(e));
+              } catch (e: unknown) {
+                setErr(errMessage(e));
               } finally {
                 setSyncing(false);
               }
@@ -603,7 +607,10 @@ export default function ProjectSettingsPage({
             <select
               className="w-full mt-1 text-sm px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
               value={platform}
-              onChange={(e) => setPlatform(e.target.value as any)}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (isGitPlatform(v)) setPlatform(v);
+              }}
             >
               <option value="auto">auto-detect from git URL</option>
               <option value="github">github</option>
@@ -772,8 +779,8 @@ function AgentsSection({
       });
       if (!r.ok) throw new Error(await r.text());
       await onChanged();
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
+    } catch (e: unknown) {
+      setErr(errMessage(e));
     } finally {
       setSavingPick(false);
     }

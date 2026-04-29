@@ -242,3 +242,108 @@ attach the transport.
   `dispatch_task` is now expressed by both tools importing the same
   helper, instead of relying on a captured closure — easier to
   audit when the contract evolves.
+
+### ADR-0005 — Project addressing: 4 names, 1 canonical key (2026-04-29)
+
+**Status**: Accepted
+
+**Context**: An audit on 2026-04-29 found 429 occurrences of four
+seemingly-overlapping names referring to "a project" across
+`src/`:
+
+| Name | Occurrences | Where |
+|------|------------:|-------|
+| `projectPath` | 156 | DB column (`Task.projectPath`, `TaskRun.projectPath`), API payloads, form props |
+| `projectName` | 236 | DB column (`Conversation.projectName`, `TelegramBinding.projectName`), function args (MCP / git / telegram), display strings |
+| `projectFsPath` | 19 | runner.ts local var |
+| `effectiveProjectPath` | 18 | runner.ts local var |
+
+The overlap is real but each name actually refers to a distinct
+concept that we kept conflating. Three concrete pain points:
+
+1. `projectName` as a function argument in `mcp/registry.ts`,
+   `git.ts`, `telegram/bridge.ts` is a misnomer — the value passed
+   is always a `fsPath` (e.g. `clients/acme/myapp`), not a leaf
+   name. New contributors reasonably read it as "the project's
+   short label" and break things.
+2. `Conversation.projectName` (DB column) and `Task.projectPath`
+   (DB column) hold the same kind of value — both are
+   `Project.fsPath` references — but use different column names.
+3. `effectiveProjectPath` and `projectFsPath` look interchangeable
+   but solve different problems and the runner.ts code mixes them.
+
+**Decision**:
+
+We codify a 3-level vocabulary and forbid future drift. **No DB
+renames** are scheduled (too risky for a naming-only win on a
+production app without an integration suite); the convention
+applies to runtime code and new schema columns.
+
+#### Canonical addressing key
+
+`Project.fsPath` (`String?` unique, schema line 208) is **the** key
+identifying a project across the system. It is the full path under
+`/projects`, e.g. `clients/acme/myapp`. Null only on legacy rows
+that predate the Phase 1 folder migration; the migration backfills
+it for every CRUD.
+
+#### Foreign-key columns
+
+Two Prisma columns hold a `Project.fsPath` value but keep their
+legacy names for back-compat:
+
+- `Task.projectPath`        → value is `Project.fsPath` (or NULL = generic).
+- `TaskRun.projectPath`     → value is `Project.fsPath` (snapshot).
+- `Conversation.projectName` → value is `Project.fsPath`.
+- `TelegramBinding.projectName` → value is `Project.fsPath`.
+
+The inconsistency between `projectPath` and `projectName` is
+**accepted as historical debt**. New columns referencing a project
+MUST be named `projectFsPath` (matching the runtime variable) and
+store the same kind of value.
+
+#### Runtime variable conventions
+
+Three distinct local-variable names — each tied to a specific
+lifecycle moment:
+
+| Variable | Type | Meaning | Allowed callers |
+|----------|------|---------|-----------------|
+| `projectFsPath` | `string` | Resolved canonical path: `project.fsPath ?? project.name`. Always non-null. Always usable for `cd /projects/${projectFsPath}`, git operations, MCP server chroots. | filesystem ops, git, MCP servers, prompts after substitution |
+| `effectiveProjectPath` | `string \| null` | The `Task.projectPath` *after* applying optional dispatcher override (generic-task case). Used to look up the Project row, build the prompt, populate `TaskRun.projectPath`. | `runner.ts` — pre-resolution stage only |
+| `projectName` (legacy arg) | `string` | DEPRECATED as a parameter name — use `projectFsPath` in new code. Existing call sites (~80 in `mcp/registry.ts`, `telegram/bridge.ts`, `git.ts`, `fs-server.ts`) stay until a follow-up refactor with proper integration tests. | nowhere new |
+
+The pre/post distinction matters: `effectiveProjectPath` may be
+`null` mid-resolution (generic task without override = caller
+error); `projectFsPath` is established only after we successfully
+looked up the Project row, and is by construction non-null.
+
+#### Phased rollout
+
+- **Phase 0 (this ADR)**: documentation + convention. No code
+  changes. Existing parameter names left in place.
+- **Phase 1 (next refactor session, gated on integration tests)**:
+  rename function parameters from `projectName` to `projectFsPath`
+  in MCP / git / telegram modules. Tightly mechanical (sed across
+  ~80 sites) but needs a test that boots the MCP fs server, opens a
+  Telegram conversation, and runs a git op end-to-end first.
+- **Phase 2 (deferred indefinitely)**: rename DB columns
+  `Task.projectPath` → `projectFsPath` and
+  `Conversation.projectName` → `projectFsPath`. Requires a Prisma
+  migration with a backfill view for any external reader of the
+  SQLite file. Likely never worth the cost.
+
+**Consequences**:
+
+- New code MUST use `projectFsPath` for runtime variables and
+  function parameters. PR reviewers reject `projectName` as an
+  argument name in new modules.
+- `effectiveProjectPath` stays a `runner.ts` -only term (the
+  override-resolution moment doesn't exist anywhere else).
+- The 156 + 236 = 392 occurrences of legacy column names
+  (`projectPath` / `projectName`) keep referring to **the same
+  underlying value**: a `Project.fsPath` (or NULL for generic
+  tasks). Mental model is unified even though the spelling isn't.
+- Documentation impact: `docs/tasks.md`, `docs/push-pipeline.md`
+  and `docs/task-runner.md` should add a one-line pointer to this
+  ADR the next time they are touched.

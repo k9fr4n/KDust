@@ -402,9 +402,16 @@ export async function runTask(
   // tasks whose projectPath wasn't yet migrated by folder-migration
   // (e.g. when the operator runs in dry-run mode and triggers a run
   // before flipping to apply).
-  const project =
-    (await db.project.findUnique({ where: { fsPath: effectiveProjectPath } })) ??
-    (await db.project.findFirst({ where: { name: effectiveProjectPath } }));
+  // #11 (2026-04-29): single query OR’d on (fsPath, name) instead of
+  // findUnique-then-findFirst. fsPath is the canonical key per ADR-0005;
+  // the name fallback only matters for legacy rows whose Phase 1 folder
+  // migration was deferred. Prisma compiles this to one SQL with
+  // an OR clause — same row-set, half the round-trips.
+  const project = await db.project.findFirst({
+    where: {
+      OR: [{ fsPath: effectiveProjectPath }, { name: effectiveProjectPath }],
+    },
+  });
 
   // Fallback policy when no project row exists yet (edge case: legacy
   // tasks with a projectPath pointing nowhere). We still need defaults

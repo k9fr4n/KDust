@@ -72,6 +72,27 @@ export interface GitSyncResult {
   error?: string;
 }
 
+/**
+ * #4 (2026-04-29): build a GitSyncResult from a runGit() return,
+ * with a per-call-site failure label. Factors the
+ *   { ok: r.code === 0, output: r.out, error: r.code === 0 ? undefined : ... }
+ * triple repeated across checkoutWorkingBranch / pushBranch /
+ * checkoutExistingBranch / mergeFastForward (4 sites pre-refactor).
+ *
+ * `failureLabel` is either a string (used verbatim as the error)
+ * or a function called with the exit code (handy when we want
+ * `git push exited ${code}` style messages without sprintf).
+ */
+function toGitResult(
+  r: { code: number; out: string },
+  failureLabel: string | ((code: number) => string),
+): GitSyncResult {
+  if (r.code === 0) return { ok: true, output: r.out };
+  const error =
+    typeof failureLabel === "function" ? failureLabel(r.code) : failureLabel;
+  return { ok: false, output: r.out, error };
+}
+
 export async function cloneOrPull(
   name: string,
   gitUrl: string,
@@ -334,7 +355,7 @@ export async function checkoutWorkingBranch(
   // Delete local branch if it exists so -B creates a fresh ref off current HEAD.
   await runGit(['branch', '-D', branch], cwd); // ignore code
   const r = await runGit(['checkout', '-B', branch], cwd);
-  return { ok: r.code === 0, output: r.out, error: r.code === 0 ? undefined : `git checkout exited ${r.code}` };
+  return toGitResult(r, (code) => `git checkout exited ${code}`);
 }
 
 /** Return summary of uncommitted changes in the working tree. */
@@ -391,11 +412,7 @@ export async function pushBranch(
   const args = ['push', '--set-upstream', 'origin', branch];
   if (force) args.splice(1, 0, '--force-with-lease');
   const r = await runGit(args, cwd);
-  return {
-    ok: r.code === 0,
-    output: r.out,
-    error: r.code === 0 ? undefined : `git push exited ${r.code}`,
-  };
+  return toGitResult(r, (code) => `git push exited ${code}`);
 }
 
 /* ---------------------------------------------------------------
@@ -448,11 +465,7 @@ export async function checkoutExistingBranch(
 ): Promise<GitSyncResult> {
   const cwd = join(PROJECTS_ROOT, projectName);
   const r = await runGit(['checkout', branch], cwd);
-  return {
-    ok: r.code === 0,
-    output: r.out,
-    error: r.code === 0 ? undefined : `git checkout ${branch} exited ${r.code}`,
-  };
+  return toGitResult(r, (code) => `git checkout ${branch} exited ${code}`);
 }
 
 /**
@@ -478,14 +491,10 @@ export async function mergeFastForward(
 ): Promise<GitSyncResult> {
   const cwd = join(PROJECTS_ROOT, projectName);
   const r = await runGit(['merge', '--ff-only', fromBranch], cwd);
-  return {
-    ok: r.code === 0,
-    output: r.out,
-    error:
-      r.code === 0
-        ? undefined
-        : `git merge --ff-only ${fromBranch} failed (non-linear history, divergent commits, or branch missing)`,
-  };
+  return toGitResult(
+    r,
+    `git merge --ff-only ${fromBranch} failed (non-linear history, divergent commits, or branch missing)`,
+  );
 }
 
 /**

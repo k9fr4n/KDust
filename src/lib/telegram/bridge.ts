@@ -17,7 +17,10 @@
  * Slash commands intercepted before the LLM:
  *   /start   — welcome + status
  *   /help    — list commands
- *   /new     — drop binding, next message starts a fresh conv
+ *   /new     — fresh conv; preserves the active project and
+ *               rebases the agent on the project's defaultAgentSId
+ *               (or AppConfig.telegramDefaultAgentSId when none /
+ *               in global mode)
  *   /agent <sId> — sticky agent override (also resets binding)
  *   /whoami  — show chat_id, bound conv, current agent
  *   /stop    — cancel an in-flight stream for this chat
@@ -75,6 +78,21 @@ const pendingProject = new Map<string, string>();
 // Process-local, consumed and cleared on the same createBinding()
 // call as pendingProject.
 const pendingAgent = new Map<string, string>();
+
+/**
+ * Resolve the active project for a Telegram chat, mirroring the
+ * priority order used by the message handler:
+ *   1. live binding row     (TelegramBinding.projectName)
+ *   2. pending choice       (set by /project before any message)
+ *   3. null                 (global mode — no filtering applied)
+ *
+ * Used by /new, /chats and /runs so they all observe the same
+ * project context.
+ */
+async function getActiveProject(chatId: string): Promise<string | null> {
+  const binding = await resolveBinding(chatId);
+  return binding?.projectName ?? pendingProject.get(chatId) ?? null;
+}
 
 // ---- throttle config ----
 // Telegram per-chat rate limit is ~1 msg/s; we edit at 900ms so
@@ -230,10 +248,20 @@ async function sendChatsPicker(chatId: string): Promise<void> {
   // Only show conversations that have at least one user
   // message: empty placeholders that were created by /agent or
   // /project but never used would be noise here.
+  //
+  // Project scoping: when the chat is bound to a project, only
+  // surface conversations belonging to that project. In global
+  // mode (no project), we keep the legacy "show everything"
+  // behaviour — operators occasionally want a cross-project
+  // overview from a fresh chat.
+  const project = await getActiveProject(chatId);
   const convs = await db.conversation.findMany({
     take: 12,
     orderBy: { updatedAt: 'desc' },
-    where: { messages: { some: { role: 'user' } } },
+    where: {
+      messages: { some: { role: 'user' } },
+      ...(project ? { projectName: project } : {}),
+    },
     select: {
       id: true,
       title: true,
@@ -244,7 +272,12 @@ async function sendChatsPicker(chatId: string): Promise<void> {
     },
   });
   if (convs.length === 0) {
-    await sendMessage(chatId, 'No conversations yet.');
+    await sendMessage(
+      chatId,
+      project
+        ? `No conversations in [${project}]. Use /project to switch or /projects for the list.`
+        : 'No conversations yet.',
+    );
     return;
   }
   // Surface the currently-bound conversation so the operator
@@ -274,9 +307,11 @@ async function sendChatsPicker(chatId: string): Promise<void> {
       },
     ];
   });
-  await sendMessage(chatId, 'Recent conversations:', {
-    inline_keyboard: buttons,
-  });
+  await sendMessage(
+    chatId,
+    `Recent conversations${project ? ` in [${project}]` : ''}:`,
+    { inline_keyboard: buttons },
+  );
 }
 
 async function applyChatChoice(
@@ -386,9 +421,14 @@ async function sendRunsPicker(chatId: string): Promise<void> {
   // Fetch latest 12, but lift any currently-running entries to
   // the top regardless of startedAt (they're the most useful
   // signal for a "what is happening right now" query).
+  //
+  // Project scoping: same rule as /chats — restrict to the active
+  // project when one is set; show everything in global mode.
+  const project = await getActiveProject(chatId);
   const recent = await db.taskRun.findMany({
     take: 12,
     orderBy: { startedAt: 'desc' },
+    where: project ? { task: { projectPath: project } } : undefined,
     select: {
       id: true,
       status: true,
@@ -398,7 +438,10 @@ async function sendRunsPicker(chatId: string): Promise<void> {
     },
   });
   if (recent.length === 0) {
-    await sendMessage(chatId, 'No task runs yet.');
+    await sendMessage(
+      chatId,
+      project ? `No runs in [${project}].` : 'No task runs yet.',
+    );
     return;
   }
   recent.sort((a, b) => {
@@ -425,7 +468,11 @@ async function sendRunsPicker(chatId: string): Promise<void> {
       },
     ];
   });
-  await sendMessage(chatId, 'Recent runs:', { inline_keyboard: buttons });
+  await sendMessage(
+    chatId,
+    `Recent runs${project ? ` in [${project}]` : ''}:`,
+    { inline_keyboard: buttons },
+  );
 }
 
 async function sendRunDetail(chatId: string, runId: string): Promise<void> {
@@ -1158,7 +1205,26 @@ async function handleCommand(
       return true;
     }
     case '/new': {
+      // Match the /project behaviour: a /new that lands inside a
+      // project should keep the project context and rebase on its
+      // defaultAgentSId; outside any project, fall through to the
+      // global cfg.telegramDefaultAgentSId on the next message.
+      const priorProject = await getActiveProject(chatId);
       await dropBinding(chatId);
+      if (priorProject) {
+        pendingProject.set(chatId, priorProject);
+        const match = await resolveProjectByPathOrName(priorProject);
+        if (match?.defaultAgentSId) {
+          pendingAgent.set(chatId, match.defaultAgentSId);
+        } else {
+          // Project has no defaultAgentSId → next message resolves
+          // through cfg.telegramDefaultAgentSId.
+          pendingAgent.delete(chatId);
+        }
+      } else {
+        pendingProject.delete(chatId);
+        pendingAgent.delete(chatId);
+      }
       await sendMessage(chatId, '✅ New conversation. Send your message.');
       return true;
     }

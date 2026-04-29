@@ -1781,7 +1781,7 @@ function ChatPageInner({
             </div>
           )}
 
-          <div className="flex gap-2 items-end">
+          <div className="flex gap-2 items-start">
             {/* Hidden input for the paperclip button rendered on the
                 right side of the composer (Franck 2026-04-29: both
                 action buttons grouped on the right to free horizontal
@@ -1876,34 +1876,43 @@ function ChatPageInner({
               placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
               disabled={streaming || !agentSId}
             />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={streaming}
-              className="h-[2.75rem] px-2.5 rounded-md border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-              title="Attach files"
-              aria-label="Attach files"
-            >
-              <Paperclip size={16} />
-            </button>
-            <Button
-              type="submit"
-              disabled={
-                streaming ||
-                !draft.trim() ||
-                !agentSId ||
-                attachments.some((a) => a.status === 'uploading')
-              }
-              title={streaming ? 'Streaming…' : 'Send'}
-              aria-label={streaming ? 'Streaming' : 'Send'}
-              className="px-2.5"
-            >
-              {streaming ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <Send size={16} />
-              )}
-            </Button>
+            {/* Stacked action buttons (Franck 2026-04-29). Both
+                buttons share the same square footprint (h-9 w-9)
+                so the column stays visually balanced regardless
+                of streaming/disabled state. Send sits on top to
+                stay closest to the natural eye-line of the reply
+                cursor; paperclip below as the secondary action. */}
+            <div className="flex flex-col gap-1.5 self-stretch">
+              <Button
+                type="submit"
+                disabled={
+                  streaming ||
+                  !draft.trim() ||
+                  !agentSId ||
+                  attachments.some((a) => a.status === 'uploading')
+                }
+                title={streaming ? 'Streaming…' : 'Send'}
+                aria-label={streaming ? 'Streaming' : 'Send'}
+                className="h-9 w-9 p-0"
+              >
+                {streaming ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Send size={16} />
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming}
+                title="Attach files"
+                aria-label="Attach files"
+                className="h-9 w-9 p-0"
+              >
+                <Paperclip size={16} />
+              </Button>
+            </div>
           </div>
         </form>
       </section>

@@ -100,3 +100,145 @@ strings rather than relational tables, kept SQLite-friendly.
   - Une seule instance KDust à la fois peut long-poll un même
     bot (Telegram renvoie 409 sur deux `getUpdates` parallèles).
     Acceptable : KDust est mono-instance par design.
+
+### ADR-0003 — Push pipeline as a phase pipeline (2026-04-29)
+
+**Status**: Accepted
+**Date**: 2026-04-29
+**Context**: `runTask` in `src/lib/cron/runner.ts` had grown to a
+single 1300-line function chaining the 10 push-pipeline stages
+(project resolve → concurrency lock → branch policy → sync → branch
+checkout → MCP setup → Dust conversation → agent stream → diff/cap
+→ commit → push → PR/MR → merge-back → notify → cleanup). The
+function held 50+ shared local variables (`branch`, `commitSha`,
+`agentText`, `partial`, `pushedToOrigin`, `prUrl`, `mergeBackStatus`,
+…) mutated across the entire body, with one outer `try`/`catch`/
+`finally` envelope handling abort, timeout, and cleanup. ADR-0002's
+"level A" refactor (commit `0f4ad08`) extracted the stateless helpers
+(`AbortReason`, registry, `notify`, prompt builders, timeout resolver,
+ancestors, constants) but the function body itself was untouched.
+
+**Decision**: Decompose `runTask` into a **phase pipeline** driven by
+a typed `RunContext`:
+
+```ts
+interface RunContext {
+  // Immutable inputs (set once at init time)
+  run: TaskRun; job: Task; project: Project;
+  policy: ResolvedBranchPolicy; effectiveProjectPath: string;
+  notify: NotifyFn; signal: AbortSignal; opts: RunTaskOptions;
+  // Mutable state mutated by phases (always optional → undefined
+  // means "not yet computed" rather than "computation failed")
+  branch?: string; commitSha?: string;
+  agentText?: string; diff?: DiffStat;
+  prUrl?: string; mergeBackStatus?: MergeBackStatus;
+}
+```
+
+Each phase is an `async function phaseX(ctx: RunContext): Promise<void>`
+that mutates `ctx`. The outer `try`/`catch`/`finally` (abort, timeout,
+cleanup, registry teardown, lock release) stays in `runTask` itself —
+only the *body* is split.
+
+Phase modules live under `src/lib/cron/runner/phases/`:
+
+- `init.ts`        — project resolve + branch-policy resolve + sync
+- `branch.ts`      — branch checkout (working branch or merge-back target)
+- `mcp.ts`         — fs + task-runner MCP server bind
+- `agent.ts`       — Dust conversation create + stream + capture
+- `gitWrite.ts`    — diff/cap/commit/push as ONE phase (too coupled to split)
+- `pr.ts`          — PR/MR open
+- `mergeBack.ts`   — B3 fast-forward into parent branch
+- `finalize.ts`    — terminal-status notify + DB write
+
+Phase invariants are enforced via narrow type assertions (e.g.
+`gitWrite.ts` requires `ctx.branch` to be set, asserted at entry).
+
+**Consequences**:
+
+- `runTask` body shrinks from ~1300 L to ~150 L (orchestration only).
+- Each phase becomes independently readable and unit-testable.
+- DB phase strings (`'syncing'`, `'branching'`, …) are **unchanged**;
+  no migration, `/run` UI continues to work, historical rows still
+  format correctly.
+- Public exports (`runTask`, `RunTaskOptions`, `cancelTaskRun`,
+  `cancelRunCascade`, `isRunActive`, `isTaskRunActive`, `AbortReason`)
+  are preserved verbatim; consumers don't see the split.
+- The `notify` fan-out helper from ADR-0002 (level A) is reused in
+  `finalize.ts`; no duplication.
+- B2 auto-inherit / B3 merge-back logic stays in `init.ts` (B2) and
+  `mergeBack.ts` (B3) respectively, both reading the same `ctx`.
+- This refactor is **mechanical** (no behaviour change). Validation
+  still requires an end-to-end push run on a test project — `tsc`
+  catches signature drift but not subtle semantic regressions in
+  the git pipeline.
+
+### ADR-0004 — Task-runner MCP tools as one-file-per-tool modules (2026-04-29)
+
+**Status**: Accepted
+**Date**: 2026-04-29
+**Context**: `startTaskRunnerServer` in
+`src/lib/mcp/task-runner-server.ts` registered 6 MCP tools
+(`list_tasks`, `describe_task`, `update_task_routing`, `run_task`,
+`wait_for_run`, `dispatch_task`) inline as 6 closures inside a single
+factory function. Each closure was 100–320 lines; the file totalled
+1737 L before ADR-0002's level A and 1485 L after. Editing or
+reviewing one tool meant scrolling through hundreds of lines of
+unrelated tools. The 3 inner helpers (`formatRunResult`,
+`validateDispatch`, `getParentTaskName`) were captured by closure
+over `orchestratorRunId` and `projectName`, which obscured the
+data-flow.
+
+**Decision**: One file per tool, with an explicit `OrchestratorContext`
+passed in.
+
+```ts
+// src/lib/mcp/task-runner/context.ts
+export interface OrchestratorContext {
+  orchestratorRunId: string | null; // null in chat mode
+  projectName: string;
+}
+
+// src/lib/mcp/task-runner/tools/<name>.ts
+export function register<Name>Tool(
+  server: McpServer,
+  ctx: OrchestratorContext,
+): void { server.registerTool(...); }
+```
+
+Layout:
+
+```
+src/lib/mcp/task-runner/
+  constants.ts          ← MAX_DEPTH (already extracted in level A)
+  resolve-task.ts       ← resolveTaskForProject (already extracted)
+  b2b3.ts               ← resolveB2B3 (already extracted)
+  context.ts            ← OrchestratorContext type (NEW)
+  helpers.ts            ← formatRunResult + getParentTaskName (NEW)
+  dispatch-helpers.ts   ← validateDispatch (NEW; shared by run/dispatch)
+  tools/
+    list-tasks.ts
+    describe-task.ts
+    update-task-routing.ts
+    run-task.ts
+    wait-for-run.ts
+    dispatch-task.ts
+```
+
+`startTaskRunnerServer` becomes a ~80-line assembly: build context,
+create `McpServer`, call `registerXxxTool(server, ctx)` 6 times,
+attach the transport.
+
+**Consequences**:
+
+- `task-runner-server.ts` shrinks from 1485 L to ~80 L.
+- Adding a 7th tool = create one file + one `register` call. No risk
+  of accidentally breaking another tool's closure.
+- `resolveB2B3` re-export from `task-runner-server.ts` (kept for
+  level-A backward compat) becomes a re-export of the same module.
+- The MCP wire schema is unchanged: tool names, inputSchemas,
+  outputs are byte-identical to the pre-refactor versions.
+- `validateDispatch`'s shared semantics between `run_task` and
+  `dispatch_task` is now expressed by both tools importing the same
+  helper, instead of relying on a captured closure — easier to
+  audit when the contract evolves.

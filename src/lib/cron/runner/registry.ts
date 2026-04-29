@@ -93,35 +93,50 @@ export async function cancelRunCascade(
   abortReason?: AbortReason,
 ): Promise<string[]> {
   const cancelled: string[] = [];
-  // BFS via the parentRunId index. Depth is bounded by MAX_DEPTH
-  // (default 10) so this is effectively O(descendants).
-  const queue: string[] = [rootRunId];
   const seen = new Set<string>();
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
+  // #10 (2026-04-29) layer-by-layer BFS. Pre-refactor each node
+  // issued its own findUnique+update+findMany trio (≥3 queries per
+  // descendant). Now we batch all sibling lookups + updates per
+  // layer, yielding O(depth) total round-trips (≤ ~30 for the
+  // MAX_DEPTH=10 limit) regardless of tree breadth.
+  let layer: string[] = [rootRunId];
+  while (layer.length > 0) {
+    // Cycle guard (parentRunId forms a tree but be defensive).
+    layer = layer.filter((id) => !seen.has(id));
+    if (layer.length === 0) break;
+    for (const id of layer) seen.add(id);
 
-    const ac = activeRuns.get(id);
-    if (ac) {
-      // Let the normal catch-block path mark the row as 'aborted'.
-      // The `reason` payload is read by the catch-block via
-      // ac.signal.reason so phaseMessage / error / Teams card can
-      // explain WHY (cascade vs user vs timeout) instead of the
-      // old hardcoded "run aborted by user".
-      ac.abort(abortReason ?? { kind: 'user' });
-      cancelled.push(id);
-    } else {
-      // No in-memory controller. Either the row is a ghost (process
-      // restart) or the child is still 'pending' on a lock. Write a
-      // terminal status directly so UIs stop spinning.
-      const row = await db.taskRun.findUnique({
-        where: { id },
-        select: { status: true },
+    // (1) IN-MEMORY: abort active runs synchronously. Their
+    // catch-block path will write the 'aborted' row eventually;
+    // here we just signal them. `reason` payload is read by
+    // catch via ac.signal.reason for the phaseMessage / Teams card.
+    const dbOnlyIds: string[] = [];
+    for (const id of layer) {
+      const ac = activeRuns.get(id);
+      if (ac) {
+        ac.abort(abortReason ?? { kind: 'user' });
+        cancelled.push(id);
+      } else {
+        dbOnlyIds.push(id);
+      }
+    }
+
+    // (2) DB-ONLY: for ghosts (process restart) or pending-on-lock
+    // rows we write the terminal status directly. Two queries
+    // total for the whole layer: findMany(running|pending) +
+    // updateMany on the matching ids.
+    if (dbOnlyIds.length > 0) {
+      const stillRunning = await db.taskRun.findMany({
+        where: {
+          id: { in: dbOnlyIds },
+          status: { in: ['running', 'pending'] },
+        },
+        select: { id: true },
       });
-      if (row && (row.status === 'running' || row.status === 'pending')) {
-        await db.taskRun.update({
-          where: { id },
+      if (stillRunning.length > 0) {
+        const ids = stillRunning.map((r) => r.id);
+        await db.taskRun.updateMany({
+          where: { id: { in: ids } },
           data: {
             status: 'aborted',
             phase: 'done',
@@ -130,18 +145,21 @@ export async function cancelRunCascade(
             finishedAt: new Date(),
           },
         });
-        cancelled.push(id);
+        cancelled.push(...ids);
       }
     }
 
-    // Enqueue descendants still worth visiting. We include
-    // terminal-status children intentionally EXCLUDED: their own
-    // children (if any) already finished when the parent did.
+    // (3) Next layer = still-active kids of every node in this layer.
+    // Single findMany {parentRunId: {in: layer}} replaces the per-node
+    // loop — the parentRunId index handles `in` efficiently.
     const kids = await db.taskRun.findMany({
-      where: { parentRunId: id, status: { in: ['running', 'pending'] } },
+      where: {
+        parentRunId: { in: layer },
+        status: { in: ['running', 'pending'] },
+      },
       select: { id: true },
     });
-    for (const k of kids) queue.push(k.id);
+    layer = kids.map((k) => k.id);
   }
   if (cancelled.length > 0) {
     console.log(

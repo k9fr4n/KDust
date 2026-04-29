@@ -1,6 +1,5 @@
 import { db } from '../db';
-import { postToTeams, type TeamsCardFact } from '../teams';
-import { postToTelegram, type TelegramFact } from '../telegram';
+import type { TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
 import {
@@ -24,16 +23,47 @@ import {
   deleteRemoteBranch,
 } from '../git';
 
-/**
- * Registry of in-flight runs so the HTTP API can abort them on demand.
- * Key: TaskRun.id. Value: AbortController that aborts the agent stream.
- * Entries are added at the start of runTask and always cleaned up in a
- * finally block. Because Node.js modules are singletons within a process,
- * this survives across requests but is of course NOT cross-process.
- */
-const activeRuns = new Map<string, AbortController>();
+// Modular runner helpers (refactor: lib-modular-split, 2026-04-29).
+// Public symbols (AbortReason, cancelTaskRun, cancelRunCascade,
+// isRunActive, isTaskRunActive) are re-exported below so existing
+// importers of '@/lib/cron/runner' keep working unchanged.
+import {
+  type AbortReason,
+  abortReasonSummary,
+  abortReasonDetail,
+} from './runner/abort';
+import { BRANCH_NAME_RE } from './runner/constants';
+import { getAncestorRunIds } from './runner/ancestors';
+import { buildAutomationPrompt, buildDockerHostContext } from './runner/prompt';
+import { buildNotifier } from './runner/notify';
+import { resolveRunTimeoutMs } from './runner/timeout';
+import {
+  registerActiveRun,
+  unregisterActiveRun,
+  markTaskActive,
+  clearTaskActive,
+  cancelTaskRun,
+  cancelRunCascade,
+  isRunActive,
+  isTaskRunActive,
+} from './runner/registry';
+
+export type { AbortReason };
+export {
+  cancelTaskRun,
+  cancelRunCascade,
+  isRunActive,
+  isTaskRunActive,
+};
+
+// Runner internals (registries, abort reason, prompt builders,
+// notify fan-out, timeout resolver) live in src/lib/cron/runner/*.
+// See top-of-file imports. Comments below are kept for the
+// pipeline overview and the public RunTaskOptions API only.
 
 /**
+ * (Historical anchor; type and helpers now live in ./runner/abort.ts)
+ *
  * Structured abort reason (Franck 2026-04-23 00:01). Passed to
  * `AbortController.abort(reason)` at every cancel site so the
  * catch-block in runTask can produce a faithful status line
@@ -44,166 +74,16 @@ const activeRuns = new Map<string, AbortController>();
  *   - TaskRun.phaseMessage (what the UI shows on /run)
  *   - TaskRun.error (long-form, full context)
  *   - Teams card subtitle
+ *
+ * (See ./runner/abort.ts and ./runner/registry.ts for the
+ *  cancel cascade implementation; ./runner/notify.ts for the
+ *  Teams + Telegram fan-out; ./runner/prompt.ts for the
+ *  toolchain / DooD prompt addenda.)
  */
-export type AbortReason =
-  | { kind: 'user' }                    // POST /api/taskrun/:id/cancel
-  | { kind: 'cascade'; parentRunId: string; parentStatus: string; note?: string }
-  | { kind: 'timeout'; ms: number };   // internal 10-min killTimer
-
-/** Build a short human string for a reason (used in phaseMessage). */
-function abortReasonSummary(r: AbortReason | undefined): string {
-  if (!r) return 'Aborted';
-  if (r.kind === 'user') return 'Aborted by user';
-  if (r.kind === 'cascade')
-    return `Aborted (cascade from parent ${r.parentRunId.slice(-6)}, parent=${r.parentStatus})`;
-  if (r.kind === 'timeout') return `Aborted (${Math.round(r.ms / 1000)}s timeout)`;
-  return 'Aborted';
-}
-
-/** Build the long-form error string (used in TaskRun.error). */
-function abortReasonDetail(r: AbortReason | undefined): string {
-  if (!r) return 'run aborted';
-  if (r.kind === 'user') return 'run aborted by user';
-  if (r.kind === 'cascade')
-    return (
-      `run aborted (cascade) \u2014 parent run ${r.parentRunId} ended with ` +
-      `status=${r.parentStatus}` +
-      (r.note ? `; ${r.note}` : '')
-    );
-  if (r.kind === 'timeout') return `run aborted: exceeded ${r.ms}ms wall-clock timeout`;
-  return 'run aborted';
-}
 
 /**
- * Separate tracker indexed by **Task id** (not TaskRun id). Updated
- * on the hot paths where we also touch `activeRuns`. Lets the
- * scheduler cheaply short-circuit a fire when a previous run of the
- * same task is still in flight, without hitting the DB.
- * Reinstated 2026-04-19 alongside the scheduler.
- */
-const activeTaskIds = new Set<string>();
-
-/** Abort an in-flight run. Returns true if the runId was active. */
-export function cancelTaskRun(
-  runId: string,
-  reason: AbortReason = { kind: 'user' },
-): boolean {
-  const ac = activeRuns.get(runId);
-  if (!ac) return false;
-  ac.abort(reason);
-  return true;
-}
-
-/**
- * Cascade cancellation (Franck 2026-04-22 23:37).
+ * (Historical anchor; implementation in ./runner/prompt.ts.)
  *
- * Aborts the given run AND every descendant still running/pending in
- * this process. Walks the `parentRunId` tree breadth-first via the
- * DB so we catch children that were spawned by dispatch_task (whose
- * lifetimes are not tied to the parent's await stack) and nested
- * orchestrators.
- *
- * For each descendant:
- *   - if it has an active AbortController in THIS process, abort it
- *     (same path as a user-initiated cancel → ends as 'aborted')
- *   - if it's marked 'running' in DB but not in memory (ghost row
- *     from a previous process), mark it 'aborted' directly so the
- *     /run UI doesn't show a stuck spinner forever
- *   - if it's 'pending' (scheduled but waiting on concurrency lock),
- *     mark it 'aborted' directly — no controller has been created yet
- *
- * Returns the list of runIds that were signalled (either via AC or
- * DB update) for logging/debugging.
- *
- * Idempotent: calling twice does nothing the second time because
- * descendants will no longer be in 'running'/'pending'.
- */
-export async function cancelRunCascade(
-  rootRunId: string,
-  reason: string = 'cancelled by parent',
-  abortReason?: AbortReason,
-): Promise<string[]> {
-  const cancelled: string[] = [];
-  // BFS via the parentRunId index. Depth is bounded by MAX_DEPTH
-  // (default 10) so this is effectively O(descendants).
-  const queue: string[] = [rootRunId];
-  const seen = new Set<string>();
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-
-    const ac = activeRuns.get(id);
-    if (ac) {
-      // Let the normal catch-block path mark the row as 'aborted'.
-      // The `reason` payload is read by the catch-block via
-      // ac.signal.reason so phaseMessage / error / Teams card can
-      // explain WHY (cascade vs user vs timeout) instead of the
-      // old hardcoded "run aborted by user".
-      ac.abort(abortReason ?? { kind: 'user' });
-      cancelled.push(id);
-    } else {
-      // No in-memory controller. Either the row is a ghost (process
-      // restart) or the child is still 'pending' on a lock. Write a
-      // terminal status directly so UIs stop spinning.
-      const row = await db.taskRun.findUnique({
-        where: { id },
-        select: { status: true },
-      });
-      if (row && (row.status === 'running' || row.status === 'pending')) {
-        await db.taskRun.update({
-          where: { id },
-          data: {
-            status: 'aborted',
-            phase: 'done',
-            phaseMessage: reason,
-            error: reason,
-            finishedAt: new Date(),
-          },
-        });
-        cancelled.push(id);
-      }
-    }
-
-    // Enqueue descendants still worth visiting. We include
-    // terminal-status children intentionally EXCLUDED: their own
-    // children (if any) already finished when the parent did.
-    const kids = await db.taskRun.findMany({
-      where: { parentRunId: id, status: { in: ['running', 'pending'] } },
-      select: { id: true },
-    });
-    for (const k of kids) queue.push(k.id);
-  }
-  if (cancelled.length > 0) {
-    console.log(
-      `[cron] cascade cancel from ${rootRunId}: ${cancelled.length} run(s) aborted (${reason})`,
-    );
-  }
-  return cancelled;
-}
-
-export function isRunActive(runId: string): boolean {
-  return activeRuns.has(runId);
-}
-
-/** True if ANY run of the given task is currently in flight in this process. */
-export function isTaskRunActive(taskId: string): boolean {
-  return activeTaskIds.has(taskId);
-}
-
-/**
- * Build the final prompt sent to the Dust agent. When the task has
- * `pushEnabled=true`, KDust appends an automation-context footer so
- * the agent knows its edits will be auto-committed & pushed by the
- * runner (and therefore should NOT run git commands itself). When
- * `pushEnabled=false`, the prompt is passed through verbatim —
- * the task behaves like a recurring chat prompt: the agent reply is
- * captured, files it may write stay uncommitted in the working tree.
- *
- * Kept near runTask so the coupling between `pushEnabled`, the
- * footer, and the subsequent git pipeline is visible in one place.
- */
-/**
  * DooD host-path footer (Franck 2026-04-20 23:56).
  *
  * Why this exists:
@@ -222,112 +102,10 @@ export function isTaskRunActive(taskId: string): boolean {
  *
  * Returns an empty string when the env var is unset (non-Docker
  * deployments, local `next dev`, \u2026) so the prompt stays clean.
- */
-function buildDockerHostContext(projectPath: string): string {
-  const hostRoot = process.env.KDUST_HOST_PROJECTS_ROOT;
-  if (!hostRoot) return '';
-  const hostProjectPath = `${hostRoot.replace(/\/+$/, '')}/${projectPath}`;
-  return [
-    '',
-    '---',
-    '[Docker-from-agent context]',
-    'This KDust instance runs in a container that shares the host Docker socket',
-    '(Docker-out-of-Docker). If you invoke `docker run -v <src>:<dst>` the daemon',
-    'resolves <src> against the HOST filesystem, NOT this container. Use the',
-    'path below for your project working tree:',
-    '',
-    `  HOST_PROJECT_PATH=${hostProjectPath}`,
-    '',
-    'Example (PowerShell lint inside a throw-away container):',
-    '  docker run --rm \\\\',
-    `    -v "${hostProjectPath}:/workspace" \\\\`,
-    '    -w /workspace \\\\',
-    '    mcr.microsoft.com/powershell:7.5-ubuntu-24.04 \\\\',
-    '    pwsh -NoProfile -Command \'...your script...\'',
-    '',
-    'Never use $(pwd) on the -v left side \u2014 it would evaluate to /projects/\u2026',
-    'which does not exist on the host and the mount would be empty.',
-  ].join('\n');
-}
-
-/**
- * Toolchain policy block (Franck 2026-04-25 19:13). KDust no longer
- * pre-installs language toolchains in its container — the projects
- * KDust manages span Go, Python, Terraform, Node, Ansible, etc.,
- * and trying to keep a single base image fat enough to satisfy all
- * of them rapidly turns into an unmaintainable kitchen sink.
  *
- * Instead, the Dust agent is instructed (via this prompt addendum)
- * to run ANY language-specific tool through Docker, using the
- * /var/run/docker.sock that's already mounted in the KDust runner
- * container (see Dockerfile, "Docker-out-of-Docker" Option A,
- * Franck 2026-04-20 23:46).
- *
- * The directive is appended to every task prompt regardless of
- * pushEnabled, because even in prompt-only mode the agent often
- * needs to run a `go test` / `pytest` / `terraform plan` to
- * diagnose. Without this guidance, the agent occasionally tried
- * native invocations first, hit "Go isn't installed", and only
- * THEN fell back to Docker — wasting tokens and adding noise to
- * the conversation.
+ * The toolchain-policy + automation-context addenda also live in
+ * ./runner/prompt.ts (buildAutomationPrompt).
  */
-const TOOLCHAIN_POLICY_BLOCK = [
-  '[Toolchain policy]',
-  'No language toolchains are installed natively in this environment',
-  '(no go, python, node-globally, terraform, ansible, etc. on PATH).',
-  'For ANY toolchain command you need to run, use Docker:',
-  '',
-  '    docker run --rm \\',
-  '      -v "$PWD":/work -w /work \\',
-  '      <official-image>:<pinned-version> <command>',
-  '',
-  'The Docker daemon socket is mounted into this environment, so',
-  '`docker run` works out of the box from your run_command tool.',
-  'Pick official images sized to the task:',
-  '  • Go         golang:1.23-bookworm',
-  '  • Python     python:3.12-slim',
-  '  • Node       node:22-bookworm-slim',
-  '  • Terraform  hashicorp/terraform:1.10',
-  '  • Ansible    quay.io/ansible/ansible-runner:latest',
-  'Do NOT attempt `apt install`, `curl ... | sh`, or other in-place',
-  'installs — they would only persist for this single command\'s',
-  'lifetime and are blocked anyway. If you genuinely need a tool',
-  'that has no obvious image, ask the user before building one.',
-].join('\n');
-
-function buildAutomationPrompt(
-  job: {
-    prompt: string;
-    pushEnabled: boolean;
-    branchMode: string;
-    dryRun: boolean;
-    maxDiffLines: number;
-  },
-  policy: { baseBranch: string; branchPrefix: string },
-): string {
-  // Toolchain policy is ALWAYS appended (even in prompt-only mode
-  // where the agent might still want to run tests/lints) — unlike
-  // the automation context block below which only makes sense
-  // when KDust is going to commit on the agent's behalf.
-  const tail: string[] = ['', '---', TOOLCHAIN_POLICY_BLOCK];
-  if (job.pushEnabled) {
-    tail.push(
-      '',
-      '---',
-      '[KDust automation context]',
-      'This run will be auto-committed (and pushed unless dry-run) by KDust after your reply.',
-      `- Base branch: ${policy.baseBranch}`,
-      `- Branch mode: ${job.branchMode}`,
-      `- Branch prefix: ${policy.branchPrefix}`,
-      `- Dry-run: ${job.dryRun ? 'yes (local commit only, no push)' : 'no (commit + push)'}`,
-      `- Max diff lines: ${job.maxDiffLines} (KDust aborts the push if exceeded)`,
-      'Do NOT run `git add` / `git commit` / `git push` yourself — KDust handles',
-      'all git writes from the working-tree diff after your reply. Just edit files',
-      'via the fs-cli MCP server as needed and explain your changes in your reply.',
-    );
-  }
-  return [job.prompt, ...tail].join('\n');
-}
 
 /**
  * End-to-end cron run pipeline (automation-push flavour):
@@ -496,29 +274,8 @@ export interface RunTaskOptions {
   skipChildPush?: boolean;
 }
 
-/** Defend in depth against shell-injection via branch names even
- * though git.ts already quotes arguments. Only allow the subset
- * of characters git itself considers legal for branch refs. */
-const BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/;
-
-/**
- * Walk the parentRunId chain and return the list of ancestor run IDs
- * (including the starting one). Bounded to avoid infinite loops on
- * corrupt data. Used by the concurrency-lock bypass.
- */
-async function getAncestorRunIds(runId: string): Promise<string[]> {
-  const ids: string[] = [];
-  let cur: string | null = runId;
-  for (let i = 0; i < 20 && cur; i++) {
-    ids.push(cur);
-    const r: { parentRunId: string | null } | null = await db.taskRun.findUnique({
-      where: { id: cur },
-      select: { parentRunId: true },
-    });
-    cur = r?.parentRunId ?? null;
-  }
-  return ids;
-}
+// BRANCH_NAME_RE and getAncestorRunIds now live in
+// ./runner/constants.ts and ./runner/ancestors.ts respectively.
 
 export async function runTask(
   taskId: string,
@@ -761,42 +518,10 @@ export async function runTask(
   const telegramTarget = job.telegramChatId || appCfg.defaultTelegramChatId;
   const webhook = (job.teamsNotifyEnabled ?? true) ? teamsTarget : null;
   const telegramChatId = (job.telegramNotifyEnabled ?? true) ? telegramTarget : null;
-  // Tiny helper: fan-out the same report payload to both transports
-  // without duplicating the title/summary/facts construction at
-  // every call site. Errors on either side are logged and
-  // swallowed so a flaky webhook can't mark the run as failed
-  // post-hoc \u2014 the run already wrote its terminal status before
-  // we got here.
-  const notify = async (
-    title: string,
-    summary: string,
-    status: 'success' | 'failed',
-    facts: TeamsCardFact[],
-    details?: string,
-  ) => {
-    const tasks: Promise<void>[] = [];
-    if (webhook) {
-      tasks.push(
-        postToTeams(webhook, { title, summary, status, facts, details }).catch((e) =>
-          console.warn(`[cron] Teams notification failed:`, e),
-        ),
-      );
-    }
-    if (telegramChatId) {
-      // TelegramFact has the same shape as TeamsCardFact (name +
-      // value strings) so the array can be passed through as-is.
-      tasks.push(
-        postToTelegram(telegramChatId, {
-          title,
-          summary,
-          status,
-          facts: facts as TelegramFact[],
-          details,
-        }).catch((e) => console.warn(`[cron] Telegram notification failed:`, e)),
-      );
-    }
-    await Promise.all(tasks);
-  };
+  // Fan-out helper bound to the resolved Teams + Telegram targets.
+  // See ./runner/notify.ts for the full rationale (kept stable
+  // because it's called from 7 distinct sites in this function).
+  const notify = buildNotifier(webhook, telegramChatId);
   let branch: string | null = null;
   let commitSha: string | null = null;
   let filesChanged = 0;
@@ -807,7 +532,7 @@ export async function runTask(
   // Register this task as in-flight so the scheduler's isTaskRunActive()
   // guard short-circuits any overlapping fire. Cleaned up in the outer
   // `finally` regardless of success/failure/abort.
-  activeTaskIds.add(taskId);
+  markTaskActive(taskId);
   try {
     if (!project) {
       throw new Error(`project "${effectiveProjectPath}" not found in DB; add it in Projects first`);
@@ -986,45 +711,11 @@ export async function runTask(
       });
     const ac = new AbortController();
     // Register so the HTTP cancel endpoint can abort from outside this scope.
-    activeRuns.set(run.id, ac);
-    // Wall-clock runtime cap (Franck 2026-04-23 09:56). Resolution:
-    //   1. Task.maxRuntimeMs if set (explicit per-task override)
-    //   2. AppConfig.orchestratorRunTimeoutMs if taskRunnerEnabled
-    //      OR AppConfig.leafRunTimeoutMs otherwise
-    //   3. Hard default: 30min leaf / 60min orchestrator
-    // Safety clamp: [30s, 6h] applied at every level. Out-of-range
-    // values silently fall through to the next source in the chain
-    // (avoids footgun of setting 0 or a negative value).
-    //
-    // Env vars KDUST_RUN_TIMEOUT_MS / KDUST_ORCHESTRATOR_TIMEOUT_MS
-    // were considered but dropped: AppConfig is the single source
-    // of truth for all runtime-tunable settings (editable via the
-    // /settings/global UI, persisted across restarts, auditable).
-    const DEFAULT_LEAF_MS = 30 * 60 * 1000;
-    const DEFAULT_ORCH_MS = 60 * 60 * 1000;
-    const CLAMP_MIN_MS = 30 * 1000;
-    const CLAMP_MAX_MS = 6 * 60 * 60 * 1000;
-    const inRange = (v: unknown): v is number =>
-      typeof v === 'number' &&
-      Number.isFinite(v) &&
-      v >= CLAMP_MIN_MS &&
-      v <= CLAMP_MAX_MS;
-    const resolveTimeout = async (): Promise<number> => {
-      const taskVal = (job as { maxRuntimeMs?: number | null }).maxRuntimeMs;
-      if (inRange(taskVal)) return taskVal;
-      try {
-        const { getAppConfig } = await import('@/lib/config');
-        const cfg = await getAppConfig();
-        const cfgVal = job.taskRunnerEnabled
-          ? cfg.orchestratorRunTimeoutMs
-          : cfg.leafRunTimeoutMs;
-        if (inRange(cfgVal)) return cfgVal;
-      } catch {
-        // DB unreachable at this moment — fall back to hard default.
-      }
-      return job.taskRunnerEnabled ? DEFAULT_ORCH_MS : DEFAULT_LEAF_MS;
-    };
-    const KILL_TIMER_MS = await resolveTimeout();
+    registerActiveRun(run.id, ac);
+    // Wall-clock runtime cap. Resolution order + clamp range live
+    // in ./runner/timeout.ts (kept testable on its own, called from
+    // here once per run).
+    const KILL_TIMER_MS = await resolveRunTimeoutMs(job);
     const killTimer = setTimeout(
       () => ac.abort({ kind: 'timeout', ms: KILL_TIMER_MS } satisfies AbortReason),
       KILL_TIMER_MS,
@@ -1092,7 +783,7 @@ export async function runTask(
       flushPartial();
     } finally {
       clearTimeout(killTimer);
-      activeRuns.delete(run.id);
+      unregisterActiveRun(run.id);
     }
     if (ac.signal.aborted) {
       const reason = ac.signal.reason as AbortReason | undefined;
@@ -1762,7 +1453,7 @@ export async function runTask(
     // Always release the per-task lock so the next scheduler fire (or
     // a manual /run trigger) can proceed. Safe even if the try-block
     // returned early before adding to the set.
-    activeTaskIds.delete(taskId);
+    clearTaskActive(taskId);
     // Release the task-runner MCP server handle if this run had one.
     // Idempotent when no task-runner was started for this run.
     // Fire-and-forget on purpose: finally shouldn't block on I/O.

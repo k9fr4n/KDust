@@ -48,6 +48,12 @@ import {
   isTaskRunActive,
 } from './runner/registry';
 
+import {
+  registerRedactSecrets,
+  unregisterRedactSecrets,
+} from "../logs/buffer";
+import { resolveForRun as resolveRunSecrets } from "../secrets/repo";
+
 export type { AbortReason };
 export {
   cancelTaskRun,
@@ -534,6 +540,29 @@ export async function runTask(
   // `finally` regardless of success/failure/abort.
   markTaskActive(taskId);
   try {
+    // #12 redaction wiring (2026-04-29). Resolve the per-task secret
+    // bindings ONCE for the run and feed them to the global log redactor
+    // so any plaintext leak from agent / git / docker / spawn output is
+    // scrubbed both from the in-app buffer and from docker logs. The
+    // command-runner-server keeps its own per-invocation redactor for
+    // command stdout/stderr (defence in depth). Released in the matching
+    // finally below.
+    try {
+      const resolved = await resolveRunSecrets(run.id);
+      if (resolved.redactList.length > 0) {
+        registerRedactSecrets(
+          run.id,
+          resolved.redactList.map((value, idx) => ({
+            value,
+            ref: resolved.bindings[idx],
+          })),
+        );
+      }
+    } catch (e) {
+      // Never let secret resolution failure abort the run — worst case
+      // we run with the static-env redaction layer only.
+      console.warn(`[runner] redactor wiring skipped (run=${run.id}): ${e instanceof Error ? e.message : String(e)}`);
+    }
     if (!project) {
       throw new Error(`project "${effectiveProjectPath}" not found in DB; add it in Projects first`);
     }
@@ -1453,6 +1482,9 @@ export async function runTask(
     // Always release the per-task lock so the next scheduler fire (or
     // a manual /run trigger) can proceed. Safe even if the try-block
     // returned early before adding to the set.
+    // #12 release the run-scoped redaction registration. Idempotent
+    // when registration was skipped above.
+    unregisterRedactSecrets(run.id);
     clearTaskActive(taskId);
     // Release the task-runner MCP server handle if this run had one.
     // Idempotent when no task-runner was started for this run.

@@ -1888,8 +1888,20 @@ function ChatPageInner({
                 is 80px tall (matching textarea minHeight 5rem); if
                 the textarea grows via autoResize, both buttons grow
                 proportionally and stay aligned with its top/bottom
-                edges. w-9 keeps them square at rest. */}
+                edges. w-9 keeps them square at rest. Order: Attach
+                on top, Send at the bottom (Franck preference). */}
             <div className="flex flex-col gap-2 w-9 shrink-0">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming}
+                title="Attach files"
+                aria-label="Attach files"
+                className="flex-1 w-full p-0"
+              >
+                <Paperclip size={16} />
+              </Button>
               <Button
                 type="submit"
                 disabled={
@@ -1907,17 +1919,6 @@ function ChatPageInner({
                 ) : (
                   <Send size={16} />
                 )}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={streaming}
-                title="Attach files"
-                aria-label="Attach files"
-                className="flex-1 w-full p-0"
-              >
-                <Paperclip size={16} />
               </Button>
             </div>
           </div>

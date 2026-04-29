@@ -1841,6 +1841,43 @@ function ChatPageInner({
                   void uploadFiles(e.dataTransfer.files);
                 }
               }}
+              // Clipboard paste of files / images (Franck 2026-04-29).
+              // Browsers expose pasted images as DataTransferItem entries
+              // with kind='file'. We only intercept when at least one
+              // such file is present so plain-text paste keeps its
+              // native behavior (cursor position, undo stack, …).
+              // Clipboard images carry a generic name like "image.png";
+              // we rename them with a timestamp to avoid collisions
+              // when several screenshots are pasted in a row.
+              onPaste={(e) => {
+                const items = e.clipboardData?.items;
+                if (!items || items.length === 0) return;
+                const files: File[] = [];
+                for (let i = 0; i < items.length; i += 1) {
+                  const it = items[i];
+                  if (it.kind !== 'file') continue;
+                  const f = it.getAsFile();
+                  if (!f) continue;
+                  const isGeneric = !f.name || /^image\.[a-z0-9]+$/i.test(f.name);
+                  if (isGeneric && f.type.startsWith('image/')) {
+                    const ext = f.type.split('/')[1] || 'png';
+                    const ts = new Date()
+                      .toISOString()
+                      .replace(/[:.]/g, '-')
+                      .replace('T', '_')
+                      .slice(0, 19);
+                    files.push(
+                      new File([f], `pasted-${ts}.${ext}`, { type: f.type }),
+                    );
+                  } else {
+                    files.push(f);
+                  }
+                }
+                if (files.length > 0) {
+                  e.preventDefault();
+                  void uploadFiles(files);
+                }
+              }}
               placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
               disabled={streaming || !agentSId}
             />

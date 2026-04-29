@@ -16,6 +16,7 @@
  *   repo (classic)  OR  contents:write + pull_requests:write (fine).
  */
 
+import { errMessage } from '../errors';
 import type {
   GitPlatformAdapter,
   OpenPROptions,
@@ -49,8 +50,8 @@ async function gh<T>(
       },
       body: body ? JSON.stringify(body) : undefined,
     });
-  } catch (e: any) {
-    return { ok: false, error: `network: ${e?.message ?? String(e)}`, status: 0 };
+  } catch (e: unknown) {
+    return { ok: false, error: `network: ${errMessage(e)}`, status: 0 };
   }
   const text = await res.text();
   if (!res.ok) {
@@ -60,15 +61,23 @@ async function gh<T>(
       const j = JSON.parse(text);
       if (j?.message) msg = `${msg}: ${j.message}`;
       if (Array.isArray(j?.errors) && j.errors.length) {
-        msg += ` (${j.errors.map((e: any) => e?.message ?? JSON.stringify(e)).join('; ')})`;
+        msg += ` (${j.errors
+          .map((e: unknown) => {
+            if (e && typeof e === 'object' && 'message' in e) {
+              const m = (e as { message?: unknown }).message;
+              if (typeof m === 'string') return m;
+            }
+            try { return JSON.stringify(e); } catch { return String(e); }
+          })
+          .join('; ')})`;
       }
     } catch { /* body wasn't JSON, keep raw */ }
     return { ok: false, error: msg, status: res.status };
   }
   try {
     return { ok: true, data: text ? (JSON.parse(text) as T) : (undefined as T), status: res.status };
-  } catch (e: any) {
-    return { ok: false, error: `invalid JSON: ${e?.message}`, status: res.status };
+  } catch (e: unknown) {
+    return { ok: false, error: `invalid JSON: ${errMessage(e)}`, status: res.status };
   }
 }
 

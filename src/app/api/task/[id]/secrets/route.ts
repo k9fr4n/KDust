@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { listBindingsForTask, upsertBinding } from '@/lib/secrets/repo';
 import { badRequest, notFound } from "@/lib/api/responses";
+import { errMessage } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 
@@ -60,9 +61,9 @@ export async function POST(
   try {
     await upsertBinding(id, parsed.data.envName, parsed.data.secretName);
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { error: e?.message ?? 'Failed to upsert binding' },
+      { error: (errMessage(e) || 'Failed to upsert binding') },
       { status: 400 },
     );
   }

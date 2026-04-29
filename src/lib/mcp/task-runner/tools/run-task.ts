@@ -5,6 +5,7 @@ import { resolveB2B3 } from '../b2b3';
 import { validateDispatch } from '../dispatch-helpers';
 import { formatRunResult, getParentTaskName } from '../helpers';
 import type { OrchestratorContext } from '../context';
+import { errMessage } from '../../../errors';
 
 /**
  * register the `run_task` MCP tool (ADR-0004).
@@ -148,7 +149,8 @@ export function registerRunTaskTool(
         // `resetTimeoutOnProgress` (MCP SDK option) — resets the idle
         // timer on each heartbeat. If the caller didn't opt in, the
         // notifications are silently ignored. Either way, zero harm.
-        const progressToken = (extra?._meta as any)?.progressToken;
+        const progressToken = (extra?._meta as { progressToken?: string | number } | undefined)
+          ?.progressToken;
         let heartbeatId: NodeJS.Timeout | null = null;
         const startHeartbeat = (phase: string) => {
           if (!progressToken || heartbeatId) return;
@@ -266,7 +268,7 @@ export function registerRunTaskTool(
           },
         }).then(
           (id) => ({ kind: 'done' as const, id }),
-          (e: any) => ({ kind: 'error' as const, error: e }),
+          (e: unknown) => ({ kind: 'error' as const, error: e }),
         );
   
         const timeoutBudget = new Promise<{ kind: 'timeout' }>((resolve) => {
@@ -283,7 +285,7 @@ export function registerRunTaskTool(
                 type: 'text' as const,
                 text: JSON.stringify({
                   status: 'failure',
-                  error: `dispatch error: ${outcome.error?.message ?? String(outcome.error)}`,
+                  error: `dispatch error: ${errMessage(outcome.error)}`,
                   duration_ms: Date.now() - startedAt,
                 }),
               },

@@ -15,19 +15,32 @@ export const runtime = 'nodejs';
 export async function GET() {
   const d = await getDustClient();
   if (!d) return unauthorized('not_connected');
-  const res = await d.client.getAgentConfigurations({ view: 'list' } as any);
+  // Dust SDK types `view` as a tighter union than what the API actually
+  // accepts; narrow the cast to the option-shape we send rather than a
+  // blanket `any`.
+  const res = await d.client.getAgentConfigurations(
+    { view: 'list' } as Parameters<typeof d.client.getAgentConfigurations>[0],
+  );
   if (res.isErr()) return serverError(res.error.message);
   // Scope surfaced 2026-04-19 20:23 so the UI can split \"global\"
   // (Dust-provided defaults) from \"workspace/published/visible/private\"
   // (agents created in this tenant). userFavorite too for a
   // future \"Starred\" tab.
-  const agents = res.value.map((a: any) => ({
+  type DustAgent = {
+    sId: string;
+    name: string;
+    description?: string;
+    pictureUrl?: string;
+    scope?: string;
+    userFavorite?: boolean;
+  };
+  const agents = (res.value as DustAgent[]).map((a) => ({
     sId: a.sId,
     name: a.name,
     description: a.description,
     pictureUrl: a.pictureUrl,
-    scope: a.scope as string | undefined,
-    userFavorite: a.userFavorite as boolean | undefined,
+    scope: a.scope,
+    userFavorite: a.userFavorite,
   }));
   return NextResponse.json({ agents });
 }
@@ -80,7 +93,14 @@ export async function POST(req: Request) {
     return apiError(res.error.message, 502);
   }
 
-  const a: any = res.value.agentConfiguration;
+  // The created-agent shape from Dust is fully described upstream; we
+  // only consume four fields, so a minimal local type is enough.
+  const a = res.value.agentConfiguration as {
+    sId: string;
+    name: string;
+    description?: string;
+    pictureUrl?: string;
+  };
   return NextResponse.json(
     {
       agent: {

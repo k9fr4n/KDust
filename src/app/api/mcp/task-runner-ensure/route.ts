@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { errMessage } from '@/lib/errors';
 import {
   getChatTaskRunnerServerId,
   releaseChatTaskRunnerServer,
@@ -47,11 +48,11 @@ export async function POST(req: Request) {
       `[api/mcp/task-runner-ensure] serverId=${serverId} project="${parsed.data.projectName}"`,
     );
     return NextResponse.json({ serverId, projectName: parsed.data.projectName });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error(
       `[api/mcp/task-runner-ensure] failed project="${parsed.data.projectName}":`,
       e,
     );
-    return serverError(e?.message ?? String(e));
+    return serverError(errMessage(e));
   }
 }

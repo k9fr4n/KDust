@@ -21,6 +21,7 @@
 
 import { db } from '../db';
 import { encrypt, decrypt } from '../crypto';
+import { errMessage } from '../errors';
 
 // --- validation ---------------------------------------------------
 
@@ -226,9 +227,9 @@ export async function resolveForRun(runId: string): Promise<ResolvedSecrets> {
     let plain: string;
     try {
       plain = decrypt(b.secret.valueEnc);
-    } catch (e: any) {
+    } catch (e: unknown) {
       throw new Error(
-        `Failed to decrypt secret "${b.secretName}" (likely APP_ENCRYPTION_KEY rotated without re-encrypting): ${e?.message ?? e}`,
+        `Failed to decrypt secret "${b.secretName}" (likely APP_ENCRYPTION_KEY rotated without re-encrypting): ${errMessage(e)}`,
       );
     }
     env[b.envName] = plain;

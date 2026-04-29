@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
 import { computeProjectFsPath } from '@/lib/folder-path';
 import { badRequest, conflict } from "@/lib/api/responses";
+import { errCode } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 // A fresh clone can easily take 30-90s on large repos; Next.js default
@@ -103,8 +104,8 @@ export async function POST(req: Request) {
   let project;
   try {
     project = await db.project.create({ data });
-  } catch (err: any) {
-    if (err?.code === 'P2002') {
+  } catch (err: unknown) {
+    if (errCode(err) === 'P2002') {
       return conflict('name already used in this folder');
     }
     throw err;

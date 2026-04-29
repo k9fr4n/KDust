@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
+import { errCode } from '../errors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { getDustClient } from '../dust/client';
 import { allFsTools } from './fs-tools';
@@ -14,6 +16,43 @@ export interface FsServerHandle {
   server: McpServer;
   transport: DustMcpServerTransport;
 }
+
+/**
+ * Shape of an MCP tool result. We use the strict SDK shape so the
+ * registerTool callback signature matches; iteration of `content`
+ * below treats `text` as the only fragment kind we emit.
+ */
+interface MCPToolResult {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+  // SDK's CallToolResult includes an open index signature; reproduce
+  // it so this type is assignable to the SDK's RegisterToolCallback.
+  [x: string]: unknown;
+}
+
+/**
+ * McpServer doesn't expose a public way to attach the transport for
+ * later retrieval (we need it from the registry's invalidate path).
+ * Augment via this typed extension instead of reaching for `as any`.
+ */
+type ServerWithTransport = McpServer & { __transport?: DustMcpServerTransport };
+
+/**
+ * Discriminated-union view of `JSONRPCMessage` (request|response|notif|
+ * error) we use only for tracing. We accept any branch with optional
+ * properties on a single shape so the wrapper can read `method`, `id`,
+ * `result`, etc. without narrowing per branch.
+ */
+type AnyJsonRpc = {
+  jsonrpc?: '2.0';
+  id?: string | number;
+  method?: string;
+  params?: unknown;
+  result?: Record<string, unknown>;
+  error?: { code?: number; message?: string };
+};
+
+
 
 export async function startFsServer(projectName: string): Promise<FsServerHandle> {
   const root = path.resolve(PROJECTS_ROOT, projectName);
@@ -43,31 +82,41 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       // bytes_in/bytes_out/duration. fs-cli is per-PROJECT not per-
       // run, so runId stays unknown here \u2014 the projectName tag is
       // enough to correlate against /run/<id> after the fact.
-      async (args: any) => {
+      // The MCP SDK validates `args` against `tool.schema` before
+      // calling us, so `args` is statically z.infer<schema> at runtime.
+      // We cannot infer the per-iteration schema type here (each loop
+      // turn sees a different tool), so we type-erase to `unknown` at
+      // the boundary and let `tool.execute` (typed via `defineTool`)
+      // re-narrow on entry.
+      async (args: unknown) => {
         const start = Date.now();
         const requestBytes = byteLen(args);
         let responseBytes = 0;
         let success = true;
         let errorCode: string | null = null;
         try {
-          const result = await tool.execute(root, args);
+          // Cross-iteration the args type is union, so we hand it to
+          // `execute` which performs its own zod-typed narrowing.
+          const result = (await (
+            tool as unknown as { execute: (root: string, args: unknown) => Promise<MCPToolResult> }
+          ).execute(root, args)) as MCPToolResult;
           // Tool result shape is { content: [{type:'text', text}], isError? }
           // We sum the text bytes of every content fragment.
-          if (result && Array.isArray((result as any).content)) {
-            for (const part of (result as any).content) {
+          if (result && Array.isArray(result.content)) {
+            for (const part of result.content) {
               if (part && typeof part.text === 'string') {
                 responseBytes += Buffer.byteLength(part.text, 'utf-8');
               }
             }
           }
-          if ((result as any)?.isError) {
+          if (result?.isError) {
             success = false;
             errorCode = 'tool-error';
           }
           return result;
-        } catch (e: any) {
+        } catch (e: unknown) {
           success = false;
-          errorCode = e?.code ?? 'throw';
+          errorCode = errCode(e) ?? 'throw';
           throw e;
         } finally {
           logMcpCall({
@@ -151,7 +200,7 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     );
 
     // Catch transport errors so auth failures don't silently loop for hours.
-    transport.onerror = (err: any) => {
+    transport.onerror = (err: unknown) => {
       // err is sometimes a real Error, sometimes the raw EventSource event with
       // no usable .message (yields "[object Object]" if you concat it), and
       // sometimes a Dust SDK error object with shape
@@ -163,9 +212,16 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       if (err instanceof Error) msg = err.message;
       else if (typeof err === 'string') msg = err;
       else if (err && typeof err === 'object') {
-        status = typeof err.status === 'number' ? err.status : undefined;
-        dustErrType = err.dustError?.type ?? err.cause?.dustError?.type;
-        msg = err.message ?? err.dustError?.message ?? err.type ?? '';
+        const eo = err as {
+          status?: number;
+          message?: string;
+          type?: string;
+          dustError?: { type?: string; message?: string };
+          cause?: { dustError?: { type?: string } };
+        };
+        status = typeof eo.status === 'number' ? eo.status : undefined;
+        dustErrType = eo.dustError?.type ?? eo.cause?.dustError?.type;
+        msg = eo.message ?? eo.dustError?.message ?? eo.type ?? '';
         try { msg = msg || JSON.stringify(err); } catch { /* circular */ }
       }
 
@@ -241,14 +297,15 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       void invalidate();
     };
 
-    (server as any).__transport = transport;
+    (server as ServerWithTransport).__transport = transport;
     server
       .connect(transport)
       .then(() => {
         // Monkey-patch onmessage / send AFTER connect so we log both directions.
         // McpServer sets transport.onmessage during connect; we wrap it to trace.
         const origOnMessage = transport.onmessage;
-        transport.onmessage = (m: any) => {
+        transport.onmessage = (raw: JSONRPCMessage) => {
+          const m = raw as AnyJsonRpc;
           // Bump the registry's last-used timestamp on every
           // inbound SSE frame so the idle sweeper doesn't release
           // an actively-used handle mid-run. Late-imported to
@@ -265,26 +322,27 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
           } catch {
             /* ignore */
           }
-          return origOnMessage?.(m);
+          return origOnMessage?.(raw);
         };
         const origSend = transport.send.bind(transport);
-        transport.send = async (m: any) => {
+        transport.send = async (raw: JSONRPCMessage) => {
+          const m = raw as AnyJsonRpc;
           try {
             const summary =
-              m?.result
+              m.result
                 ? `result(keys=${Object.keys(m.result).join(',')})`
-                : m?.error
+                : m.error
                 ? `error(${m.error.code}:${m.error.message})`
-                : m?.method
+                : m.method
                 ? `req(${m.method})`
                 : 'msg';
             console.log(
-              `[mcp/fs-server] -> project=${projectName} id=${m?.id ?? '?'} ${summary}`,
+              `[mcp/fs-server] -> project=${projectName} id=${m.id ?? '?'} ${summary}`,
             );
           } catch {
             /* ignore */
           }
-          return origSend(m);
+          return origSend(raw);
         };
       })
       .catch((err) => {
@@ -295,7 +353,7 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
   });
 
   const id = await ready;
-  const transport = (server as any).__transport as DustMcpServerTransport;
+  const transport = (server as ServerWithTransport).__transport as DustMcpServerTransport;
 
   // Historical note (Franck 2026-04-21 18:35):
   // A scheduled "proactive rebuild" used to tear the transport down

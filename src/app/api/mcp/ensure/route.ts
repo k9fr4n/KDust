@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getFsServerId, invalidateFsServer } from '@/lib/mcp/registry';
 import { badRequest, serverError } from "@/lib/api/responses";
+import { errMessage } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 
@@ -29,8 +30,8 @@ export async function POST(req: Request) {
     const serverId = await getFsServerId(parsed.data.projectName);
     console.log(`[api/mcp/ensure] serverId=${serverId} project="${parsed.data.projectName}"`);
     return NextResponse.json({ serverId, projectName: parsed.data.projectName });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error(`[api/mcp/ensure] failed project="${parsed.data.projectName}":`, e);
-    return serverError(e?.message ?? String(e));
+    return serverError(errMessage(e));
   }
 }

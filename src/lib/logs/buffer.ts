@@ -203,13 +203,22 @@ export function installLogCapture() {
   const origStdout = process.stdout.write.bind(process.stdout);
   const origStderr = process.stderr.write.bind(process.stderr);
 
-  process.stdout.write = function patchedStdout(chunk: any, ...rest: any[]) {
+  // process.stdout.write has THREE typed overloads (chunk; chunk+cb;
+  // chunk+encoding+cb). We accept any caller shape with `unknown[]`
+  // rest then narrow the callback by predicate. The forward-call casts
+  // re-enter the overloaded type via `as typeof origStdout` rather
+  // than `as any` so a future Node typing change still surfaces here.
+  type WriteCb = (err?: Error | null) => void;
+  const callIfFn = (a: unknown): a is WriteCb => typeof a === 'function';
+  type StreamChunk = string | Uint8Array;
+
+  process.stdout.write = function patchedStdout(chunk: StreamChunk, ...rest: unknown[]) {
     try {
-      const s = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+      const s = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
       if (isNoise(s)) {
         // Drop both from buffer and from the underlying stream (docker logs).
-        const cb = rest.find((a) => typeof a === 'function');
-        if (cb) (cb as any)();
+        const cb = rest.find(callIfFn);
+        if (cb) cb();
         return true;
       }
       const redacted = redactText(s);
@@ -217,24 +226,24 @@ export function installLogCapture() {
       // Replace the chunk we forward to docker logs with the redacted
       // version so Bearer tokens / passwords / webhooks never escape
       // the process boundary in plaintext.
-      return (origStdout as any)(redacted, ...rest);
+      return (origStdout as (c: StreamChunk, ...r: unknown[]) => boolean)(redacted, ...rest);
     } catch { /* ignore */ }
-    return (origStdout as any)(chunk, ...rest);
+    return (origStdout as (c: StreamChunk, ...r: unknown[]) => boolean)(chunk, ...rest);
   } as typeof process.stdout.write;
 
-  process.stderr.write = function patchedStderr(chunk: any, ...rest: any[]) {
+  process.stderr.write = function patchedStderr(chunk: StreamChunk, ...rest: unknown[]) {
     try {
-      const s = typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+      const s = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
       if (isNoise(s)) {
-        const cb = rest.find((a) => typeof a === 'function');
-        if (cb) (cb as any)();
+        const cb = rest.find(callIfFn);
+        if (cb) cb();
         return true;
       }
       const redacted = redactText(s);
       push('error', redacted);
-      return (origStderr as any)(redacted, ...rest);
+      return (origStderr as (c: StreamChunk, ...r: unknown[]) => boolean)(redacted, ...rest);
     } catch { /* ignore */ }
-    return (origStderr as any)(chunk, ...rest);
+    return (origStderr as (c: StreamChunk, ...r: unknown[]) => boolean)(chunk, ...rest);
   } as typeof process.stderr.write;
 
   push(

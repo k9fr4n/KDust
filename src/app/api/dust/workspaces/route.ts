@@ -17,14 +17,21 @@ export async function GET() {
     console.log('[workspaces] region=%s url=%s', stored?.region, url);
 
     // Tentative 1 : via le SDK
+    // DustAPI's logger param is typed strictly (full LoggerInterface
+    // shape) but only error/info are called in practice; cast to the
+    // exact constructor parameter type so a future SDK change still
+    // surfaces here instead of being hidden by `as any`.
     const client = new DustAPI(
       { url },
       { workspaceId: '', apiKey: token },
-      { error: console.error, info: console.log } as any,
+      { error: console.error, info: console.log } as ConstructorParameters<typeof DustAPI>[2],
     );
     const sdkRes = await client.me();
     if (!sdkRes.isErr()) {
-      const workspaces = (sdkRes.value as any).workspaces ?? [];
+      // SDK return type is the union of all /me payload variants — we
+      // only need .workspaces, narrow to that.
+      const me = sdkRes.value as { workspaces?: unknown[] };
+      const workspaces = me.workspaces ?? [];
       return NextResponse.json({ workspaces, user: sdkRes.value });
     }
     console.error('[workspaces] SDK me() failed:', sdkRes.error);

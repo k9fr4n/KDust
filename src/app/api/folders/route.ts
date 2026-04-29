@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { classifyFolderDepth } from '@/lib/folder-path';
 import { badRequest, conflict } from "@/lib/api/responses";
+import { errCode } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 
@@ -96,8 +97,8 @@ export async function POST(req: Request) {
   try {
     const folder = await db.folder.create({ data: { name, parentId: parentId ?? null } });
     return NextResponse.json({ folder }, { status: 201 });
-  } catch (err: any) {
-    if (err?.code === 'P2002') {
+  } catch (err: unknown) {
+    if (errCode(err) === 'P2002') {
       return conflict('name already used in this parent');
     }
     throw err;

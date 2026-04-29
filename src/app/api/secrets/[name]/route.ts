@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { errMessage, errCode } from '@/lib/errors';
 import {
   deleteSecret,
   updateSecretDescription,
@@ -56,12 +57,12 @@ export async function PUT(
       await updateSecretDescription(name, parsed.data.description);
     }
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    if (String(e?.code) === 'P2025') {
+  } catch (e: unknown) {
+    if (errCode(e) === 'P2025') {
       return notFound(`Secret "${name}" not found`);
     }
     return NextResponse.json(
-      { error: e?.message ?? 'Failed to update secret' },
+      { error: (errMessage(e) || 'Failed to update secret') },
       { status: 400 },
     );
   }
@@ -76,16 +77,16 @@ export async function DELETE(
   try {
     await deleteSecret(name, force);
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    if (String(e?.code) === 'P2025') {
+  } catch (e: unknown) {
+    if (errCode(e) === 'P2025') {
       return notFound(`Secret "${name}" not found`);
     }
     // "still bound" — surface a 409 so the UI can prompt confirmation.
-    if (String(e?.message ?? '').includes('still bound')) {
-      return conflict(e.message);
+    if (errMessage(e).includes('still bound')) {
+      return conflict(errMessage(e));
     }
     return NextResponse.json(
-      { error: e?.message ?? 'Failed to delete secret' },
+      { error: (errMessage(e) || 'Failed to delete secret') },
       { status: 400 },
     );
   }

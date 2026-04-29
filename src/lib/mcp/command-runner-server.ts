@@ -19,8 +19,16 @@
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { errMessage } from '../errors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
+
+/**
+ * Typed extension for the McpServer instance: we attach __transport
+ * so the registry can call invalidate paths without re-walking the
+ * server internals. Avoids reaching for `as any`.
+ */
+type ServerWithTransport = import("@modelcontextprotocol/sdk/server/mcp.js").McpServer & { __transport?: import("@dust-tt/client").DustMcpServerTransport };
 import { z } from 'zod';
 import { getDustClient } from '../dust/client';
 import { db } from '../db';
@@ -154,8 +162,8 @@ export async function startCommandRunnerServer(
   let resolved: ResolvedSecrets;
   try {
     resolved = await resolveForRun(runId);
-  } catch (e: any) {
-    throw new Error(`command-runner: secret resolution failed: ${e?.message ?? e}`);
+  } catch (e: unknown) {
+    throw new Error(`command-runner: secret resolution failed: ${errMessage(e)}`);
   }
   const redact =
     resolved.redactList.length > 0
@@ -235,10 +243,10 @@ export async function startCommandRunnerServer(
       let cwd: string;
       try {
         cwd = chroot(projectRoot, requestedCwd);
-      } catch (e: any) {
+      } catch (e: unknown) {
         const text = JSON.stringify({
           status: 'denied',
-          error: e?.message ?? 'cwd escapes project root',
+          error: errMessage(e) || 'cwd escapes project root',
         });
         logMcpCall({
           runId,
@@ -337,17 +345,29 @@ export async function startCommandRunnerServer(
         stdoutStr = result.stdout?.toString() ?? '';
         stderrStr = result.stderr?.toString() ?? '';
         exitCode = 0;
-      } catch (err: any) {
-        stdoutStr = err?.stdout?.toString() ?? '';
-        stderrStr = err?.stderr?.toString() ?? '';
-        if (err?.killed) {
-          status = err?.signal === 'SIGTERM' || err?.code === 'ETIMEDOUT' ? 'timeout' : 'killed';
-          errorMessage = `process ${status} (signal=${err?.signal ?? '?'} code=${err?.code ?? '?'})`;
-          exitCode = typeof err?.code === 'number' ? err.code : null;
+      } catch (err: unknown) {
+        // child_process.exec errors carry stdout/stderr/code/signal/killed
+        // when the process actually launched (vs ENOENT-style spawn failures
+        // which just look like a regular Error). Narrow once and access
+        // through a typed local.
+        const ee = err as {
+          stdout?: { toString(): string };
+          stderr?: { toString(): string };
+          killed?: boolean;
+          signal?: string;
+          code?: number | string;
+          message?: string;
+        };
+        stdoutStr = ee.stdout?.toString() ?? '';
+        stderrStr = ee.stderr?.toString() ?? '';
+        if (ee.killed) {
+          status = ee.signal === 'SIGTERM' || ee.code === 'ETIMEDOUT' ? 'timeout' : 'killed';
+          errorMessage = `process ${status} (signal=${ee.signal ?? '?'} code=${ee.code ?? '?'})`;
+          exitCode = typeof ee.code === 'number' ? ee.code : null;
         } else {
           status = 'failed';
-          exitCode = typeof err?.code === 'number' ? err.code : null;
-          errorMessage = err?.message ?? String(err);
+          exitCode = typeof ee.code === 'number' ? ee.code : null;
+          errorMessage = errMessage(err);
         }
       }
 
@@ -436,16 +456,25 @@ export async function startCommandRunnerServer(
       VERBOSE,
       HEARTBEAT_MS,
     );
-    transport.onerror = (err: any) => {
+    transport.onerror = (err: unknown) => {
       let msg = '';
       let status: number | undefined;
       let dustErrType: string | undefined;
       if (err instanceof Error) msg = err.message;
       else if (typeof err === 'string') msg = err;
       else if (err && typeof err === 'object') {
-        status = typeof err.status === 'number' ? err.status : undefined;
-        dustErrType = err.dustError?.type ?? err.cause?.dustError?.type;
-        msg = err.message ?? err.dustError?.message ?? err.type ?? '';
+        // Dust SDK error shape: { dustError: { type, message }, status, url }
+        // possibly nested under .cause. Narrow once into a typed local.
+        const eo = err as {
+          status?: number;
+          message?: string;
+          type?: string;
+          dustError?: { type?: string; message?: string };
+          cause?: { dustError?: { type?: string } };
+        };
+        status = typeof eo.status === 'number' ? eo.status : undefined;
+        dustErrType = eo.dustError?.type ?? eo.cause?.dustError?.type;
+        msg = eo.message ?? eo.dustError?.message ?? eo.type ?? '';
         try { msg = msg || JSON.stringify(err); } catch { /* circular */ }
       }
       const isAuthFailure =
@@ -471,7 +500,7 @@ export async function startCommandRunnerServer(
       }
       console.warn(`[mcp/command-runner] transport error: ${msg}`);
     };
-    (server as any).__transport = transport;
+    (server as ServerWithTransport).__transport = transport;
     server.connect(transport).catch((err) => {
       reject(err);
     });
@@ -479,7 +508,7 @@ export async function startCommandRunnerServer(
   });
 
   const serverId = await ready;
-  const transport = (server as any).__transport as DustMcpServerTransport;
+  const transport = (server as ServerWithTransport).__transport as DustMcpServerTransport;
   return {
     runId,
     projectName,

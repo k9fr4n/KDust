@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createSecret, listSecrets } from '@/lib/secrets/repo';
 import { badRequest } from "@/lib/api/responses";
+import { errMessage, errCode } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 
@@ -50,16 +51,16 @@ export async function POST(req: Request) {
     // Ensure the value is not echoed back by mistake — we only
     // return the metadata DTO, which has no `value` field by design.
     return NextResponse.json({ secret: row }, { status: 201 });
-  } catch (e: any) {
+  } catch (e: unknown) {
     // Common case: unique-constraint violation on `name`.
-    if (String(e?.code) === 'P2002') {
+    if (errCode(e) === 'P2002') {
       return NextResponse.json(
         { error: `A secret named "${parsed.data.name}" already exists.` },
         { status: 409 },
       );
     }
     return NextResponse.json(
-      { error: e?.message ?? 'Failed to create secret' },
+      { error: (errMessage(e) || 'Failed to create secret') },
       { status: 400 },
     );
   }

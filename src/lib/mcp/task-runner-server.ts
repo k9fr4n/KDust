@@ -48,6 +48,13 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
+
+/**
+ * Typed extension for the McpServer instance: we attach __transport
+ * so the registry can call invalidate paths without re-walking the
+ * server internals. Avoids reaching for `as any`.
+ */
+type ServerWithTransport = import("@modelcontextprotocol/sdk/server/mcp.js").McpServer & { __transport?: import("@dust-tt/client").DustMcpServerTransport };
 import { getDustClient } from '../dust/client';
 
 // ADR-0004 (2026-04-29): one-file-per-tool layout. The six MCP
@@ -131,7 +138,7 @@ export async function startTaskRunnerServer(
       VERBOSE,
       HEARTBEAT_MS,
     );
-    transport.onerror = (err: any) => {
+    transport.onerror = (err: unknown) => {
       // Normalize the Dust SDK\u0027s three error shapes (Error / string /
       // structured { dustError, status, url }) \u2014 same logic as fs-server.
       let msg = '';
@@ -140,9 +147,16 @@ export async function startTaskRunnerServer(
       if (err instanceof Error) msg = err.message;
       else if (typeof err === 'string') msg = err;
       else if (err && typeof err === 'object') {
-        status = typeof err.status === 'number' ? err.status : undefined;
-        dustErrType = err.dustError?.type ?? err.cause?.dustError?.type;
-        msg = err.message ?? err.dustError?.message ?? err.type ?? '';
+        const eo = err as {
+          status?: number;
+          message?: string;
+          type?: string;
+          dustError?: { type?: string; message?: string };
+          cause?: { dustError?: { type?: string } };
+        };
+        status = typeof eo.status === 'number' ? eo.status : undefined;
+        dustErrType = eo.dustError?.type ?? eo.cause?.dustError?.type;
+        msg = eo.message ?? eo.dustError?.message ?? eo.type ?? '';
         try { msg = msg || JSON.stringify(err); } catch { /* circular */ }
       }
       const isAuthFailure =
@@ -178,7 +192,7 @@ export async function startTaskRunnerServer(
       }
       console.warn(`[mcp/task-runner] transport error: ${msg}`);
     };
-    (server as any).__transport = transport;
+    (server as ServerWithTransport).__transport = transport;
     server.connect(transport).catch((err) => {
       reject(err);
     });
@@ -186,7 +200,7 @@ export async function startTaskRunnerServer(
   });
 
   const serverId = await ready;
-  const transport = (server as any).__transport as DustMcpServerTransport;
+  const transport = (server as ServerWithTransport).__transport as DustMcpServerTransport;
   return {
     orchestratorRunId,
     projectName,

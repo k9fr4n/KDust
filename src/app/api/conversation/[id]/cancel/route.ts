@@ -63,8 +63,11 @@ export async function POST(
       messageIds: [active.agentMessageSId],
     });
     // cancelMessageGeneration returns Err on failure, otherwise void/success.
-    if ((res as any)?.isErr?.()) {
-      const msg = (res as any).error?.message ?? 'unknown';
+    // Dust SDK returns a Result-like { isErr(), error?: { message } }; type the
+    // narrow we actually care about rather than `any`-blanketing the response.
+    const r = res as { isErr?: () => boolean; error?: { message?: string } };
+    if (r.isErr?.()) {
+      const msg = r.error?.message ?? 'unknown';
       // Even if Dust refuses (e.g. message already finished), clear our
       // tracker so a new stream can start.
       markStreamEnd(id);

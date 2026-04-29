@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { glob } from 'glob';
+import { errMessage } from '../errors';
 
 const pExecFile = promisify(execFile);
 
@@ -88,8 +89,27 @@ const IGNORE = [
   '**/coverage/**',
 ];
 
+/**
+ * Tool factory (#15, 2026-04-29). Lets each tool's `execute` arg
+ * be inferred from its zod schema instead of typed as `any`. The
+ * MCP SDK validates the input against `schema` before calling
+ * `execute`, so by the time we get here `args` is statically
+ * z.infer<schema>.
+ */
+function defineTool<S extends z.ZodTypeAny>(t: {
+  name: string;
+  description: string;
+  schema: S;
+  execute(
+    root: string,
+    args: z.infer<S>,
+  ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }>;
+}) {
+  return t;
+}
+
 // ---------------- read_file ----------------
-export const readFile = {
+export const readFile = defineTool({
   name: 'read_file',
   description:
     "Reads a file from the project workspace and returns its contents. Supports text files. " +
@@ -99,7 +119,7 @@ export const readFile = {
     offset: z.number().int().min(0).optional().describe('0-indexed line number to start from.'),
     limit: z.number().int().positive().optional().describe('Max number of lines to read.'),
   }),
-  async execute(root: string, args: any) {
+  async execute(root, args) {
     try {
       const abs = chroot(root, args.path);
       const buf = await fsp.readFile(abs, 'utf-8');
@@ -112,14 +132,14 @@ export const readFile = {
         return toText(truncateForMcp(lines.slice(start, end).join('\n'), 'read_file'));
       }
       return toText(truncateForMcp(buf, 'read_file'));
-    } catch (e: any) {
-      return toText(`Error: ${e.message}`, true);
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
     }
   },
-};
+});
 
 // ---------------- edit_file ----------------
-export const editFile = {
+export const editFile = defineTool({
   name: 'edit_file',
   description:
     "Replace text in a file. `old_string` must uniquely identify the target (include 3+ lines of context). " +
@@ -130,7 +150,7 @@ export const editFile = {
     new_string: z.string().describe('Text to replace it with.'),
     expected_replacements: z.number().int().positive().optional(),
   }),
-  async execute(root: string, args: any) {
+  async execute(root, args) {
     try {
       const abs = chroot(root, args.path);
       if (!existsSync(abs)) return toText(`Error: File not found: ${abs}`, true);
@@ -145,14 +165,14 @@ export const editFile = {
       const updated = original.replace(re, args.new_string);
       await fsp.writeFile(abs, updated, 'utf-8');
       return toText(`Replaced ${count} occurrence(s) in ${abs}`);
-    } catch (e: any) {
-      return toText(`Error: ${e.message}`, true);
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
     }
   },
-};
+});
 
 // ---------------- search_files ----------------
-export const searchFiles = {
+export const searchFiles = defineTool({
   name: 'search_files',
   description: 'List files matching a glob pattern under the project root.',
   schema: z.object({
@@ -162,7 +182,7 @@ export const searchFiles = {
     limit: z.number().int().positive().optional(),
     sort_by_modified: z.boolean().optional(),
   }),
-  async execute(root: string, args: any) {
+  async execute(root, args) {
     try {
       const cwd = chroot(root, args.directory);
       const files = await glob(args.pattern, {
@@ -191,14 +211,14 @@ export const searchFiles = {
           results.length > limit ? ` (showing first ${limit})` : ''
         }:\n${shown}`,
       );
-    } catch (e: any) {
-      return toText(`Error: ${e.message}`, true);
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
     }
   },
-};
+});
 
 // ---------------- search_content ----------------
-export const searchContent = {
+export const searchContent = defineTool({
   name: 'search_content',
   description: 'Search for a string inside files using grep (fixed-string mode).',
   schema: z.object({
@@ -206,7 +226,7 @@ export const searchContent = {
     path: z.string().optional().describe('Absolute directory to search in.'),
     file_pattern: z.string().optional().describe("glob file pattern, e.g. '*.ts'"),
   }),
-  async execute(root: string, args: any) {
+  async execute(root, args) {
     try {
       const cwd = chroot(root, args.path);
       const pattern = args.pattern;
@@ -238,14 +258,14 @@ export const searchContent = {
           'search_content',
         ),
       );
-    } catch (e: any) {
-      return toText(`Error: ${e.message}`, true);
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
     }
   },
-};
+});
 
 // ---------------- run_command ----------------
-export const runCommand = {
+export const runCommand = defineTool({
   name: 'run_command',
   description:
     'Execute a shell command inside the project workspace. Returns exit code, stdout and stderr.',
@@ -255,7 +275,7 @@ export const runCommand = {
     cwd: z.string().optional().describe('Working dir (must be under project root).'),
     timeout: z.number().int().positive().optional(),
   }),
-  async execute(root: string, args: any) {
+  async execute(root, args) {
     try {
       const cwd = chroot(root, args.cwd);
       const timeout = args.timeout ?? 30000;
@@ -280,10 +300,10 @@ export const runCommand = {
           `STDOUT:\n${truncateForMcp(String(stdout ?? ''), 'stdout')}\n\n` +
           `STDERR:\n${truncateForMcp(String(stderr ?? ''), 'stderr')}`,
       );
-    } catch (e: any) {
-      return toText(`Error: ${e.message}`, true);
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
     }
   },
-};
+});
 
 export const allFsTools = [readFile, editFile, searchFiles, searchContent, runCommand];

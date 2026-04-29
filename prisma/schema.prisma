@@ -556,9 +556,23 @@ model TaskRun {
   parentRun     TaskRun?  @relation("TaskRunTree", fields: [parentRunId], references: [id], onDelete: SetNull)
   childRuns     TaskRun[] @relation("TaskRunTree")
 
+  // --- Effective project (Franck 2026-04-29) ---
+  // Project context this run actually executed against. Mirrors
+  // task.projectPath for bound tasks, and captures the runtime
+  // override (run_task `project` arg, /api/task/:id/run body) for
+  // generic tasks whose template Task has projectPath=null.
+  // NULL on:
+  //   - legacy rows predating this column (no backfill)
+  //   - failed pre-resolution runs (project arg missing/unknown)
+  // Used by /run scoping, /projects/:id views, and the per-project
+  // concurrency lock so generic-task runs participate in the same
+  // serialisation guarantees as bound-task runs on the same dir.
+  projectPath   String?
+
   @@index([taskId])
   @@index([dustConversationSId])
   @@index([parentRunId])
+  @@index([projectPath])
   @@map("CronRun")
 
   commands Command[]

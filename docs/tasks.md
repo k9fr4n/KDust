@@ -41,6 +41,23 @@ shown with an amber border **and** a violet pill, a project worker
 has a sky border and no pill. The legend above the list documents
 both axes.
 
+### Visibility across project contexts (Franck 2026-04-29)
+
+Generic tasks are **template tasks runnable on any project**. So
+they appear in the `/task` list **regardless of the active project
+cookie**: when a project is selected, the page shows the union of
+that project's bound tasks and **all** generic tasks. The `kind`
+filter still lets you isolate one or the other (`?kind=generic` or
+`?kind=project`).
+
+The same logic applies to `/run`: a run dispatched from a generic
+task with `{ project: <p> }` is visible in `<p>`'s scoped run list.
+This is implemented via a dedicated `TaskRun.projectPath` column
+that captures the **effective project** of each run (mirrors
+`Task.projectPath` for bound tasks, holds the runtime override for
+generics). Pre-2026-04-29 rows lack the column; the `/run` filter
+falls back to the task join for those legacy rows.
+
 ### Generic-task invariants (enforced in `/api/task`)
 
 When `projectPath = null`:

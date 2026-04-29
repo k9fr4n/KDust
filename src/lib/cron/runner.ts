@@ -555,6 +555,11 @@ export async function runTask(
         runDepth: opts?.runDepth ?? 0,
         trigger: opts?.trigger ?? 'manual',
         triggeredBy: opts?.triggeredBy ?? null,
+        // Pre-resolution failure: effective project couldn't be
+        // determined (generic w/o override, or override mismatch).
+        // We still record what we know so the row is at least
+        // attributable when possible.
+        projectPath: job.projectPath ?? opts?.projectOverride ?? null,
       },
     });
     try { opts?.onRunCreated?.(errRow.id); } catch { /* ignore */ }
@@ -575,10 +580,19 @@ export async function runTask(
   // the working tree. We therefore EXCLUDE ancestor run IDs from the
   // "concurrent" lookup so the child can take over the lock legitimately.
   const excludeIds = opts?.parentRunId ? await getAncestorRunIds(opts.parentRunId) : [];
+  // Concurrency check uses TaskRun.projectPath (Franck 2026-04-29)
+  // instead of joining task.projectPath. This fixes a silent gap on
+  // generic tasks where two runs of the same template against the
+  // same dir would never see each other (template Task.projectPath
+  // is null). Pre-2026-04-29 rows lack the column → for them we
+  // fall back to the task join so legacy in-flight runs still lock.
   const concurrent = await db.taskRun.findFirst({
     where: {
       status: 'running',
-      task: { is: { projectPath: effectiveProjectPath } },
+      OR: [
+        { projectPath: effectiveProjectPath },
+        { AND: [{ projectPath: null }, { task: { is: { projectPath: effectiveProjectPath } } }] },
+      ],
       ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
     },
     orderBy: { startedAt: 'desc' },
@@ -602,6 +616,7 @@ export async function runTask(
           runDepth: opts?.runDepth ?? 0,
           trigger: opts?.trigger ?? 'manual',
           triggeredBy: opts?.triggeredBy ?? null,
+          projectPath: effectiveProjectPath,
         },
       });
       try { opts?.onRunCreated?.(skipRow.id); } catch { /* ignore */ }
@@ -685,6 +700,11 @@ export async function runTask(
       runDepth: opts?.runDepth ?? 0,
       trigger: opts?.trigger ?? 'manual',
       triggeredBy: opts?.triggeredBy ?? null,
+      // Effective project (Franck 2026-04-29). Always populated for
+      // healthy runs because we just validated effectiveProjectPath
+      // upstream. Lets /run scope generic-task runs to the right
+      // project view and tightens the per-project concurrency lock.
+      projectPath: effectiveProjectPath,
     },
   });
   // Notify the caller that a run row now exists. Used by the

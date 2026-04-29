@@ -215,11 +215,32 @@ export default async function RunsPage({ searchParams }: SearchProps) {
 
   // where is shared between count() and findMany() so pagination
   // stays consistent with the active filters.
-  const runsWhere = {
+  //
+  // Project scoping (Franck 2026-04-29): match on TaskRun.projectPath
+  // when present (the effective project context, populated since
+  // 2026-04-29 for both bound and generic-with-override runs), and
+  // fall back to task.projectPath for legacy rows lacking the column.
+  // The OR makes generic-task runs visible from the project they were
+  // dispatched against, while still showing pre-migration bound-task
+  // runs in their owner project.
+  //
+  // Composed via AND because qClause may also carry an OR; spreading
+  // two top-level OR keys in the same object would silently lose one.
+  const projectClause: Prisma.TaskRunWhereInput | undefined = currentProjectFsPath
+    ? {
+        OR: [
+          { projectPath: currentProjectFsPath },
+          { AND: [{ projectPath: null }, { task: { is: { projectPath: currentProjectFsPath } } }] },
+        ],
+      }
+    : undefined;
+  const andClauses: Prisma.TaskRunWhereInput[] = [];
+  if (projectClause) andClauses.push(projectClause);
+  if (q) andClauses.push(qClause as Prisma.TaskRunWhereInput);
+  const runsWhere: Prisma.TaskRunWhereInput = {
     ...(statusFilter ? { status: statusFilter } : {}),
     ...(taskFilter ? { taskId: taskFilter } : {}),
-    ...(currentProjectFsPath ? { task: { is: { projectPath: currentProjectFsPath } } } : {}),
-    ...qClause,
+    ...(andClauses.length > 0 ? { AND: andClauses } : {}),
   };
   const [totalRuns, runs] = await Promise.all([
     db.taskRun.count({ where: runsWhere }),

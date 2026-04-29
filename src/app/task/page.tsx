@@ -119,18 +119,31 @@ export default async function TasksPage({ searchParams }: SearchProps) {
   const PAGE_SIZE = await getAdaptivePageSize(TASKS_PAGE_SIZE_CFG);
 
   const where: Prisma.TaskWhereInput = {};
-  // Cookie-scoped project filter is skipped when the user explicitly
-  // picks 'generic' (templates have no project by definition) so the
-  // filter works even from within a project context.
-  if (cookieProjectFsPath && kind !== 'generic') where.projectPath = cookieProjectFsPath;
   if (q) where.name = { contains: q };
-  // The 'kind' filter drives Task.projectPath nullability.
-  if (kind === 'generic') {
-    where.projectPath = null;
-  } else if (kind === 'project' && !where.projectPath) {
-    // Only add the "any project" constraint when no cookie-project
-    // narrowing is already in place (which already implies NOT NULL).
-    where.projectPath = { not: null };
+  // Visibility rule (Franck 2026-04-29): generic tasks (templates,
+  // projectPath=null) are runnable on any project, so they must
+  // appear in the project-scoped task list alongside the bound
+  // tasks of that project. The 'kind' filter still lets the user
+  // isolate one or the other explicitly.
+  //
+  //   cookie set + kind=generic  → only generics
+  //   cookie set + kind=project  → only this project's bound tasks
+  //   cookie set + kind=all/automation/audit → this project's
+  //                              bound tasks ∪ generics
+  //   no cookie  + kind=generic  → only generics
+  //   no cookie  + kind=project  → all bound tasks (any project)
+  //   no cookie  + kind=all/...  → no projectPath filter
+  if (cookieProjectFsPath) {
+    if (kind === 'generic') {
+      where.projectPath = null;
+    } else if (kind === 'project') {
+      where.projectPath = cookieProjectFsPath;
+    } else {
+      where.OR = [{ projectPath: cookieProjectFsPath }, { projectPath: null }];
+    }
+  } else {
+    if (kind === 'generic') where.projectPath = null;
+    else if (kind === 'project') where.projectPath = { not: null };
   }
   if (enabled === 'on') where.enabled = true;
   else if (enabled === 'off') where.enabled = false;

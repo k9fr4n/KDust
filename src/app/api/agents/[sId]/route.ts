@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getDustClient } from '@/lib/dust/client';
+import { apiError, badRequest, unauthorized } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -53,7 +54,7 @@ type Ctx = { params: Promise<{ sId: string }> };
 export async function GET(_req: Request, ctx: Ctx) {
   const { sId } = await ctx.params;
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
 
   const res = await (d.client as unknown as {
     request: (args: { method: 'GET'; path: string }) => Promise<{
@@ -69,7 +70,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   if (res.isErr()) {
     const msg = res.error?.message ?? 'unknown error';
     const status = /not[_ ]found/i.test(msg) ? 404 : 502;
-    return NextResponse.json({ error: msg }, { status });
+    return apiError(msg, status);
   }
   // The raw Dust response wraps the agent in either
   // { agentConfiguration } or { agent } depending on the endpoint
@@ -108,11 +109,11 @@ export async function GET(_req: Request, ctx: Ctx) {
 export async function PATCH(req: Request, ctx: Ctx) {
   const { sId } = await ctx.params;
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
 
   const parsed = PatchBody.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+    return badRequest(parsed.error.format());
   }
 
   // The SDK's `request()` is typed loosely (Record<string, unknown>
@@ -135,7 +136,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     console.error('[agents] update failed', sId, msg);
     // 404 bubbles up as a DustError with 'agent_configuration_not_found'
     const status = /not[_ ]found/i.test(msg) ? 404 : 502;
-    return NextResponse.json({ error: msg }, { status });
+    return apiError(msg, status);
   }
   return NextResponse.json({ ok: true });
 }
@@ -143,7 +144,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
 export async function DELETE(_req: Request, ctx: Ctx) {
   const { sId } = await ctx.params;
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
 
   const res = await (d.client as unknown as {
     request: (args: { method: 'DELETE'; path: string }) => Promise<{
@@ -159,7 +160,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
     const msg = res.error?.message ?? 'unknown error';
     console.error('[agents] delete failed', sId, msg);
     const status = /not[_ ]found/i.test(msg) ? 404 : 502;
-    return NextResponse.json({ error: msg }, { status });
+    return apiError(msg, status);
   }
   return NextResponse.json({ ok: true });
 }

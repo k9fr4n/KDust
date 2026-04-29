@@ -3,13 +3,14 @@ import { DustAPI } from '@dust-tt/client';
 import { getValidAccessToken } from '@/lib/dust/client';
 import { loadTokens } from '@/lib/dust/tokens';
 import { resolveDustUrl } from '@/lib/dust/region';
+import { unauthorized } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
 export async function GET() {
   try {
     const token = await getValidAccessToken();
-    if (!token) return NextResponse.json({ error: 'not_authenticated' }, { status: 401 });
+    if (!token) return unauthorized('not_authenticated');
 
     const stored = await loadTokens();
     const url = await resolveDustUrl(stored?.region);

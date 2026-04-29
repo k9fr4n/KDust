@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { moveProjectToFolder } from '@/lib/folder-ops';
 import { reloadScheduler } from '@/lib/cron/scheduler';
+import { apiError, badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 // Move = mv FS dir + atomic DB tx. Multi-GB project dirs may take
@@ -35,7 +36,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const parsed = Input.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+    return badRequest(parsed.error.format());
   }
 
   const r = await moveProjectToFolder(id, parsed.data.folderId);

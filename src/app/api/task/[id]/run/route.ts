@@ -3,6 +3,7 @@ import { runTask } from '@/lib/cron/runner';
 import { db } from '@/lib/db';
 import { getCurrentUserEmail } from '@/lib/dust/current-user';
 import { resolveProjectByPathOrName } from '@/lib/folder-path';
+import { badRequest, notFound } from "@/lib/api/responses";
 export const runtime = 'nodejs';
 
 /**
@@ -26,7 +27,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const text = await req.text();
     if (text) body = JSON.parse(text);
   } catch {
-    return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+    return badRequest('invalid JSON body');
   }
   const projectArg = body.project?.trim() || undefined;
 
@@ -34,7 +35,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     where: { id },
     select: { id: true, name: true, projectPath: true },
   });
-  if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!task) return notFound('not_found');
 
   // Generic task → project arg is REQUIRED. Accept either the
   // full fsPath (post Phase-1, e.g. "clients/acme/myapp") or the

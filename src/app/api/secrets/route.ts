@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createSecret, listSecrets } from '@/lib/secrets/repo';
+import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return badRequest('Invalid JSON body');
   }
   const parsed = CreateSchema.safeParse(body);
   if (!parsed.success) {

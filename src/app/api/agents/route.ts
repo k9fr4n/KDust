@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getDustClient } from '@/lib/dust/client';
+import { apiError, badRequest, serverError, unauthorized } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -13,9 +14,9 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
   const res = await d.client.getAgentConfigurations({ view: 'list' } as any);
-  if (res.isErr()) return NextResponse.json({ error: res.error.message }, { status: 500 });
+  if (res.isErr()) return serverError(res.error.message);
   // Scope surfaced 2026-04-19 20:23 so the UI can split \"global\"
   // (Dust-provided defaults) from \"workspace/published/visible/private\"
   // (agents created in this tenant). userFavorite too for a
@@ -61,11 +62,11 @@ const CreateBody = z.object({
 
 export async function POST(req: Request) {
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
 
   const parsed = CreateBody.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+    return badRequest(parsed.error.format());
   }
 
   // SDK: createGenericAgentConfiguration is the public-API equivalent
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
   const res = await d.client.createGenericAgentConfiguration(parsed.data);
   if (res.isErr()) {
     console.error('[agents] create failed', res.error);
-    return NextResponse.json({ error: res.error.message }, { status: 502 });
+    return apiError(res.error.message, 502);
   }
 
   const a: any = res.value.agentConfiguration;

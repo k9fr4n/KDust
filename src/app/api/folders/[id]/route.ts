@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { renameFolder, deleteFolderIfEmpty } from '@/lib/folder-ops';
+import { apiError, badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 // Renaming an L1 folder cascades through every descendant project
@@ -31,7 +32,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   const { id } = await ctx.params;
   const parsed = RenameInput.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+    return badRequest(parsed.error.format());
   }
   const r = await renameFolder(id, parsed.data.name);
   if (!r.ok) {

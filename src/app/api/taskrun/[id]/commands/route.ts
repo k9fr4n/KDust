@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -24,7 +25,7 @@ export const runtime = 'nodejs';
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const run = await db.taskRun.findUnique({ where: { id }, select: { id: true, status: true } });
-  if (!run) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!run) return notFound('not_found');
 
   const commands = await db.command.findMany({
     where: { runId: id },

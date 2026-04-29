@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { listBindingsForTask, upsertBinding } from '@/lib/secrets/repo';
+import { badRequest, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -24,7 +25,7 @@ export async function GET(
 ) {
   const { id } = await params;
   if (!(await taskExists(id))) {
-    return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    return notFound('Task not found');
   }
   const bindings = await listBindingsForTask(id);
   return NextResponse.json({ bindings });
@@ -41,13 +42,13 @@ export async function POST(
 ) {
   const { id } = await params;
   if (!(await taskExists(id))) {
-    return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+    return notFound('Task not found');
   }
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return badRequest('Invalid JSON body');
   }
   const parsed = UpsertSchema.safeParse(body);
   if (!parsed.success) {

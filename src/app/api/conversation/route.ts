@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { createDustConversation } from '@/lib/dust/chat';
 import { getCurrentProjectName } from '@/lib/current-project';
+import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -87,7 +88,7 @@ function buildAttachmentSuffix(
 
 export async function POST(req: Request) {
   const parsed = CreateSchema.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+  if (!parsed.success) return badRequest(parsed.error.format());
 
   const project = await getCurrentProjectName();
   const { agentSId, agentName, content, title, mcpServerIds, fileIds, fileMetas } =

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { isStreaming, getActiveStream } from '@/lib/chat/active-streams';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -25,7 +26,7 @@ export async function GET(
     where: { id },
     include: { messages: { orderBy: { createdAt: 'asc' } } },
   });
-  if (!conv) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!conv) return notFound('not_found');
 
   const active = getActiveStream(id);
   return NextResponse.json({

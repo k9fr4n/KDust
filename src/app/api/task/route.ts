@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { isValidCronExpression } from '@/lib/cron/validator';
 import { validateRoutingMetadata } from '@/lib/task-routing';
+import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -184,7 +185,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const body = await req.json();
   const parsed = TaskInput.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+  if (!parsed.success) return badRequest(parsed.error.format());
   const task = await db.task.create({ data: parsed.data });
   // Arm the scheduler so a newly-created cron-scheduled task starts
   // firing immediately without requiring a server restart.

@@ -6,6 +6,7 @@ import {
   isValidTimezone,
   invalidateAppTimezoneCache,
 } from '@/lib/config';
+import { badRequest } from "@/lib/api/responses";
 export const runtime = 'nodejs';
 
 // Wall-clock runtime caps: [30s, 6h] clamp (matches runner.ts).
@@ -65,7 +66,7 @@ export async function GET() {
 }
 export async function PATCH(req: Request) {
   const parsed = Patch.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+  if (!parsed.success) return badRequest(parsed.error.format());
   const updated = await updateAppConfig(parsed.data);
   // Flush the timezone cache so the new value takes effect
   // immediately on the scheduler and chat hot paths, without

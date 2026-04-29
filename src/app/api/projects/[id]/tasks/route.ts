@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -13,7 +14,7 @@ export const runtime = 'nodejs';
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const project = await db.project.findUnique({ where: { id } });
-  if (!project) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!project) return notFound('not_found');
   // Phase 1 folder hierarchy (2026-04-27): tasks reference projects
   // by `fsPath` (full path). Fall back to leaf name for un-migrated
   // rows so the project page never goes blank during the dry-run /

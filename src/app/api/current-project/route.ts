@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { CURRENT_PROJECT_COOKIE } from '@/lib/current-project';
 import { db } from '@/lib/db';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
   // projectPath / projectName joins server-side.
   let exists = await db.project.findUnique({ where: { fsPath: body.name } });
   if (!exists) exists = await db.project.findFirst({ where: { name: body.name } });
-  if (!exists) return NextResponse.json({ error: 'unknown project' }, { status: 404 });
+  if (!exists) return notFound('unknown project');
 
   const value = exists.fsPath ?? exists.name;
   store.set(CURRENT_PROJECT_COOKIE, value, {

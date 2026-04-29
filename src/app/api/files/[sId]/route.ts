@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDustClient } from '@/lib/dust/client';
+import { apiError, badRequest, unauthorized } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -50,11 +51,11 @@ export async function GET(req: Request, ctx: Ctx) {
   const url = new URL(req.url);
   const forceDownload = url.searchParams.get('download') === '1';
   if (!/^fil_[A-Za-z0-9_-]+$/.test(sId)) {
-    return NextResponse.json({ error: 'invalid_file_id' }, { status: 400 });
+    return badRequest('invalid_file_id');
   }
 
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
 
   // Raw request so we can keep the stream + forward headers.
   const res = await (d.client as unknown as {
@@ -82,7 +83,7 @@ export async function GET(req: Request, ctx: Ctx) {
     const msg = res.error?.message ?? 'unknown error';
     console.error('[files] proxy failed', sId, msg);
     const status = /not[_ ]found/i.test(msg) ? 404 : 502;
-    return NextResponse.json({ error: msg }, { status });
+    return apiError(msg, status);
   }
 
   const upstream = res.value!.response;

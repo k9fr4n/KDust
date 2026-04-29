@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const p = await db.project.findUnique({ where: { id } });
-  if (!p) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!p) return notFound('not_found');
 
   // Sandbox project (no git remote): sync is a no-op but we still
   // ensure the local dir exists so MCP fs tools don't blow up.

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDustClient } from '@/lib/dust/client';
+import { badRequest, unauthorized } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 // Body sizes are capped by Next's default 4MB JSON limit, but we
@@ -48,7 +49,7 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB — generous but bounded
 
 export async function POST(req: Request) {
   const d = await getDustClient();
-  if (!d) return NextResponse.json({ error: 'not_connected' }, { status: 401 });
+  if (!d) return unauthorized('not_connected');
 
   let form: FormData;
   try {
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
 
   const files = form.getAll('files').filter((f): f is File => f instanceof File);
   if (files.length === 0) {
-    return NextResponse.json({ error: 'no_files' }, { status: 400 });
+    return badRequest('no_files');
   }
 
   // Pre-flight size check so we reject cleanly before hitting Dust.

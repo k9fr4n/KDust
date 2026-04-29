@@ -8,6 +8,7 @@ import { CURRENT_PROJECT_COOKIE } from '@/lib/current-project';
 import { invalidateFsServer } from '@/lib/mcp/registry';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { renameProject } from '@/lib/folder-ops';
+import { apiError, badRequest, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -107,19 +108,19 @@ export async function PATCH(
   } = {};
   if (body.gitUrl !== undefined) {
     if (typeof body.gitUrl !== 'string') {
-      return NextResponse.json({ error: 'gitUrl must be a string' }, { status: 400 });
+      return badRequest('gitUrl must be a string');
     }
     data.gitUrl = body.gitUrl.trim() || null;
   }
   if (body.branch !== undefined) {
     if (typeof body.branch !== 'string' || !body.branch.trim()) {
-      return NextResponse.json({ error: 'branch must be a non-empty string' }, { status: 400 });
+      return badRequest('branch must be a non-empty string');
     }
     data.branch = body.branch.trim();
   }
   if (body.description !== undefined) {
     if (typeof body.description !== 'string') {
-      return NextResponse.json({ error: 'description must be a string' }, { status: 400 });
+      return badRequest('description must be a string');
     }
     data.description = body.description.trim().slice(0, 500) || null;
   }
@@ -127,7 +128,7 @@ export async function PATCH(
   // a string to keep the API surface tight (no arrays, no objects).
   if (body.defaultAgentSId !== undefined) {
     if (body.defaultAgentSId !== null && typeof body.defaultAgentSId !== 'string') {
-      return NextResponse.json({ error: 'defaultAgentSId must be a string or null' }, { status: 400 });
+      return badRequest('defaultAgentSId must be a string or null');
     }
     const v = typeof body.defaultAgentSId === 'string' ? body.defaultAgentSId.trim() : '';
     data.defaultAgentSId = v || null;
@@ -139,7 +140,7 @@ export async function PATCH(
     const v = body[k];
     if (v === undefined) continue;
     if (typeof v !== 'string' || !v.trim()) {
-      return NextResponse.json({ error: `${k} must be a non-empty string` }, { status: 400 });
+      return badRequest(`${k} must be a non-empty string`);
     }
     data[k] = v.trim();
   }
@@ -163,19 +164,19 @@ export async function PATCH(
     const v = body[k];
     if (v === undefined) continue;
     if (v !== null && typeof v !== 'string') {
-      return NextResponse.json({ error: `${k} must be a string or null` }, { status: 400 });
+      return badRequest(`${k} must be a string or null`);
     }
     data[k] = typeof v === 'string' && v.trim() ? v.trim() : null;
   }
   if (body.autoOpenPR !== undefined) {
     if (typeof body.autoOpenPR !== 'boolean') {
-      return NextResponse.json({ error: 'autoOpenPR must be boolean' }, { status: 400 });
+      return badRequest('autoOpenPR must be boolean');
     }
     data.autoOpenPR = body.autoOpenPR;
   }
   if (body.prLabels !== undefined) {
     if (typeof body.prLabels !== 'string' || !body.prLabels.trim()) {
-      return NextResponse.json({ error: 'prLabels must be a non-empty string' }, { status: 400 });
+      return badRequest('prLabels must be a non-empty string');
     }
     data.prLabels = body.prLabels.trim();
   }
@@ -190,7 +191,7 @@ export async function PATCH(
   let renameHappened: { oldFsPath: string; newFsPath: string } | null = null;
   if (body.name !== undefined) {
     if (typeof body.name !== 'string') {
-      return NextResponse.json({ error: 'name must be a string' }, { status: 400 });
+      return badRequest('name must be a string');
     }
     const r = await renameProject(id, body.name);
     if (!r.ok) {
@@ -207,11 +208,11 @@ export async function PATCH(
   }
 
   if (Object.keys(data).length === 0 && !renameHappened) {
-    return NextResponse.json({ error: 'no_editable_fields' }, { status: 400 });
+    return badRequest('no_editable_fields');
   }
 
   const before = await db.project.findUnique({ where: { id } });
-  if (!before) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!before) return notFound('not_found');
 
   const updated = Object.keys(data).length > 0
     ? await db.project.update({ where: { id }, data })
@@ -268,7 +269,7 @@ export async function DELETE(
   const deleteFiles = url.searchParams.get('deleteFiles') === '1';
 
   const p = await db.project.findUnique({ where: { id } });
-  if (!p) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!p) return notFound('not_found');
 
   // --- DB cascade in a single transaction ---------------------------------
   // deleteMany is idempotent: if there are no matches, counts come back as 0.

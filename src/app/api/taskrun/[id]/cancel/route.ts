@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { cancelTaskRun, cancelRunCascade } from '@/lib/cron/runner';
+import { conflict, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -22,9 +23,16 @@ export const runtime = 'nodejs';
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const run = await db.taskRun.findUnique({ where: { id } });
-  if (!run) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!run) return notFound('not_found');
   if (run.status !== 'running' && run.status !== 'pending') {
-    return NextResponse.json({ error: 'not_running', status: run.status }, { status: 409 });
+    // Edge case: this 409 carries an extra `status` key alongside
+    // `error` (the run's actual status, not the HTTP one). Outside
+    // the {error} shape covered by the conflict() helper, so kept
+    // raw on purpose. #5 (2026-04-29).
+    return NextResponse.json(
+      { error: 'not_running', status: run.status },
+      { status: 409 },
+    );
   }
 
   // Preferred path: abort the live controller. The target's

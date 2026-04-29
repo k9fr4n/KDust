@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { classifyFolderDepth } from '@/lib/folder-path';
+import { badRequest, conflict } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -72,7 +73,7 @@ const CreateInput = z.object({
 export async function POST(req: Request) {
   const parsed = CreateInput.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+    return badRequest(parsed.error.format());
   }
   const { name, parentId } = parsed.data;
 
@@ -82,7 +83,7 @@ export async function POST(req: Request) {
     // means we'd go past depth 2.
     const depth = await classifyFolderDepth(parentId);
     if (depth === 'invalid') {
-      return NextResponse.json({ error: 'unknown parentId' }, { status: 400 });
+      return badRequest('unknown parentId');
     }
     if (depth !== 'root') {
       return NextResponse.json(
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ folder }, { status: 201 });
   } catch (err: any) {
     if (err?.code === 'P2002') {
-      return NextResponse.json({ error: 'name already used in this parent' }, { status: 409 });
+      return conflict('name already used in this parent');
     }
     throw err;
   }

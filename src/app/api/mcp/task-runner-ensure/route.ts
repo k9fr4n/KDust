@@ -4,6 +4,7 @@ import {
   getChatTaskRunnerServerId,
   releaseChatTaskRunnerServer,
 } from '@/lib/mcp/registry';
+import { badRequest, serverError } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -32,7 +33,7 @@ const Body = z.object({
 export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success)
-    return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+    return badRequest(parsed.error.format());
 
   try {
     if (parsed.data.force) {
@@ -51,6 +52,6 @@ export async function POST(req: Request) {
       `[api/mcp/task-runner-ensure] failed project="${parsed.data.projectName}":`,
       e,
     );
-    return NextResponse.json({ error: e?.message ?? String(e) }, { status: 500 });
+    return serverError(e?.message ?? String(e));
   }
 }

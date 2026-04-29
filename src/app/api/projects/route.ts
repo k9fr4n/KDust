@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
 import { computeProjectFsPath } from '@/lib/folder-path';
+import { badRequest, conflict } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 // A fresh clone can easily take 30-90s on large repos; Next.js default
@@ -45,7 +46,7 @@ export async function GET() {
  */
 export async function POST(req: Request) {
   const parsed = Input.safeParse(await req.json());
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.format() }, { status: 400 });
+  if (!parsed.success) return badRequest(parsed.error.format());
 
   // Normalize: empty gitUrl strings become null so the runtime
   // (sync / push pipeline / buildGitLinks) can use a single
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
       include: { parent: true },
     });
     if (!f) {
-      return NextResponse.json({ error: 'unknown folderId' }, { status: 400 });
+      return badRequest('unknown folderId');
     }
     // Only L2 (parent != null, parent.parentId == null) folders may
     // host projects. Reject L1 / deeper.
@@ -104,7 +105,7 @@ export async function POST(req: Request) {
     project = await db.project.create({ data });
   } catch (err: any) {
     if (err?.code === 'P2002') {
-      return NextResponse.json({ error: 'name already used in this folder' }, { status: 409 });
+      return conflict('name already used in this folder');
     }
     throw err;
   }

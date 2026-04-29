@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import { CURRENT_PROJECT_COOKIE } from '@/lib/current-project';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,7 +26,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     where: { id },
     select: { projectName: true },
   });
-  if (!conv) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!conv) return notFound('not_found');
 
   const store = await cookies();
   if (conv.projectName) {

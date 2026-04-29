@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -23,6 +24,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     });
     return NextResponse.json({ run });
   } catch {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    return notFound('not_found');
   }
 }

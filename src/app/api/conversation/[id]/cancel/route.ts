@@ -5,6 +5,7 @@ import {
   getActiveStream,
   markStreamEnd,
 } from '@/lib/chat/active-streams';
+import { apiError, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -48,12 +49,12 @@ export async function POST(
 
   const conv = await db.conversation.findUnique({ where: { id } });
   if (!conv?.dustConversationSId) {
-    return NextResponse.json({ error: 'conv not found' }, { status: 404 });
+    return notFound('conv not found');
   }
 
   const cli = await getDustClient();
   if (!cli) {
-    return NextResponse.json({ error: 'dust not connected' }, { status: 503 });
+    return apiError('dust not connected', 503);
   }
 
   try {

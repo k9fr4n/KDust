@@ -14,6 +14,7 @@ import {
   updateSecretDescription,
   updateSecretValue,
 } from '@/lib/secrets/repo';
+import { badRequest, conflict, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -35,7 +36,7 @@ export async function PUT(
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return badRequest('Invalid JSON body');
   }
   const parsed = UpdateSchema.safeParse(body);
   if (!parsed.success) {
@@ -57,7 +58,7 @@ export async function PUT(
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     if (String(e?.code) === 'P2025') {
-      return NextResponse.json({ error: `Secret "${name}" not found` }, { status: 404 });
+      return notFound(`Secret "${name}" not found`);
     }
     return NextResponse.json(
       { error: e?.message ?? 'Failed to update secret' },
@@ -77,11 +78,11 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     if (String(e?.code) === 'P2025') {
-      return NextResponse.json({ error: `Secret "${name}" not found` }, { status: 404 });
+      return notFound(`Secret "${name}" not found`);
     }
     // "still bound" — surface a 409 so the UI can prompt confirmation.
     if (String(e?.message ?? '').includes('still bound')) {
-      return NextResponse.json({ error: e.message }, { status: 409 });
+      return conflict(e.message);
     }
     return NextResponse.json(
       { error: e?.message ?? 'Failed to delete secret' },

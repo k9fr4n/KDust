@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { runTask } from '@/lib/cron/runner';
 import { getCurrentUserEmail } from '@/lib/dust/current-user';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -57,7 +58,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     },
   });
   if (!run || !run.task) {
-    return NextResponse.json({ error: 'not_found' }, { status: 404 });
+    return notFound('not_found');
   }
 
   // Resolve effective project. Project-bound tasks win immediately.

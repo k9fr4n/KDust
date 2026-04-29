@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { loadTokens } from '@/lib/dust/tokens';
 import { getDustClient } from '@/lib/dust/client';
+import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -94,7 +95,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const { region } = (await req.json()) as { region: string };
   if (!['us-central1', 'europe-west1'].includes(region)) {
-    return NextResponse.json({ error: 'invalid region' }, { status: 400 });
+    return badRequest('invalid region');
   }
   await db.dustSession.update({ where: { id: 1 }, data: { region } });
   return NextResponse.json({ ok: true, region });

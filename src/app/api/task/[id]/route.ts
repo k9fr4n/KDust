@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { isValidCronExpression } from '@/lib/cron/validator';
 import { isSideEffects, validateRoutingMetadata } from '@/lib/task-routing';
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
@@ -12,7 +13,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     where: { id },
     include: { runs: { orderBy: { startedAt: 'desc' }, take: 20 } },
   });
-  if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!task) return notFound('not_found');
   return NextResponse.json({ task });
 }
 
@@ -104,7 +105,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     where: { id },
     select: { projectPath: true, schedule: true, pushEnabled: true, taskRunnerEnabled: true },
   });
-  if (!current) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!current) return notFound('not_found');
   const effective = {
     projectPath: 'projectPath' in data ? data.projectPath : current.projectPath,
     schedule: 'schedule' in data ? data.schedule : current.schedule,
@@ -140,7 +141,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
   // "please-do-not-delete" marker available for future use. Nothing
   // currently sets it, so this branch is effectively unreachable.
   const task = await db.task.findUnique({ where: { id }, select: { mandatory: true } });
-  if (!task) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!task) return notFound('not_found');
   if (task.mandatory) {
     return NextResponse.json(
       { error: 'mandatory task: cannot be deleted (you may disable it)' },

@@ -1159,52 +1159,44 @@ async function createBinding(
 }
 
 // ---- slash command handlers ----
-async function handleCommand(
-  cmd: string,
-  args: string,
-  chatId: string,
-): Promise<boolean> {
-  switch (cmd) {
-    case '/start':
-    case '/help': {
-      await sendMessage(
-        chatId,
-        [
-          'KDust bot — type a message to chat with your Dust agent.',
-          '',
-          '/new            start a fresh conversation',
-          '/agents         pick an agent (clickable list)',
-          '/agent <sId>    switch agent directly (also resets the conversation)',
-          '/projects       pick a project (clickable list, grouped by folder)',
-          '/project <path> set the project context (accepts L1/L2/leaf or bare leaf)',
-          '/project        clear project (global mode, no fs tools)',
-          '/chats          list recent conversations (clickable to enter)',
-          '/chat <id>      enter an existing conversation by id',
-          '/runs           list recent task runs (clickable for details)',
-          '/run <id>       show details of a specific run',
-          '/whoami         show chat id, agent, project, bound conv',
-          '/stop           abort the current streaming reply',
-          '/help           this message',
-        ].join('\n'),
-      );
-      return true;
-    }
-    case '/projects': {
-      const view = await buildProjectsRootView(chatId);
-      if (!view) {
-        await sendMessage(chatId, 'No projects under /projects yet.');
-        return true;
-      }
-      await sendMessage(chatId, view.text, view.markup);
-      return true;
-    }
-    case '/project': {
-      const requested = args.trim();
-      const result = await applyProjectChoice(chatId, requested || null);
-      await sendMessage(chatId, result.message);
-      return true;
-    }
-    case '/new': {
+/**
+ * Slash-command registry (#3, 2026-04-29). Pre-refactor a 230-line
+ * switch grew an extra case every time a command was added (we are
+ * up to 11). The registry table below is the SINGLE place to add /
+ * remove a command; `handleCommand()` is now a 4-line dispatcher.
+ *
+ * Each spec carries:
+ *   - names[]      — the primary command and any aliases (e.g.
+ *                    /help has /start as an alias). The first
+ *                    entry is the canonical name shown in /help.
+ *   - description  — single-line help blurb.
+ *   - usage?       — optional `<args>` hint appended to the
+ *                    command name in /help (e.g. /agent <sId>).
+ *   - hidden?      — skip from /help (none currently, kept for
+ *                    future internal-only commands).
+ *   - handle()     — the actual logic.
+ *
+ * Behavioural parity: case bodies preserved verbatim. /help is now
+ * auto-rendered from this table so adding a command updates the
+ * help text with zero extra work — column-aligned at 16 chars to
+ * match the pre-#3 hand-crafted layout users are used to.
+ */
+interface CommandSpec {
+  names: string[];
+  description: string;
+  usage?: string;
+  hidden?: boolean;
+  handle: (args: string, chatId: string) => Promise<void>;
+}
+
+// Forward declaration so the /help spec can read the table.
+let COMMAND_SPECS: CommandSpec[];
+
+COMMAND_SPECS = [
+  {
+    names: ['/new'],
+    description: 'start a fresh conversation',
+    handle: async (_args, chatId) => {
       // Match the /project behaviour: a /new that lands inside a
       // project should keep the project context and rebase on its
       // defaultAgentSId; outside any project, fall through to the
@@ -1226,23 +1218,97 @@ async function handleCommand(
         pendingAgent.delete(chatId);
       }
       await sendMessage(chatId, '✅ New conversation. Send your message.');
-      return true;
-    }
-    case '/agents':
-    case '/agent': {
+    },
+  },
+  {
+    names: ['/agents', '/agent'],
+    description:
+      'pick an agent (clickable list); /agent <sId> to switch directly',
+    usage: '<sId>',
+    handle: async (args, chatId) => {
       const sId = args.trim().split(/\s+/)[0];
       if (!sId) {
         // No arg: render a clickable picker, same UX as
-        // /projects. Tap a button \u2192 callback fires
+        // /projects. Tap a button → callback fires
         // applyAgentChoice() with the chosen sId.
         await sendAgentPicker(chatId);
-        return true;
+        return;
       }
       const result = await applyAgentChoice(chatId, sId);
       await sendMessage(chatId, result.message);
-      return true;
-    }
-    case '/whoami': {
+    },
+  },
+  {
+    names: ['/projects'],
+    description: 'pick a project (clickable list, grouped by folder)',
+    handle: async (_args, chatId) => {
+      const view = await buildProjectsRootView(chatId);
+      if (!view) {
+        await sendMessage(chatId, 'No projects under /projects yet.');
+        return;
+      }
+      await sendMessage(chatId, view.text, view.markup);
+    },
+  },
+  {
+    names: ['/project'],
+    description:
+      'set project context (L1/L2/leaf or bare leaf); empty = clear',
+    usage: '<path>',
+    handle: async (args, chatId) => {
+      const requested = args.trim();
+      const result = await applyProjectChoice(chatId, requested || null);
+      await sendMessage(chatId, result.message);
+    },
+  },
+  {
+    names: ['/chats'],
+    description: 'list recent conversations (clickable to enter)',
+    handle: async (_args, chatId) => {
+      await sendChatsPicker(chatId);
+    },
+  },
+  {
+    names: ['/chat'],
+    description: 'enter an existing conversation by id (use /chats to pick)',
+    usage: '<id>',
+    handle: async (args, chatId) => {
+      const id = args.trim().split(/\s+/)[0];
+      if (!id) {
+        await sendMessage(
+          chatId,
+          'Usage: /chat <conversation_id>  (use /chats to pick)',
+        );
+        return;
+      }
+      const result = await applyChatChoice(chatId, id);
+      await sendMessage(chatId, result.message);
+    },
+  },
+  {
+    names: ['/runs'],
+    description: 'list recent task runs (clickable for details)',
+    handle: async (_args, chatId) => {
+      await sendRunsPicker(chatId);
+    },
+  },
+  {
+    names: ['/run'],
+    description: 'show details of a specific run (use /runs to pick)',
+    usage: '<id>',
+    handle: async (args, chatId) => {
+      const id = args.trim().split(/\s+/)[0];
+      if (!id) {
+        await sendMessage(chatId, 'Usage: /run <run_id>  (use /runs to pick)');
+        return;
+      }
+      await sendRunDetail(chatId, id);
+    },
+  },
+  {
+    names: ['/whoami'],
+    description: 'show chat id, agent, project, bound conv',
+    handle: async (_args, chatId) => {
       const binding = await resolveBinding(chatId);
       const cfg = await getAppConfig();
       const project =
@@ -1255,7 +1321,7 @@ async function handleCommand(
       // Prefer the cached name on the Conversation row (set at
       // bind time). Fall back to a Dust lookup so the user
       // never sees a bare sId when the agent is resolvable.
-      // Dust call is wrapped in try/catch \u2014 a transient outage
+      // Dust call is wrapped in try/catch — a transient outage
       // shouldn't break /whoami.
       let agentName: string | null = binding?.conversation?.agentName ?? null;
       if (!agentName && agentSId) {
@@ -1277,63 +1343,71 @@ async function handleCommand(
         ? agentName
           ? `${agentName}  (${agentSId})`
           : agentSId
-        : '\u2014';
+        : '—';
       await sendMessage(
         chatId,
         [
           `chat_id   : ${chatId}`,
           `agent     : ${agentLine}`,
-          `project   : ${project ?? '\u2014 (global)'}${
+          `project   : ${project ?? '— (global)'}${
             !binding && project ? '  [pending]' : ''
           }`,
-          `conv      : ${binding?.conversationId ?? '\u2014 (will be created on next message)'}`,
-          `dust sId  : ${binding?.conversation?.dustConversationSId ?? '\u2014'}`,
+          `conv      : ${binding?.conversationId ?? '— (will be created on next message)'}`,
+          `dust sId  : ${binding?.conversation?.dustConversationSId ?? '—'}`,
         ].join('\n'),
       );
-      return true;
-    }
-    case '/chats': {
-      await sendChatsPicker(chatId);
-      return true;
-    }
-    case '/chat': {
-      const id = args.trim().split(/\s+/)[0];
-      if (!id) {
-        await sendMessage(
-          chatId,
-          'Usage: /chat <conversation_id>  (use /chats to pick)',
-        );
-        return true;
-      }
-      const result = await applyChatChoice(chatId, id);
-      await sendMessage(chatId, result.message);
-      return true;
-    }
-    case '/runs': {
-      await sendRunsPicker(chatId);
-      return true;
-    }
-    case '/run': {
-      const id = args.trim().split(/\s+/)[0];
-      if (!id) {
-        await sendMessage(chatId, 'Usage: /run <run_id>  (use /runs to pick)');
-        return true;
-      }
-      await sendRunDetail(chatId, id);
-      return true;
-    }
-    case '/stop': {
+    },
+  },
+  {
+    names: ['/stop'],
+    description: 'abort the current streaming reply',
+    handle: async (_args, chatId) => {
       const ac = inFlight.get(chatId);
       if (ac) {
         ac.abort();
-        await sendMessage(chatId, '\ud83d\uded1 Stopping...');
+        await sendMessage(chatId, '🛑 Stopping...');
       } else {
         await sendMessage(chatId, 'Nothing to stop.');
       }
-      return true;
-    }
-  }
-  return false;
+    },
+  },
+  {
+    names: ['/help', '/start'],
+    description: 'this message',
+    handle: async (_args, chatId) => {
+      // Auto-rendered from COMMAND_SPECS. Column-aligned at 16
+      // chars to match the pre-#3 hand-crafted layout.
+      const lines: string[] = [
+        'KDust bot — type a message to chat with your Dust agent.',
+        '',
+      ];
+      for (const spec of COMMAND_SPECS) {
+        if (spec.hidden) continue;
+        const head = spec.usage
+          ? `${spec.names[0]} ${spec.usage}`
+          : spec.names[0];
+        lines.push(`${head.padEnd(16, ' ')}${spec.description}`);
+      }
+      await sendMessage(chatId, lines.join('\n'));
+    },
+  },
+];
+
+// Flat name → spec lookup index. Built once at module load; replaces
+// the linear switch dispatch.
+const commandIndex = new Map<string, CommandSpec>(
+  COMMAND_SPECS.flatMap((s) => s.names.map((n) => [n, s] as const)),
+);
+
+async function handleCommand(
+  cmd: string,
+  args: string,
+  chatId: string,
+): Promise<boolean> {
+  const spec = commandIndex.get(cmd);
+  if (!spec) return false;
+  await spec.handle(args, chatId);
+  return true;
 }
 
 /**

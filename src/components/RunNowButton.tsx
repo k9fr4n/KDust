@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Loader2, Check, X } from 'lucide-react';
+import { apiGet, apiSend } from '@/lib/api/client';
 
 /**
  * Run-now trigger button.
@@ -37,8 +38,9 @@ export function RunNowButton({
 
   useEffect(() => {
     if (!open || projects.length > 0) return;
-    void fetch('/api/projects')
-      .then((r) => r.json())
+    apiGet<{ projects?: { name: string; branch: string; fsPath: string | null }[] }>(
+      '/api/projects',
+    )
       .then((j) => setProjects(j.projects ?? []))
       .catch(() => {
         /* non-fatal: user can still close the popover */
@@ -49,12 +51,11 @@ export function RunNowButton({
     setState('running');
     setOpen(false);
     try {
-      const r = await fetch(`/api/task/${cronId}/run`, {
-        method: 'POST',
-        headers: projectOverride ? { 'Content-Type': 'application/json' } : undefined,
-        body: projectOverride ? JSON.stringify({ project: projectOverride }) : undefined,
-      });
-      if (!r.ok) throw new Error(await r.text());
+      await apiSend(
+        'POST',
+        `/api/task/${cronId}/run`,
+        projectOverride ? { project: projectOverride } : undefined,
+      );
       setState('ok');
       setTimeout(() => {
         setState('idle');

@@ -1,5 +1,6 @@
 'use client';
 import { useRouter } from 'next/navigation';
+import { apiSend } from '@/lib/api/client';
 
 /**
  * Brand logo that clears the current project selection and navigates to the
@@ -10,11 +11,7 @@ export function HomeLogo() {
   async function goHome(e: React.MouseEvent) {
     e.preventDefault();
     try {
-      await fetch('/api/current-project', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: null }),
-      });
+      await apiSend('POST', '/api/current-project', { name: null });
     } catch {
       /* ignore */
     }

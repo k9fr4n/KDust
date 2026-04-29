@@ -2,6 +2,7 @@
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { apiSend, ApiError } from '@/lib/api/client';
 
 /**
  * Delete button for /task/[id]. Hidden when the task is mandatory
@@ -33,29 +34,22 @@ export function TaskDeleteButton({
   const onClick = async () => {
     if (!confirm(`Delete cron "${name}" ?`)) return;
     setBusy(true);
-    let r: Response;
     try {
-      r = await fetch(`/api/task/${id}`, { method: 'DELETE' });
-    } catch (e) {
-      setBusy(false);
-      alert(`Network error: ${(e as Error).message}`);
-      return;
-    }
-    setBusy(false);
-    if (r.ok) {
+      await apiSend('DELETE', `/api/task/${id}`);
       router.push('/task');
       router.refresh();
-      return;
+    } catch (e) {
+      // ApiError.message already carries the {error:...} payload's
+      // text when present; for network failures fall back to
+      // generic toString.
+      alert(
+        e instanceof ApiError
+          ? `Delete failed: ${e.message}`
+          : `Network error: ${(e as Error).message}`,
+      );
+    } finally {
+      setBusy(false);
     }
-    // Surface the API error body when available.
-    let msg = `HTTP ${r.status}`;
-    try {
-      const body = (await r.json()) as { error?: string };
-      if (body?.error) msg = body.error;
-    } catch {
-      /* non-JSON body: keep HTTP status */
-    }
-    alert(`Delete failed: ${msg}`);
   };
 
   return (

@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, type MouseEvent } from 'react';
 import { Square, RotateCw, Trash2, Loader2 } from 'lucide-react';
+import { apiSend, ApiError } from '@/lib/api/client';
 
 /**
  * Per-run action cluster (Franck 2026-04-23 23:46).
@@ -65,7 +66,7 @@ export function RunActions({
     ev.preventDefault();
     if (busy) return;
     setBusy('stop');
-    fetch(`/api/taskrun/${runId}/cancel`, { method: 'POST' })
+    apiSend('POST', `/api/taskrun/${runId}/cancel`)
       .catch(() => null)
       .finally(() => {
         setBusy(null);
@@ -81,16 +82,17 @@ export function RunActions({
     // Hit the per-run rerun route so the original run's project
     // context is carried over (important for generic tasks whose
     // project cannot be derived from the task row alone).
-    fetch(`/api/run/${runId}/rerun`, { method: 'POST' })
-      .then(async (r) => {
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          window.alert(
-            j.message ?? j.error ?? `Rerun failed (HTTP ${r.status})`,
-          );
-        }
+    apiSend('POST', `/api/run/${runId}/rerun`)
+      .catch((e: unknown) => {
+        // ApiError carries .body (the parsed {error: ...} payload)
+        // and .message (a derived display string). Fall back to
+        // String(e) for non-ApiError throws (network failure).
+        const msg =
+          e instanceof ApiError
+            ? ((e.body as { message?: string })?.message ?? e.message)
+            : String(e);
+        window.alert(msg);
       })
-      .catch(() => null)
       .finally(() => {
         setBusy(null);
         router.refresh();
@@ -103,7 +105,7 @@ export function RunActions({
     if (busy) return;
     if (!window.confirm('Delete this run? This cannot be undone.')) return;
     setBusy('delete');
-    fetch(`/api/run/${runId}`, { method: 'DELETE' })
+    apiSend('DELETE', `/api/run/${runId}`)
       .catch(() => null)
       .finally(() => {
         setBusy(null);

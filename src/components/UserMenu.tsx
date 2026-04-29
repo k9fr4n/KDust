@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { apiGet, apiSend } from '@/lib/api/client';
 import {
   CircleUser,
   Settings as SettingsIcon,
@@ -30,12 +31,12 @@ export function UserMenu() {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void fetch('/api/dust/region')
-      .then((r) =>
-        r.ok
-          ? r.json()
-          : { region: null, workspaceId: null, email: null, name: null },
-      )
+    // apiGet throws on non-2xx; the previous logic returned a blank
+    // status on failure to avoid a flash of stale state. Match that
+    // by swallowing the error and keeping defaults.
+    apiGet<{ region: string | null; workspaceId: string | null; email: string | null; name: string | null }>(
+      '/api/dust/region',
+    )
       .then(setStatus)
       .catch(() => {});
   }, [open]);
@@ -56,7 +57,9 @@ export function UserMenu() {
     'flex items-center gap-2 px-3 py-2 text-sm rounded-md hover:bg-slate-100 dark:hover:bg-slate-800';
 
   const logout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    // Best-effort: even if the logout call fails, send the user to
+    // /login so their UI state matches the intent.
+    await apiSend('POST', '/api/auth/logout').catch(() => {});
     window.location.href = '/login';
   };
 

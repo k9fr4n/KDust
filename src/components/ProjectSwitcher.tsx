@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, FolderGit2, Check } from 'lucide-react';
+import { apiGet, apiSend } from '@/lib/api/client';
 
 type Project = { id: string; name: string; branch: string; fsPath: string | null };
 
@@ -12,8 +13,8 @@ export function ProjectSwitcher() {
 
   const refresh = async () => {
     const [pr, cr] = await Promise.all([
-      fetch('/api/projects').then((r) => r.json()),
-      fetch('/api/current-project').then((r) => r.json()),
+      apiGet<{ projects?: Project[] }>('/api/projects'),
+      apiGet<{ current?: string | null }>('/api/current-project'),
     ]);
     setProjects(pr.projects ?? []);
     setCurrent(cr.current ?? null);
@@ -36,11 +37,7 @@ export function ProjectSwitcher() {
   }, [open]);
 
   const select = async (name: string | null) => {
-    await fetch('/api/current-project', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
+    await apiSend('POST', '/api/current-project', { name });
     setCurrent(name);
     setOpen(false);
     // Notify any in-page listener that wants to react WITHOUT a reload

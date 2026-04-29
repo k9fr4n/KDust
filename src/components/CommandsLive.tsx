@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { apiGet } from '@/lib/api/client';
 
 /**
  * Shape mirrors the subset of Command columns returned by
@@ -70,14 +71,14 @@ export function CommandsLive({
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`/api/taskrun/${runId}/commands`, { cache: 'no-store' });
-        if (!r.ok) return;
-        const data = (await r.json()) as { runStatus: string; commands: CommandRow[] };
+        const data = await apiGet<{ runStatus: string; commands: CommandRow[] }>(
+          `/api/taskrun/${runId}/commands`,
+        );
         if (cancelled || !mounted.current) return;
         setCommands(data.commands);
         setRunStatus(data.runStatus);
       } catch {
-        /* network blip; we'll retry on the next tick */
+        /* network blip or non-2xx; we'll retry on the next tick */
       }
     };
     // Immediate first tick so newly-mounted live runs don't wait

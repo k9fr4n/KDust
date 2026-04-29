@@ -2,6 +2,7 @@
 import { useRouter } from 'next/navigation';
 import { Play } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { apiGet, apiSend, ApiError } from '@/lib/api/client';
 
 /**
  * "Run now" button for the /task/:id detail page.
@@ -40,8 +41,9 @@ export function TaskRunButton({
   // useless /api/projects hit on every task page load.
   useEffect(() => {
     if (!open || projects.length > 0) return;
-    void fetch('/api/projects')
-      .then((r) => r.json())
+    apiGet<{ projects?: { name: string; branch: string; fsPath: string | null }[] }>(
+      '/api/projects',
+    )
       .then((j) => setProjects(j.projects ?? []))
       .catch(() => {
         /* non-fatal */
@@ -51,13 +53,12 @@ export function TaskRunButton({
   const fire = async (projectOverride?: string) => {
     setBusy(true);
     setMsg(null);
-    const r = await fetch(`/api/task/${id}/run`, {
-      method: 'POST',
-      headers: projectOverride ? { 'Content-Type': 'application/json' } : undefined,
-      body: projectOverride ? JSON.stringify({ project: projectOverride }) : undefined,
-    });
-    setBusy(false);
-    if (r.ok) {
+    try {
+      await apiSend(
+        'POST',
+        `/api/task/${id}/run`,
+        projectOverride ? { project: projectOverride } : undefined,
+      );
       setMsg(
         projectOverride
           ? `Triggered "${name}" on project "${projectOverride}". Live status appears below.`
@@ -68,17 +69,18 @@ export function TaskRunButton({
         router.refresh();
         setMsg(null);
       }, 800);
-    } else {
-      // Surface the server's error so the user knows why (generic
-      // task without project, unknown project, etc.).
-      let detail = `HTTP ${r.status}`;
-      try {
-        const j = await r.json();
-        if (j?.error) detail += ` — ${typeof j.error === 'string' ? j.error : JSON.stringify(j.error)}`;
-      } catch {
-        /* ignore */
-      }
-      setMsg(detail);
+    } catch (e) {
+      // ApiError.message already includes the server's {error: ...}
+      // text when present (generic task without project, unknown
+      // project, etc.). Fall back to a plain HTTP-ish hint for
+      // non-ApiError throws (network failure).
+      setMsg(
+        e instanceof ApiError
+          ? `HTTP ${e.status} — ${e.message}`
+          : (e as Error).message,
+      );
+    } finally {
+      setBusy(false);
     }
   };
 

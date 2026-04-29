@@ -131,15 +131,6 @@ model Message {
   attachments    String?      // JSON array
   createdAt      DateTime     @default(now())
 
-  // Dust-side message sId (e.g. `m12abc`). Populated for messages
-  // created via KDust (POST /api/conversation, /messages, stream
-  // end) AND for messages pulled back from Dust web by the
-  // opportunistic sync in GET /api/conversation/[id] (Franck
-  // 2026-04-29). Used as the idempotency key for that sync so
-  // re-opening a conv never duplicates rows. Nullable for legacy
-  // rows; uniqueness is enforced when present.
-  dustMessageSId String?      @unique
-
   // --- v4: Dust stream instrumentation ---
   // Captured from the SSE event loop in src/lib/dust/chat.ts at
   // agent_message_success. Populated only for role='agent' messages;

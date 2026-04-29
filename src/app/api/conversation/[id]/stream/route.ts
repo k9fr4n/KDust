@@ -9,7 +9,6 @@ import {
   appendStreamCot,
   appendStreamToolCall,
   isStreaming,
-  getActiveStream,
 } from '@/lib/chat/active-streams';
 
 export const runtime = 'nodejs';
@@ -97,81 +96,24 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             send(kind, data);
           },
         );
-        // Pull the Dust agent-message sId captured during the
-        // SSE event loop (markStreamAgentMessage). May be absent
-        // if Dust never emitted a messageId before the stream
-        // ended — we still persist the row, just without the sId
-        // (the pull-on-open sync will backfill it next time the
-        // conv is opened).
-        const dustAgentSId = getActiveStream(id)?.agentMessageSId ?? null;
-        // Persist the final agent message. When we have a Dust sId,
-        // use upsert keyed on that sId (Franck 2026-04-29) so we
-        // remain idempotent against any prior write that already
-        // claimed it — typically the pull-on-open sync racing with
-        // a still-running stream. Without an sId (Dust never emitted
-        // a messageId before stream end) we fall back to a plain
-        // create; nothing else can collide because the only other
-        // writer keys on dustMessageSId.
-        const messageData = {
-          content: finalContent,
-          streamStats: JSON.stringify(stats.eventCounts),
-          toolCalls: stats.toolCalls,
-          toolNames: JSON.stringify(stats.toolNames),
-          durationMs: stats.durationMs,
-        };
-        if (dustAgentSId) {
-          await db.message.upsert({
-            where: { dustMessageSId: dustAgentSId },
-            update: messageData,
-            create: {
-              ...messageData,
-              conversationId: id,
-              role: 'agent',
-              dustMessageSId: dustAgentSId,
-            },
-          });
-        } else {
-          await db.message.create({
-            data: {
-              ...messageData,
-              conversationId: id,
-              role: 'agent',
-            },
-          });
-        }
+        // Persist the final agent message. KDust DB is the sole
+        // source of truth for /chat history (Franck 2026-04-29);
+        // no idempotency key needed because nothing else writes
+        // agent messages. The Dust agent-message sId is still
+        // captured in the active-streams registry so /cancel can
+        // target it, but it is not persisted.
+        await db.message.create({
+          data: {
+            conversationId: id,
+            role: 'agent',
+            content: finalContent,
+            streamStats: JSON.stringify(stats.eventCounts),
+            toolCalls: stats.toolCalls,
+            toolNames: JSON.stringify(stats.toolNames),
+            durationMs: stats.durationMs,
+          },
+        });
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });
-
-        // Title sync (Franck 2026-04-23 21:59). Dust auto-generates a
-        // human-readable title on the conversation after the first
-        // agent turn (e.g. "g\u00e9n\u00e8re moi une image" \u2192 "Demande
-        // d'image g\u00e9n\u00e9r\u00e9e par IA"). Fetch it once the reply is
-        // saved and persist locally so the /chat header and\n        // /conversation listing match what users see on dust.tt.
-        // Best-effort: failures are logged but never block the
-        // stream response. Skip if we already have a non-trivial
-        // local title AND it's been set manually (we never override
-        // a title the user typed themselves \u2014 detectable by\n        // comparing with the first user message; see below).
-        try {
-          // Non-null: we returned 404 above if dustConversationSId
-          // was missing; re-asserted here because TS doesn't carry
-          // the narrowing into this async closure.
-          const convSId = conv.dustConversationSId as string;
-          const latest = await cli.client.getConversation({
-            conversationId: convSId,
-          });
-          if (latest.isOk()) {
-            // SDK's getConversation() unwraps the response envelope
-            // to the bare ConversationType, so title is at the root.
-            const dustTitle = latest.value?.title?.trim();
-            if (dustTitle && dustTitle !== conv.title) {
-              await db.conversation.update({ where: { id }, data: { title: dustTitle } });
-              console.log(`[chat stream] title synced conv=${id} \u2192 "${dustTitle}"`);
-            }
-          } else {
-            console.warn('[chat stream] title sync getConversation err', latest.error?.message);
-          }
-        } catch (e) {
-          console.warn('[chat stream] title sync threw', e instanceof Error ? e.message : e);
-        }
       } catch (err) {
         send('error', err instanceof Error ? err.message : String(err));
         console.error('[chat stream] run failed for conv', id, err);

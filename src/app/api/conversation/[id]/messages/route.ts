@@ -79,10 +79,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       conversationId: id,
       role: 'user',
       content: content + buildAttachmentSuffix(fileMetas),
-      // See POST /api/conversation: stamp the Dust user-message sId
-      // so the pull-on-open sync skips this row instead of trying
-      // to backfill it.
-      dustMessageSId: res.userMessageSId,
     },
   });
   await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });

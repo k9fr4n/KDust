@@ -9,6 +9,7 @@ import {
   appendStreamCot,
   appendStreamToolCall,
   isStreaming,
+  getActiveStream,
 } from '@/lib/chat/active-streams';
 
 export const runtime = 'nodejs';
@@ -96,6 +97,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             send(kind, data);
           },
         );
+        // Pull the Dust agent-message sId captured during the
+        // SSE event loop (markStreamAgentMessage). May be absent
+        // if Dust never emitted a messageId before the stream
+        // ended — we still persist the row, just without the sId
+        // (the pull-on-open sync will backfill it next time the
+        // conv is opened).
+        const dustAgentSId = getActiveStream(id)?.agentMessageSId ?? null;
         await db.message.create({
           data: {
             conversationId: id,
@@ -105,6 +113,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             toolCalls: stats.toolCalls,
             toolNames: JSON.stringify(stats.toolNames),
             durationMs: stats.durationMs,
+            dustMessageSId: dustAgentSId,
           },
         });
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });

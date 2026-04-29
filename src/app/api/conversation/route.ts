@@ -119,6 +119,10 @@ export async function POST(req: Request) {
           {
             role: 'user',
             content: content + buildAttachmentSuffix(fileMetas),
+            // Stamp the Dust user-message sId so the pull-on-open
+            // sync (src/lib/chat/sync-messages.ts) recognises this
+            // row as already-linked and skips it.
+            dustMessageSId: dust.userMessageSId,
           },
         ],
       },

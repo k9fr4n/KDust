@@ -13,7 +13,6 @@ import {
   parseGitRepo,
   buildGitLinks,
   composeBranchName,
-  resetToBase,
   checkoutWorkingBranch,
   diffStatFromHead,
   commitAll,
@@ -34,6 +33,7 @@ import {
 } from './runner/abort';
 import type { RunPhase } from './phases';
 import { runPreflight } from './runner/phases/preflight';
+import { runPreSync } from './runner/phases/pre-sync';
 import { buildAutomationPrompt, buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import { resolveRunTimeoutMs } from './runner/timeout';
@@ -398,20 +398,11 @@ export async function runTask(
     // ?? effectiveProjectPath) so the throw above is the FIRST observable
     // failure for missing-project runs, matching pre-refactor behaviour.
 
-    // [2] Pre-run sync --------------------------------------------------------
-    // For audit tasks we still want an up-to-date working copy so the
-    // agent analyses the latest main, but we go through a lighter path:
-    // resetToBase but no branch/commit/push. For automation tasks, same
-    // call then a new working branch.
-    await setPhase('syncing', `git fetch + reset --hard origin/${policy.baseBranch}`);
-    console.log(`[cron] git sync base=${policy.baseBranch}`);
-    // Phase 1 folder hierarchy (Franck 2026-04-27): pass projectFsPath
-    // (e.g. "Perso/fsallet/terraform-provider-windows") rather than the
-    // leaf `name`. The git helpers compose `cwd = join(PROJECTS_ROOT, x)`
-    // and an out-of-date leaf-only value points at an inexistent dir,
-    // surfacing as the misleading `spawn git ENOENT`.
-    const sync = await resetToBase(projectFsPath, policy.baseBranch);
-    if (!sync.ok) throw new Error(`pre-sync failed: ${sync.error}\n${sync.output}`);
+    // [2] Pre-run sync \u2014 extracted to ./runner/phases/pre-sync.ts
+    // (ADR-0006 Step C). Same `setPhase('syncing', \u2026)` + `resetToBase`
+    // sequence; throws on failure so the outer catch converts to a
+    // 'failed' TaskRun row.
+    await runPreSync({ projectFsPath, baseBranch: policy.baseBranch, setPhase });
 
     // [2b] Audit short-circuit REMOVED 2026-04-22 (full nuke).
     // Audits are now plain generic tasks dispatched via

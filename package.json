@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && env -u __NEXT_PRIVATE_STANDALONE_CONFIG -u __NEXT_PRIVATE_ORIGIN next build",
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

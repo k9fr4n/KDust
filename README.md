@@ -35,6 +35,27 @@ docker compose up --build
 Ouvrir http://localhost:3000, se connecter (mot de passe applicatif), puis
 `/dust/connect` pour lier le compte Dust via WorkOS Device Flow.
 
+## Local build
+
+```bash
+npm run build
+```
+
+The script strips two env vars before invoking `next build` —
+`__NEXT_PRIVATE_STANDALONE_CONFIG` and `__NEXT_PRIVATE_ORIGIN`.
+These are injected by Next at runtime when KDust runs in
+`output: 'standalone'` mode (i.e. inside the production container).
+If a re-build is launched from inside that same shell session
+(common when running `npm run build` from the KDust agent itself),
+the standalone JSON config short-circuits `assignDefaults` in
+`node_modules/next/dist/server/config.js`, drops `generateBuildId`
+(JSON cannot carry the default `()=>null` function), and the build
+crashes with `[TypeError: generate is not a function]`.
+
+The `env -u` prefix in `package.json:scripts.build` makes the build
+idempotent regardless of who launches it (host shell, CI runner,
+in-container agent).
+
 ## Volumes
 
 | Volume | Rôle |

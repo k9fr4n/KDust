@@ -35,6 +35,17 @@ docker compose up --build
 Ouvrir http://localhost:3000, se connecter (mot de passe applicatif), puis
 `/dust/connect` pour lier le compte Dust via WorkOS Device Flow.
 
+## Tests
+
+```bash
+npm test            # one-shot
+npm run test:watch  # watch mode
+```
+
+Vitest (v2), colocated specs under `src/**/__tests__/*.spec.ts`. See
+[`docs/testing.md`](docs/testing.md) for conventions, scope, and
+limitations.
+
 ## Local build
 
 ```bash

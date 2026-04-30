@@ -35,6 +35,35 @@ let started = false;
 let stopRequested = false;
 let currentAbort: AbortController | null = null;
 
+// ---- bridge status (Franck 2026-04-30) ----
+//
+// Exposed via getTelegramBridgeStatus() so /settings/telegram can
+// show "running as @bot pid=… since …". Helps the operator
+// diagnose Telegram 409 Conflict (two pollers fighting on the
+// same token): if `pid` matches the local container PID and the
+// 409 keeps coming, the second poller is elsewhere.
+let bridgeStartedAt: string | null = null;
+let bridgeBot: { id: number; username: string | null } | null = null;
+let lastError: { at: string; message: string } | null = null;
+
+export interface TelegramBridgeStatus {
+  running: boolean;
+  pid: number;
+  startedAt: string | null;
+  bot: { id: number; username: string | null } | null;
+  lastError: { at: string; message: string } | null;
+}
+
+export function getTelegramBridgeStatus(): TelegramBridgeStatus {
+  return {
+    running: started,
+    pid: process.pid,
+    startedAt: bridgeStartedAt,
+    bot: bridgeBot,
+    lastError,
+  };
+}
+
 const LONG_POLL_TIMEOUT_SEC = 25;
 const MAX_BACKOFF_MS = 60_000;
 
@@ -257,6 +286,7 @@ async function loop(): Promise<void> {
       } else {
         console.warn(`[telegram] getUpdates error, backing off ${backoff}ms: ${msg}`);
       }
+      lastError = { at: new Date().toISOString(), message: msg };
       await sleep(backoff);
       backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
     } finally {
@@ -265,6 +295,7 @@ async function loop(): Promise<void> {
   }
   started = false;
   stopRequested = false;
+  bridgeStartedAt = null;
   console.log('[telegram] poller stopped');
 }
 
@@ -298,6 +329,7 @@ export async function startTelegramBridge(): Promise<void> {
   // the behaviour is uniform.
   try {
     const me = await getMe();
+    bridgeBot = { id: me.id, username: me.username ?? me.first_name ?? null };
     console.log(
       `[telegram] bridge starting as @${me.username ?? me.first_name} (id=${me.id}) pid=${process.pid}`,
     );
@@ -330,6 +362,8 @@ export async function startTelegramBridge(): Promise<void> {
   }
   started = true;
   stopRequested = false;
+  bridgeStartedAt = new Date().toISOString();
+  lastError = null;
   // Detached: the loop runs forever (or until stopTelegramBridge
   // is called). We DO NOT await here — instrumentation.register()
   // must return promptly to let Next.js complete startup.

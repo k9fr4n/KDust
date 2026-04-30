@@ -21,4 +21,9 @@
  */
 export { postToTelegram } from './notify';
 export type { TelegramFact, TelegramReport } from './notify';
-export { startTelegramBridge, stopTelegramBridge } from './poller';
+export {
+  startTelegramBridge,
+  stopTelegramBridge,
+  getTelegramBridgeStatus,
+} from './poller';
+export type { TelegramBridgeStatus } from './poller';

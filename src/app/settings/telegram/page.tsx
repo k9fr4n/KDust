@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
 import type { AppConfig } from '@prisma/client';
+import type { TelegramBridgeStatus } from '@/lib/telegram';
 
 /**
  * Telegram chat bridge settings (Franck 2026-04-25 22:00).
@@ -19,6 +20,7 @@ export default function TelegramSettingsPage() {
   const [agents, setAgents] = useState<Array<{ sId: string; name: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [status, setStatus] = useState<TelegramBridgeStatus | null>(null);
 
   useEffect(() => {
     void fetch('/api/settings')
@@ -27,6 +29,16 @@ export default function TelegramSettingsPage() {
     void fetch('/api/agents')
       .then((r) => (r.ok ? r.json() : { agents: [] }))
       .then((j) => setAgents(j.agents ?? []));
+    // Poll status every 5s so the badge reflects 409 storms in
+    // near-real-time without hammering the route.
+    const refresh = () =>
+      void fetch('/api/telegram/status')
+        .then((r) => (r.ok ? (r.json() as Promise<TelegramBridgeStatus>) : null))
+        .then((s) => setStatus(s))
+        .catch(() => {});
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
   }, []);
 
   const save = async () => {
@@ -67,6 +79,8 @@ export default function TelegramSettingsPage() {
           KDust host.
         </p>
       </div>
+
+      {status && <BridgeStatusBadge status={status} />}
 
       {!cfg ? (
         <p className="text-slate-500">Loading…</p>
@@ -159,4 +173,77 @@ export default function TelegramSettingsPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Renders a compact status pill summarising the in-process Telegram
+ * bridge: running flag, bot identity, owning PID, uptime and last
+ * error if any. Surfaces 409 Conflict storms (two pollers fighting
+ * on the same token) without forcing the operator to open /logs.
+ */
+function BridgeStatusBadge({ status }: { status: TelegramBridgeStatus }) {
+  const tone = status.running
+    ? status.lastError
+      ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200'
+      : 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200'
+    : 'border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400';
+
+  const dot = status.running
+    ? status.lastError
+      ? 'bg-amber-500'
+      : 'bg-emerald-500'
+    : 'bg-slate-400';
+
+  const uptime = status.startedAt
+    ? formatUptime(Date.now() - new Date(status.startedAt).getTime())
+    : null;
+
+  return (
+    <div className={`rounded-md border ${tone} p-3 text-xs`}>
+      <div className="flex items-center gap-2 font-mono">
+        <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+        <span className="font-semibold">
+          {status.running ? 'running' : 'stopped'}
+        </span>
+        {status.bot && (
+          <span>
+            as <span className="font-semibold">@{status.bot.username ?? '?'}</span>
+            <span className="text-slate-500"> (id={status.bot.id})</span>
+          </span>
+        )}
+        <span className="text-slate-500">pid={status.pid}</span>
+        {uptime && <span className="text-slate-500">since {uptime}</span>}
+      </div>
+      {status.lastError && (
+        <div className="mt-1 break-words text-amber-800 dark:text-amber-300">
+          last error · {new Date(status.lastError.at).toLocaleTimeString()} ·{' '}
+          {status.lastError.message}
+          {/getUpdates failed: 409/.test(status.lastError.message) && (
+            <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+              409 Conflict means another client is calling
+              <code className="mx-1">getUpdates</code> on the same bot
+              token. Likely a second KDust instance, or a stale webhook —
+              run{' '}
+              <code>
+                curl &quot;https://api.telegram.org/bot$TOKEN/deleteWebhook&quot;
+              </code>{' '}
+              and check <code>docker ps</code>.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatUptime(ms: number): string {
+  if (ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h${m % 60 ? ` ${m % 60}m` : ''} ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d${h % 24 ? ` ${h % 24}h` : ''} ago`;
 }

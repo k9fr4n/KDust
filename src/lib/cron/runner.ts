@@ -6,9 +6,7 @@ import { releaseTaskRunnerServer } from '../mcp/registry';
 
 import { resolveGitPlatform } from '../git-platform';
 import {
-  parseGitRepo,
   buildGitLinks,
-  diffStatFromHead,
   commitAll,
   pushBranch,
   checkoutExistingBranch,
@@ -30,6 +28,7 @@ import { runPreSync } from './runner/phases/pre-sync';
 import { runBranchSetup } from './runner/phases/branch-setup';
 import { runSetupMcp } from './runner/phases/setup-mcp';
 import { runAgent } from './runner/phases/run-agent';
+import { runMeasureDiff } from './runner/phases/measure-diff';
 import { buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import {
@@ -455,63 +454,29 @@ export async function runTask(
     // conversation-persistence block which now lives inside runAgent.
     // Phases [6]..[10] don't read it \u2014 silently drop the binding here.
 
-    // [6] Diff measurement ---------------------------------------------------
-    await setPhase('diff', 'Computing diff');
-    const diff = await diffStatFromHead(projectFsPath);
-    filesChanged = diff.filesChanged;
-    linesAdded = diff.linesAdded;
-    linesRemoved = diff.linesRemoved;
-    console.log(`[cron] diff files=${filesChanged} +${linesAdded}/-${linesRemoved}`);
-
-    // A sandbox project (no git remote) cannot produce MR/commit
-    // links — we build a stub GitRepo so downstream code reads
-    // empty strings instead of crashing. All push/commit/MR
-    // branches are already guarded by `project.gitUrl` checks or
-    // `pushEnabled` which is automatically false for sandboxes.
-    // Sandbox project (no git remote): build a stub GitRepo with
-    // `unknown` host so downstream buildGitLinks() renders empty
-    // strings rather than crashing. Push/commit branches that
-    // depend on a real remote are already guarded by the
-    // pushEnabled flag, which is forced to false for sandboxes.
-    const repo = project.gitUrl
-      ? parseGitRepo(project.gitUrl)
-      : { host: 'unknown' as const, webHost: '', pathWithNamespace: '', baseUrl: '' };
-
-    // No-op short-circuit
-    if (filesChanged === 0) {
-      const durationMs = Date.now() - startedAt;
-      await db.taskRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'no-op',
-          phase: 'done' satisfies RunPhase,
-          phaseMessage: 'No changes produced',
-          branch,
-          filesChanged: 0,
-          linesAdded: 0,
-          linesRemoved: 0,
-          output: agentText,
-          finishedAt: new Date(),
-        },
-      });
-      await db.task.update({
-        where: { id: job.id },
-        data: { lastRunAt: new Date(), lastStatus: 'no-op' },
-      });
-      await notify(
-        `ℹ️ KDust cron : ${job.name} (no-op)`,
-        `Agent ran but produced no file changes on ${project.name}`,
-        'success',
-        [
-          { name: 'Project', value: project.name },
-          { name: 'Base branch', value: policy.baseBranch },
-          { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
-        ],
-        agentText,
-      );
-      console.log(`[cron] no-op job="${job.name}" duration=${durationMs}ms`);
-      return run.id;
-    }
+    // [6] Diff measurement \u2014 extracted to ./runner/phases/measure-diff.ts
+    // (ADR-0006 Step G). Computes diffStatFromHead, parses the git
+    // remote (with sandbox stub), and short-circuits the run as
+    // 'no-op' when the agent produced no file changes.
+    const diffResult = await runMeasureDiff({
+      projectFsPath,
+      project,
+      runId: run.id,
+      job: { id: job.id, name: job.name },
+      policy,
+      branch,
+      agentText,
+      startedAt,
+      setPhase,
+      notify,
+    });
+    if (!diffResult.ok) return diffResult.runId; // no-op short-circuit
+    filesChanged = diffResult.filesChanged;
+    linesAdded = diffResult.linesAdded;
+    linesRemoved = diffResult.linesRemoved;
+    const repo = diffResult.repo;
+    // diff.files is consumed by phase [10]'s success Teams card (file list).
+    const diff = diffResult.diff;
 
     // [7] Guard-rail: diff too large ----------------------------------------
     const totalLines = linesAdded + linesRemoved;

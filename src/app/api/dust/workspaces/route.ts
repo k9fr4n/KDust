@@ -36,7 +36,7 @@ export async function GET() {
     }
     console.error('[workspaces] SDK me() failed:', sdkRes.error);
 
-    // Tentative 2 : fetch direct, utile si le SDK a une shape différente
+    // Attempt 2: bare fetch — useful when the SDK exposes a different shape
     const raw = await fetch(`${url}/api/v1/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });

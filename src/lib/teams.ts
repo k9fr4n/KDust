@@ -1,7 +1,7 @@
 /**
- * Envoie un message MessageCard sur un webhook Microsoft Teams (connector).
- * Les webhooks "Workflow / Power Automate" utilisent un payload Adaptive Card
- * légèrement différent : ce helper gère les deux formats par un fallback.
+ * Posts a MessageCard payload to a Microsoft Teams "Office 365 connector"
+ * webhook. The newer "Workflow / Power Automate" webhooks expect an
+ * Adaptive Card shape instead; this helper supports both via a fallback.
  */
 export interface TeamsCardFact {
   name: string;

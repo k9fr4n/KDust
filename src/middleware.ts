@@ -25,7 +25,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Si pas de mot de passe configuré, on laisse passer.
+  // No password configured = let everything through (dev mode).
   if (!process.env.APP_PASSWORD) return withPathname(req, NextResponse.next());
 
   const token = req.cookies.get('kdust_session')?.value;

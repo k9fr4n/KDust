@@ -28,7 +28,7 @@ export interface GitCommandResult {
   out: string;
 }
 
-/** Exécute git avec args et retourne stdout+stderr combinés. */
+/** Runs git with the given args and returns the combined stdout + stderr. */
 function runGit(args: string[], cwd?: string, timeoutMs = 120_000): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const env = {
@@ -195,7 +195,7 @@ export async function cloneOrPull(
     };
   }
 
-  // pull : reset état local + fetch + reset sur origin/branch
+  // pull = reset local state, then fetch, then reset to origin/branch.
   const steps = [
     ['fetch', '--prune', 'origin'],
     ['checkout', branch],

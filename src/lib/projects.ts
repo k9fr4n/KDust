@@ -5,31 +5,30 @@ export const PROJECTS_ROOT = process.env.PROJECTS_ROOT || '/projects';
 
 export interface ProjectInfo {
   name: string;
-  path: string;         // absolu
-  relativePath: string; // relatif à PROJECTS_ROOT
+  path: string;         // absolute
+  relativePath: string; // relative to PROJECTS_ROOT
   updatedAt: Date | null;
 }
 
 /**
- * Liste les projets sous /projects.
+ * Lists every project under /projects.
  *
- * Depuis 2026-04-27 (Phase 1 folder hierarchy), les projets vivent
- * sous une arborescence à 2 niveaux : /projects/<L1>/<L2>/<name>.
- * Cette fonction parcourt récursivement jusqu'à profondeur 3 et
- * retourne UNIQUEMENT les dossiers feuilles (i.e. les projets
- * réels), avec `name` = le nom de feuille (display) et
- * `relativePath` = le chemin complet relatif à PROJECTS_ROOT
- * (= la valeur stockée dans Project.fsPath).
+ * Since 2026-04-27 (Phase 1 folder hierarchy) projects live under a
+ * 2-level layout: /projects/<L1>/<L2>/<name>. This function walks
+ * recursively up to depth 3 and returns ONLY leaf directories (the
+ * actual projects), with `name` = the leaf folder name (display) and
+ * `relativePath` = the full path relative to PROJECTS_ROOT (which is
+ * exactly what gets stored in Project.fsPath).
  *
- * Compatibilité : si un dossier de premier niveau ne contient PAS
- * de sous-dossiers (cas d'un projet legacy non encore migré, ou
- * d'un opérateur qui aurait posé un projet à la main hors
- * arborescence), il est traité comme un projet flat : son name ==
- * relativePath. La migration `folder-migration.ts` les rangera au
- * prochain reboot avec KDUST_FOLDER_MIGRATION=apply.
+ * Backward compatibility: if a top-level folder has NO sub-folders
+ * (legacy project that hasn't been migrated yet, or an operator who
+ * dropped a project by hand outside the hierarchy), it is treated as
+ * a flat project — `name` == `relativePath`. The migration in
+ * `folder-migration.ts` will tidy these up on the next reboot when
+ * KDUST_FOLDER_MIGRATION=apply.
  *
- * Les fichiers et dossiers masqués (.git, .kdust, etc.) sont
- * toujours ignorés.
+ * Hidden files and directories (.git, .kdust, etc.) are always
+ * ignored.
  */
 export async function listProjects(): Promise<ProjectInfo[]> {
   const out: ProjectInfo[] = [];

@@ -7,8 +7,8 @@ import { useEffect, useState } from 'react';
  * elapsed time instead of a static dash. Once `finishedAt` is
  * set, the timer stops and the final wall-clock is displayed.
  *
- * Franck 2026-04-24 18:51: "sur /run, pendant le running on ne
- * voit pas le temps passé".
+ * Franck 2026-04-24 18:51: "on /run, while a run is in progress
+ * we don't see the elapsed time".
  *
  * Props (all ISO strings to stay RSC-friendly):
  *   - startedAt    : required. Run start timestamp.

@@ -30,7 +30,7 @@ export async function setSessionCookie(token: string) {
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: false, // derrière reverse-proxy TLS, mettre true
+    secure: false, // set to true when running behind a TLS reverse-proxy
     path: '/',
     maxAge: 60 * 60 * 24 * 7,
   });

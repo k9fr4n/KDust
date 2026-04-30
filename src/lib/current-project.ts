@@ -5,13 +5,14 @@ import { resolveProjectByPathOrName } from './folder-path';
 export const CURRENT_PROJECT_COOKIE = 'kdust_project';
 
 /**
- * Récupère le projet courant (multi-tenant) depuis le cookie.
- * Retourne null si "All projects" (cookie absent ou invalide).
+ * Returns the currently selected project (multi-tenant) from the
+ * cookie, or null when in "All projects" mode (cookie missing or
+ * invalid).
  *
- * Depuis 2026-04-27 (Phase 1 folder hierarchy), le cookie stocke
- * la `fsPath` du projet (chemin complet relatif sous /projects,
- * ex. "clients/acme/webapp"). On garde un fallback temporaire sur
- * `name` pour absorber les cookies posés AVANT la migration.
+ * Since 2026-04-27 (Phase 1 folder hierarchy), the cookie stores the
+ * project's `fsPath` (full path relative to /projects, e.g.
+ * "clients/acme/webapp"). A temporary fallback on the leaf `name`
+ * is kept to absorb cookies issued BEFORE the migration.
  */
 export async function getCurrentProject() {
   const store = await cookies();
@@ -21,10 +22,10 @@ export async function getCurrentProject() {
 }
 
 /**
- * Retourne la valeur brute du cookie kdust_project. Représente
- * généralement la `fsPath` (post-migration) — valeur cohérente
- * avec Task.projectPath / Conversation.projectName pour les
- * filtres rapides sans round-trip DB.
+ * Returns the raw value of the kdust_project cookie. Typically the
+ * project's `fsPath` (post-migration) — directly comparable to
+ * Task.projectPath / Conversation.projectName for quick filters
+ * without a DB round-trip.
  */
 export async function getCurrentProjectName(): Promise<string | null> {
   const store = await cookies();
@@ -32,12 +33,12 @@ export async function getCurrentProjectName(): Promise<string | null> {
 }
 
 /**
- * Retourne la `fsPath` canonique du projet courant. Préfère ce
- * helper à `getCurrentProjectName()` quand on filtre des relations
- * (Task.projectPath, Conversation.projectName) : il normalise les
- * cookies legacy (qui pourraient encore contenir le `name` feuille)
- * en re-résolvant via DB. Hits 1 read DB max ; null si pas de
- * cookie ou projet introuvable.
+ * Returns the canonical `fsPath` of the current project. Prefer this
+ * helper over `getCurrentProjectName()` when filtering relations
+ * (Task.projectPath, Conversation.projectName): it normalises legacy
+ * cookies (which might still hold the leaf `name`) by re-resolving
+ * through the DB. At most one DB read; returns null when no cookie
+ * is present or the project cannot be resolved.
  */
 export async function getCurrentProjectFsPath(): Promise<string | null> {
   const store = await cookies();

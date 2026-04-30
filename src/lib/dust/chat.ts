@@ -175,7 +175,7 @@ async function userContext(
   };
 }
 
-/** Crée une nouvelle conversation Dust avec un premier message utilisateur. */
+/** Creates a new Dust conversation seeded with an initial user message. */
 export async function createDustConversation(
   agentSId: string,
   content: string,
@@ -258,7 +258,7 @@ export async function createDustConversation(
   };
 }
 
-/** Poste un message utilisateur supplémentaire dans une conversation Dust existante. */
+/** Posts a follow-up user message into an existing Dust conversation. */
 export async function postUserMessage(
   dustConversationSId: string,
   agentSId: string,
@@ -349,8 +349,9 @@ export interface StreamStats {
 }
 
 /**
- * Stream les événements de l'agent en réponse à un message utilisateur.
- * Appelle `onToken` pour chaque delta de texte et retourne la réponse finale complète.
+ * Stream the agent's events in response to a user message. Calls
+ * `onToken` for every text delta and returns the final, fully
+ * concatenated reply once the stream resolves.
  *
  * Returns the final text AND a StreamStats object capturing the event
  * traffic observed during the stream. The stats are advisory — they

@@ -68,8 +68,23 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         safeEnqueue(encoder.encode(`event: ${event}\ndata: ${payload}\n\n`));
       };
 
+      // Capture the final reply so we can emit 'done' AFTER persistence
+      // + markStreamEnd. Sending 'done' inline (as streamAgentReply does
+      // by default) opens a race window where the client's loadConv()
+      // can hit GET /api/conversation/:id while:
+      //   - db.message.create has just committed (agent row visible), AND
+      //   - markStreamEnd hasn't run yet (streaming=true, replay buffer
+      //     still full).
+      // In that window, loadConv re-seeds streamedText from the buffer
+      // WHILE messages already include the persisted agent row, and the
+      // client renders the agent reply twice until the next reload
+      // (Franck 2026-04-30 — duplicate agent bubble at stream end).
+      // Fix: swallow the inner 'done' and re-emit it after the full
+      // persist + markStreamEnd sequence has run.
+      let finalContent = '';
+      let succeeded = false;
       try {
-        const { content: finalContent, stats } = await streamAgentReply(
+        const result = await streamAgentReply(
           convRes.value,
           userMessageSId,
           abortCtrl.signal,
@@ -92,10 +107,17 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
               // (Franck 2026-04-25 19:45). Pills shown by the live
               // and passive consumers are then byte-identical.
               appendStreamToolCall(id, data);
+            } else if (kind === 'done') {
+              // Swallow — re-emitted below once persistence is committed
+              // AND the in-memory streaming flag is cleared, so the
+              // client's done-handler observes streaming=false and
+              // refuses to re-seed the streamedText bubble.
+              return;
             }
             send(kind, data);
           },
         );
+        finalContent = result.content;
         // Persist the final agent message. KDust DB is the sole
         // source of truth for /chat history (Franck 2026-04-29);
         // no idempotency key needed because nothing else writes
@@ -107,18 +129,24 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             conversationId: id,
             role: 'agent',
             content: finalContent,
-            streamStats: JSON.stringify(stats.eventCounts),
-            toolCalls: stats.toolCalls,
-            toolNames: JSON.stringify(stats.toolNames),
-            durationMs: stats.durationMs,
+            streamStats: JSON.stringify(result.stats.eventCounts),
+            toolCalls: result.stats.toolCalls,
+            toolNames: JSON.stringify(result.stats.toolNames),
+            durationMs: result.stats.durationMs,
           },
         });
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });
+        succeeded = true;
       } catch (err) {
         send('error', err instanceof Error ? err.message : String(err));
         console.error('[chat stream] run failed for conv', id, err);
       } finally {
+        // Order matters: clear the registry BEFORE telling the client
+        // we're done. A loadConv() racing with this close will then
+        // observe streaming=false and clear streamedText cleanly,
+        // instead of re-seeding it from the still-cached replay buffer.
         markStreamEnd(id);
+        if (succeeded) send('done', finalContent);
         try {
           controller.close();
         } catch {

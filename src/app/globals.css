@@ -62,3 +62,19 @@ body { @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text
 .kdust-md .hljs-params { color: #ffa657; }
 .kdust-md .hljs-addition { color: #aff5b4; background: #033a16; }
 .kdust-md .hljs-deletion { color: #ffdcd7; background: #67060c; }
+
+/* ---------------------------------------------------------------
+ * Lightweight popover entry animations (Franck 2026-04-30)
+ * ---------------------------------------------------------------
+ * Used by the project switcher (and reusable for any other dropdown
+ * that wants a GitLab-style "click expands + dims background" feel).
+ * No tailwindcss-animate dep — keep it dependency-free.
+ */
+@keyframes kd-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes kd-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+}

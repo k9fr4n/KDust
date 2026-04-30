@@ -239,7 +239,20 @@ export function ProjectSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute left-0 mt-2 w-[360px] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-lg z-20 flex flex-col">
+        <>
+          {/* GitLab-style dim backdrop: click anywhere outside the
+              panel to close. Sits below the panel (z-10 vs z-30) and
+              fades in via the keyframe defined in globals.css. */}
+          <div
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-10"
+            style={{ animation: 'kd-fade-in 120ms ease-out' }}
+            aria-hidden
+          />
+        <div
+          className="absolute left-0 mt-2 w-[560px] max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col"
+          style={{ animation: 'kd-pop-in 140ms ease-out' }}
+        >
           {/* Search header */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800">
             <Search size={14} className="text-slate-400 shrink-0" />
@@ -408,6 +421,7 @@ export function ProjectSwitcher() {
             <span>{projects.length} project{projects.length === 1 ? '' : 's'}</span>
           </div>
         </div>
+        </>
       )}
     </div>
   );

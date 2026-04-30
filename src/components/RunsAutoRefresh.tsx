@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Pause, Play, RefreshCw } from 'lucide-react';
+import { RUNS_AUTO_REFRESH_SETTLE_MS } from '@/lib/constants';
 
 const STORAGE_KEY = 'kdust_runs_autorefresh';
 const DEFAULT_INTERVAL_MS = 5000;
@@ -77,9 +78,9 @@ export function RunsAutoRefresh({
       }
       setBusy(true);
       router.refresh();
-      // Visual pulse: 400ms is enough to see the spin even when
-      // the refresh returns near-instantly.
-      window.setTimeout(() => setBusy(false), 400);
+      // Visual pulse: RUNS_AUTO_REFRESH_SETTLE_MS is enough to see
+      // the spin even when the refresh returns near-instantly.
+      window.setTimeout(() => setBusy(false), RUNS_AUTO_REFRESH_SETTLE_MS);
     };
     const id = window.setInterval(tick, safeInterval);
     return () => window.clearInterval(id);

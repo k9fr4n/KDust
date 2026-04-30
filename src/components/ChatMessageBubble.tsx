@@ -18,6 +18,7 @@
 import React, { Fragment, useEffect, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
+import { UI_FLASH_MS } from '@/lib/constants';
 
 /**
  * Local copy-to-clipboard button (Franck 2026-04-23 15:31). Kept
@@ -35,7 +36,7 @@ function CopyContentButton({ value }: { value: string }) {
         try {
           await navigator.clipboard.writeText(value);
           setDone(true);
-          window.setTimeout(() => setDone(false), 1500);
+          window.setTimeout(() => setDone(false), UI_FLASH_MS);
         } catch {
           /* silent */
         }

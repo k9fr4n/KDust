@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2, ScrollText, Pause, Play, Filter, Copy, Check, Download } from 'lucide-react';
+import { UI_FLASH_MS } from '@/lib/constants';
 
 type LogLevel = 'log' | 'info' | 'warn' | 'error';
 
@@ -128,7 +129,7 @@ export default function LogsPage() {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), UI_FLASH_MS);
     } catch {
       // Fallback: create a textarea, select and execCommand('copy')
       const ta = document.createElement('textarea');
@@ -138,7 +139,7 @@ export default function LogsPage() {
       try {
         document.execCommand('copy');
         setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+        setTimeout(() => setCopied(false), UI_FLASH_MS);
       } catch {
         /* ignore */
       }

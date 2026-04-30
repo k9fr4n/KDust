@@ -33,6 +33,7 @@
 
 import { db } from '@/lib/db';
 import { getAppConfig } from '@/lib/config';
+import { TELEGRAM_PICKER_LIMIT } from '@/lib/constants';
 import {
   createDustConversation,
   postUserMessage,
@@ -312,7 +313,7 @@ async function sendChatsPicker(chatId: string): Promise<void> {
   // overview from a fresh chat.
   const project = await getActiveProject(chatId);
   const convs = await db.conversation.findMany({
-    take: 12,
+    take: TELEGRAM_PICKER_LIMIT,
     orderBy: { updatedAt: 'desc' },
     where: {
       messages: { some: { role: 'user' } },
@@ -469,7 +470,7 @@ async function sendRunsPicker(chatId: string): Promise<void> {
   // project when one is set; show everything in global mode.
   const project = await getActiveProject(chatId);
   const recent = await db.taskRun.findMany({
-    take: 12,
+    take: TELEGRAM_PICKER_LIMIT,
     orderBy: { startedAt: 'desc' },
     where: project ? { task: { projectPath: project } } : undefined,
     select: {

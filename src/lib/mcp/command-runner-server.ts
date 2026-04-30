@@ -35,6 +35,7 @@ import { db } from '../db';
 import { resolveForRun, type ResolvedSecrets } from '../secrets/repo';
 import { buildRedactor, noopRedactor } from '../secrets/redact';
 import { byteLen, logMcpCall } from '../logs/mcp-calls';
+import { MCP_REGISTRATION_TIMEOUT_MS } from '../constants';
 
 const pExecFile = promisify(execFile);
 
@@ -504,7 +505,10 @@ export async function startCommandRunnerServer(
     server.connect(transport).catch((err) => {
       reject(err);
     });
-    setTimeout(() => reject(new Error('command-runner registration timed out after 15s')), 15000);
+    setTimeout(
+      () => reject(new Error(`command-runner registration timed out after ${MCP_REGISTRATION_TIMEOUT_MS}ms`)),
+      MCP_REGISTRATION_TIMEOUT_MS,
+    );
   });
 
   const serverId = await ready;

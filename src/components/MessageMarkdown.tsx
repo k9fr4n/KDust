@@ -23,6 +23,7 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { ChatImage } from './ChatImage';
+import { UI_FLASH_MS } from '@/lib/constants';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { common as lowlightCommon } from 'lowlight';
@@ -117,7 +118,7 @@ function CodeBlockWithCopy({
     const ok = await copyToClipboard(extractText(children));
     if (ok) {
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      window.setTimeout(() => setCopied(false), UI_FLASH_MS);
     }
   };
   return (

@@ -3,6 +3,7 @@ import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, us
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
+import { UI_FLASH_MS } from '@/lib/constants';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { ChatMessageBubble } from '@/components/ChatMessageBubble';
 import {
@@ -136,7 +137,7 @@ function CopyIdButton({
         try {
           await navigator.clipboard.writeText(value);
           setDone(true);
-          window.setTimeout(() => setDone(false), 1500);
+          window.setTimeout(() => setDone(false), UI_FLASH_MS);
         } catch {
           /* silent */
         }

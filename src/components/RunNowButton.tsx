@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Loader2, Check, X } from 'lucide-react';
 import { apiGet, apiSend } from '@/lib/api/client';
+import { UI_FLASH_MS, UI_SAVE_RESET_MS } from '@/lib/constants';
 
 /**
  * Run-now trigger button.
@@ -60,10 +61,10 @@ export function RunNowButton({
       setTimeout(() => {
         setState('idle');
         router.refresh();
-      }, 1500);
+      }, UI_FLASH_MS);
     } catch {
       setState('ko');
-      setTimeout(() => setState('idle'), 2000);
+      setTimeout(() => setState('idle'), UI_SAVE_RESET_MS);
     }
   };
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { apiGet } from '@/lib/api/client';
+import { COMMANDS_LIVE_POLL_MS } from '@/lib/constants';
 
 /**
  * Shape mirrors the subset of Command columns returned by
@@ -82,9 +83,10 @@ export function CommandsLive({
       }
     };
     // Immediate first tick so newly-mounted live runs don't wait
-    // the full interval before showing anything; then every 2s.
+    // the full interval before showing anything; then every
+    // COMMANDS_LIVE_POLL_MS.
     tick();
-    const h = setInterval(tick, 2000);
+    const h = setInterval(tick, COMMANDS_LIVE_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(h);

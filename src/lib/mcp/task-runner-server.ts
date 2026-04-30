@@ -73,6 +73,7 @@ import { registerUpdateTaskRoutingTool } from './task-runner/tools/update-task-r
 import { registerRunTaskTool } from './task-runner/tools/run-task';
 import { registerWaitForRunTool } from './task-runner/tools/wait-for-run';
 import { registerDispatchTaskTool } from './task-runner/tools/dispatch-task';
+import { MCP_REGISTRATION_TIMEOUT_MS } from '../constants';
 
 // resolveB2B3 is re-exported because src/lib/mcp/registry.ts
 // (chat-mode dispatch path) imports it from here.
@@ -196,7 +197,10 @@ export async function startTaskRunnerServer(
     server.connect(transport).catch((err) => {
       reject(err);
     });
-    setTimeout(() => reject(new Error('task-runner registration timed out after 15s')), 15000);
+    setTimeout(
+      () => reject(new Error(`task-runner registration timed out after ${MCP_REGISTRATION_TIMEOUT_MS}ms`)),
+      MCP_REGISTRATION_TIMEOUT_MS,
+    );
   });
 
   const serverId = await ready;

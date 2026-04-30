@@ -16,6 +16,7 @@ import {
 import { db } from '@/lib/db';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
+import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 
 import { getCurrentProject } from '@/lib/current-project';
 import { SyncProjectButton } from '@/components/SyncProjectButton';
@@ -73,13 +74,13 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       db.taskRun.findMany({
         where: projectRunsFilter,
         orderBy: { startedAt: 'desc' },
-        take: 8,
+        take: DASHBOARD_RECENT_LIMIT,
         include: { task: { select: { name: true } } },
       }),
       db.conversation.findMany({
         where: { projectName: projKey },
         orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
-        take: 8,
+        take: DASHBOARD_RECENT_LIMIT,
       }),
     ]);
 
@@ -233,11 +234,11 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     db.taskRun.count({ where: { status: 'running' } }),
     db.taskRun.count({ where: { status: 'aborted' } }),
     db.project.count(),
-    db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: 8 }),
+    db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: DASHBOARD_RECENT_LIMIT }),
     db.taskRun.findMany({
       // Pinned runs float to the top (Franck 2026-04-20 18:04).
       orderBy: [{ pinned: 'desc' }, { startedAt: 'desc' }],
-      take: 8,
+      take: DASHBOARD_RECENT_LIMIT,
       include: {
         task: { select: { id: true, name: true, projectPath: true } },
       },

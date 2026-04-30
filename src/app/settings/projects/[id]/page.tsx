@@ -26,6 +26,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X } from 'lucide-react';
 import { errMessage } from '@/lib/errors';
+import { UI_SAVE_RESET_MS } from '@/lib/constants';
 
 type Project = {
   id: string;
@@ -202,7 +203,7 @@ export default function ProjectSettingsPage({
       setP(j.project);
       setSaveState('ok');
       setReSyncHint(!!j.reSyncRecommended);
-      setTimeout(() => setSaveState('idle'), 2000);
+      setTimeout(() => setSaveState("idle"), UI_SAVE_RESET_MS);
     } catch (e: unknown) {
       setSaveState('ko');
       setErr(errMessage(e));
@@ -241,7 +242,7 @@ export default function ProjectSettingsPage({
       setP(j.project);
       setName(j.project.name);
       setRenameState('ok');
-      setTimeout(() => setRenameState('idle'), 2000);
+      setTimeout(() => setRenameState("idle"), UI_SAVE_RESET_MS);
     } catch (e: unknown) {
       setRenameState('ko');
       setRenameErr(errMessage(e));

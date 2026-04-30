@@ -4,6 +4,7 @@ import { errCode } from '../errors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { ZodRawShape } from 'zod';
+import { MCP_REGISTRATION_TIMEOUT_MS } from '../constants';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { getDustClient } from '../dust/client';
 import { allFsTools } from './fs-tools';
@@ -354,7 +355,10 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
         console.error('[mcp/fs-server] connect failed:', err);
         reject(err);
       });
-    setTimeout(() => reject(new Error('MCP server registration timed out after 15s')), 15000);
+    setTimeout(
+      () => reject(new Error(`MCP server registration timed out after ${MCP_REGISTRATION_TIMEOUT_MS}ms`)),
+      MCP_REGISTRATION_TIMEOUT_MS,
+    );
   });
 
   const id = await ready;

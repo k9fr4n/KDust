@@ -1,10 +1,7 @@
 import { db } from '../db';
-import type { TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 
 import { releaseTaskRunnerServer } from '../mcp/registry';
-
-import { buildGitLinks } from '../git';
 
 // Modular runner helpers (refactor: lib-modular-split, 2026-04-29).
 // Public symbols (AbortReason, cancelTaskRun, cancelRunCascade,
@@ -23,6 +20,7 @@ import { runAgent } from './runner/phases/run-agent';
 import { runMeasureDiff } from './runner/phases/measure-diff';
 import { guardLargeDiff } from './runner/phases/guard-large-diff';
 import { runCommitAndPush } from './runner/phases/commit-and-push';
+import { runNotifySuccess } from './runner/phases/notify-success';
 import { buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import {
@@ -639,63 +637,30 @@ export async function runTask(
       });
     }
 
-    // [10] Notification report (Teams + Telegram) ---------------------------
-    // Both transports get the same payload \u2014 the `notify` helper
-    // dispatches in parallel and swallows individual failures so a
-    // flaky webhook doesn't leak into the run's terminal status.
-    if (webhook || telegramChatId) {
-      // Same non-null reasoning as step [8]: step [10] is only
-      // reached via the pushEnabled=true path.
-      const links = buildGitLinks(repo, branch ?? policy.baseBranch, policy.baseBranch, commitSha);
-      const fileList =
-        diff.files.slice(0, 15).map((f) => `• ${f}`).join('\n') +
-        (diff.files.length > 15 ? `\n(… +${diff.files.length - 15} more)` : '');
-      const linkLines: string[] = [];
-      if (links.branch) linkLines.push(`🌿 Branch: ${links.branch}`);
-      if (links.commit) linkLines.push(`🔖 Commit: ${links.commit}`);
-      // Prefer the real PR URL opened by KDust (Phase 2) over the
-      // generic "New MR" link when we have one. Falls back to the
-      // compare link for manual-PR workflows.
-      if (prUrl) linkLines.push(`\u2705 PR opened by KDust: ${prUrl}`);
-      else if (links.newMr && !job.dryRun) linkLines.push(`🚀 Open MR/PR: ${links.newMr}`);
-      const details =
-        (linkLines.length ? linkLines.join('\n') + '\n\n' : '') +
-        `Agent output:\n${agentText.slice(0, 1500)}${agentText.length > 1500 ? '…' : ''}\n\n` +
-        `Files changed:\n${fileList}`;
-      const facts: TeamsCardFact[] = [
-        { name: 'Project', value: project.name },
-        { name: 'Branch', value: branch ?? '-' },
-        { name: 'Base', value: policy.baseBranch },
-        { name: 'Commit', value: commitSha ? commitSha.slice(0, 10) : '-' },
-        { name: 'Diff', value: `${filesChanged} file(s), +${linesAdded}/-${linesRemoved}` },
-        { name: 'Duration', value: `${(durationMs / 1000).toFixed(1)}s` },
-        { name: 'Mode', value: job.dryRun ? 'dry-run (no push)' : job.branchMode },
-      ];
-      // When orchestrator failure propagation fired, flip the
-      // Teams card to the failure template so operators see the
-      // true outcome in their channel — same branch/diff facts,
-      // but red status + child failure summary as the body.
-      if (childFailureSummary) {
-        await notify(
-          `❌ KDust cron : ${job.name}`,
-          `Orchestrator failed via child: ${childFailureSummary}`,
-          'failed',
-          facts,
-          `One or more dispatched children ended in failure/abort.\n\n` +
-            `Children: ${childFailureSummary}\n\n` +
-            (linkLines.length ? linkLines.join('\n') + '\n\n' : '') +
-            `Agent output:\n${agentText.slice(0, 1500)}${agentText.length > 1500 ? '…' : ''}`,
-        );
-      } else {
-        await notify(
-          `${job.dryRun ? '🧪' : '✅'} KDust cron : ${job.name}`,
-          `${filesChanged} file(s) changed on ${project.name}`,
-          'success',
-          facts,
-          details,
-        );
-      }
-    }
+    // [10] Notification report (Teams + Telegram) \u2014 extracted to
+    // ./runner/phases/notify-success.ts (ADR-0006 Step J). Composes
+    // the success / child-failure / dry-run Teams card. The failure-
+    // path notify lives in the catch{} below \u2014 they share zero state.
+    await runNotifySuccess({
+      webhook,
+      telegramChatId,
+      repo,
+      branch,
+      policy,
+      commitSha,
+      diff,
+      filesChanged,
+      linesAdded,
+      linesRemoved,
+      prUrl,
+      job: { name: job.name, dryRun: job.dryRun, branchMode: job.branchMode },
+      project,
+      agentText,
+      durationMs,
+      childFailureSummary,
+      notify,
+    });
+
     if (childFailureSummary) {
       console.warn(
         `[cron] FAILED (via child) job="${job.name}" duration=${durationMs}ms children=${childFailureSummary}`,

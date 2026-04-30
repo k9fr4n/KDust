@@ -7,6 +7,8 @@
 // because they need local form state, optimistic refresh, and
 // confirmation dialogs.
 
+import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 import { listSecrets } from '@/lib/secrets/repo';
 import { SecretsEditor } from './SecretsEditor';
 
@@ -18,6 +20,12 @@ export default async function SecretsPage() {
   return (
     <div className="max-w-4xl space-y-6">
       <header className="space-y-1">
+        <Link
+          href="/settings"
+          className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
+        >
+          <ArrowLeft size={14} /> Settings
+        </Link>
         <h1 className="text-2xl font-bold">Secrets</h1>
         <p className="text-sm text-slate-500">
           Credentials stored encrypted at rest (AES-256-GCM via

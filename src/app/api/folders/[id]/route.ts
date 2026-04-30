@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { db } from '@/lib/db';
 import { renameFolder, deleteFolderIfEmpty } from '@/lib/folder-ops';
-import { apiError, badRequest } from "@/lib/api/responses";
+import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 // Renaming an L1 folder cascades through every descendant project

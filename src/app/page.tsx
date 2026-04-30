@@ -31,14 +31,6 @@ export const dynamic = 'force-dynamic';
 
 type DashboardProps = { searchParams?: Promise<{ reason?: string }> };
 
-function fmtRel(d: Date) {
-  const diff = (Date.now() - new Date(d).getTime()) / 1000;
-  if (diff < 60) return `${Math.floor(diff)}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
 export default async function Dashboard({ searchParams }: DashboardProps) {
   const sp = (await searchParams) ?? {};
   const reason = sp.reason;
@@ -461,15 +453,6 @@ function SectionLink({ href, icon, label }: { href: string; icon: React.ReactNod
     </h2>
   );
 }
-
-const STATUS_CLASS: Record<string, string> = {
-  success: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400',
-  failed:  'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400',
-  aborted: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400',
-  running: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400',
-  'no-op': 'bg-slate-100 dark:bg-slate-800 text-slate-600',
-  skipped: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400',
-};
 
 // Subset of the fields hydrated by `db.taskRun.findMany({ include:
 // { task: { select: { name, projectPath } } } })` on the dashboard,

@@ -345,11 +345,9 @@ function ProjectsPageInner() {
     for (const p of projects) {
       const fp = p.fsPath ?? p.name;
       const parts = fp.split('/');
-      const l1 = parts.length >= 2 ? parts[0] : '(unfiled)';
-      const l2 = parts.length >= 3 ? parts[1] : (parts.length === 2 ? parts[0] : '(unfiled)');
-      // For depth-2 fsPath "L1/L2/leaf" -> l1=L1, l2=L2.
-      // For "L1/leaf" (no L2 yet) -> l1=L1, l2='(direct)'.
-      // For unmigrated leaf-only -> '(unfiled)'.
+      // For depth-2 fsPath "L1/L2/leaf" -> realL1=L1,        realL2=L2.
+      // For "L1/leaf"        (no L2 yet)  -> realL1=L1,        realL2='(direct)'.
+      // For unmigrated leaf-only          -> realL1='(unfiled)', realL2='(unfiled)'.
       const realL1 = parts.length >= 3 ? parts[0] : (parts.length === 2 ? parts[0] : '(unfiled)');
       const realL2 = parts.length >= 3 ? parts[1] : (parts.length === 2 ? '(direct)' : '(unfiled)');
       if (!out.has(realL1)) out.set(realL1, new Map());

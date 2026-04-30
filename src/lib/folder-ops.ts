@@ -27,7 +27,6 @@ import { db } from './db';
 import { PROJECTS_ROOT } from './projects';
 import { invalidateFsServer } from './mcp/registry';
 import {
-  buildFsPath,
   classifyFolderDepth,
   computeProjectFsPath,
   getFolderFsPath,

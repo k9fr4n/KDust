@@ -1,5 +1,4 @@
 'use client';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 /**
@@ -24,7 +23,6 @@ export function OpenConversationLink({
   className?: string;
   children: React.ReactNode;
 }) {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
 
   const onClick = async (e: React.MouseEvent) => {

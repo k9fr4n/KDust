@@ -81,15 +81,6 @@ function relTime(iso?: string | null): string {
   });
 }
 
-/** Short HH:MM for message bubbles. */
-function clockTime(iso?: string | null): string {
-  if (!iso) return '';
-  return new Date(iso).toLocaleTimeString('fr-FR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 /** Full human label for tooltips. */
 function fullTime(iso?: string | null): string {
   if (!iso) return '';
@@ -249,7 +240,12 @@ function ChatPageInner({
   const [agentSId, setAgentSId] = useState('');
   // Tracks priority of the current agent selection. See the lookup
   // in the /api/projects/current effect for the override rules.
-  const [agentPickedBy, setAgentPickedBy] = useState<'none' | 'auto' | 'user' | 'conv'>('none');
+  // Tracks priority of the current agent selection across user
+  // picks, conversation hydration, and project-default fallback.
+  // The current value is read inside `setAgentPickedBy(p => ...)`
+  // callbacks (via React's prev-state arg), never directly — hence
+  // the empty destructure slot.
+  const [, setAgentPickedBy] = useState<'none' | 'auto' | 'user' | 'conv'>('none');
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [cotText, setCotText] = useState('');
@@ -627,6 +623,13 @@ function ChatPageInner({
         }
       })
       .catch(() => {});
+    // Mount-only effect: hydrate the initial conversation + project
+    // context, then ensure both MCP servers exactly once. The deps
+    // we read inside (initialConversationId is a prop snapshot,
+    // searchParams/router are stable hook handles, loadConv would
+    // recreate every render) MUST NOT trigger a re-run; doing so
+    // would cycle MCP registrations on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-scroll to bottom on new content \u2014 but only while the

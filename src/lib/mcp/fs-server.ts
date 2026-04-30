@@ -140,7 +140,6 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     );
   }
 
-  let serverId: string | null = null;
   let invalidated = false;
 
   // Token rotation is now handled by getDustClient() passing apiKey
@@ -196,7 +195,6 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
     const transport = new DustMcpServerTransport(
       dust.client,
       (id: string) => {
-        serverId = id;
         console.log(`[mcp/fs-server] registered fs-cli for project="${projectName}" root="${root}" serverId=${id} verbose=${VERBOSE} heartbeatMs=${HEARTBEAT_MS}`);
         resolve(id);
       },

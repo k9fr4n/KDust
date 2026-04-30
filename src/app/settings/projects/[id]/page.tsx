@@ -59,6 +59,13 @@ type Project = {
   updatedAt: string;
 };
 
+// Module-level so referencing it in a useEffect dep array doesn't
+// trigger react-hooks/exhaustive-deps complaints about a per-render
+// identity (which it would if defined inside the component body).
+type GitPlatform = 'auto' | 'github' | 'gitlab' | 'none';
+const isGitPlatform = (s: unknown): s is GitPlatform =>
+  s === 'auto' || s === 'github' || s === 'gitlab' || s === 'none';
+
 export default function ProjectSettingsPage({
   params,
 }: {
@@ -83,9 +90,6 @@ export default function ProjectSettingsPage({
   const [branchPrefix, setBranchPrefix] = useState('kdust');
   const [protectedBranches, setProtectedBranches] = useState('main,master,develop,production,prod');
   // Phase 2: platform state. Empty strings map to null server-side.
-  type GitPlatform = 'auto' | 'github' | 'gitlab' | 'none';
-  const isGitPlatform = (s: unknown): s is GitPlatform =>
-    s === 'auto' || s === 'github' || s === 'gitlab' || s === 'none';
   const [platform, setPlatform] = useState<GitPlatform>('auto');
   const [platformApiUrl, setPlatformApiUrl] = useState('');
   const [platformTokenRef, setPlatformTokenRef] = useState('');
@@ -97,7 +101,11 @@ export default function ProjectSettingsPage({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'ko'>('idle');
   const [syncing, setSyncing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [reSyncHint, setReSyncHint] = useState(false);
+  // Reserved: future UI hint when GET /api/projects/:id/sync flags
+  // `reSyncRecommended` (e.g. after a default-branch change). The
+  // value is currently captured but not rendered; track in #N if/when
+  // we want to surface the badge.
+  const [, setReSyncHint] = useState(false);
 
   // Fetch the current project state. Uses the existing list endpoint
   // + client-side filter to avoid introducing a new GET /:id route.

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { cancelTaskRun, cancelRunCascade } from '@/lib/cron/runner';
-import { conflict, notFound } from "@/lib/api/responses";
+import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 

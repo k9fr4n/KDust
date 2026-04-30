@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { moveProjectToFolder } from '@/lib/folder-ops';
 import { reloadScheduler } from '@/lib/cron/scheduler';
-import { apiError, badRequest } from "@/lib/api/responses";
+import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 // Move = mv FS dir + atomic DB tx. Multi-GB project dirs may take

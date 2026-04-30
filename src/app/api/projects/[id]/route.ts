@@ -8,7 +8,7 @@ import { CURRENT_PROJECT_COOKIE } from '@/lib/current-project';
 import { invalidateFsServer } from '@/lib/mcp/registry';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { renameProject } from '@/lib/folder-ops';
-import { apiError, badRequest, notFound } from "@/lib/api/responses";
+import { badRequest, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 

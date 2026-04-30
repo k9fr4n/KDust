@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Clock, ChevronUp, ChevronDown, MessageCircle } from 'lucide-react';
+import { Clock, ChevronUp, ChevronDown } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
 import { RunNowButton } from '@/components/RunNowButton';

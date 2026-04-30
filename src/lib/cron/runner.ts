@@ -4,15 +4,7 @@ import { getAppConfig } from '../config';
 
 import { releaseTaskRunnerServer } from '../mcp/registry';
 
-import { resolveGitPlatform } from '../git-platform';
-import {
-  buildGitLinks,
-  commitAll,
-  pushBranch,
-  checkoutExistingBranch,
-  mergeFastForward,
-  deleteRemoteBranch,
-} from '../git';
+import { buildGitLinks } from '../git';
 
 // Modular runner helpers (refactor: lib-modular-split, 2026-04-29).
 // Public symbols (AbortReason, cancelTaskRun, cancelRunCascade,
@@ -30,6 +22,7 @@ import { runSetupMcp } from './runner/phases/setup-mcp';
 import { runAgent } from './runner/phases/run-agent';
 import { runMeasureDiff } from './runner/phases/measure-diff';
 import { guardLargeDiff } from './runner/phases/guard-large-diff';
+import { runCommitAndPush } from './runner/phases/commit-and-push';
 import { buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import {
@@ -490,244 +483,44 @@ export async function runTask(
       projectFsPath,
     });
 
-    // [8] Commit + push ------------------------------------------------------
-    await setPhase('committing', `Committing ${filesChanged} file(s)`);
-    const commitMsg =
-      `chore(${policy.branchPrefix}): ${job.name}\n\n` +
-      `Automated by KDust cron "${job.name}".\n` +
-      `Agent: ${job.agentName ?? job.agentSId}\n` +
-      `Base: origin/${policy.baseBranch}\n` +
-      `Files: ${filesChanged} | +${linesAdded} / -${linesRemoved}`;
-    commitSha = await commitAll(projectFsPath, commitMsg, 'KDust Bot', 'kdust-bot@ecritel.net');
-    if (!commitSha) throw new Error('commitAll returned null despite diff being non-empty');
-    console.log(`[cron] commit ${commitSha.slice(0, 8)}`);
-
-    // Tracks whether step [8] actually pushed to origin. Drives:
-    //   - step [8b] PR opening (no point opening a PR for a branch
-    //     that doesn't exist on origin)
-    //   - step [8c] B3 fallback-push behaviour (we may still need
-    //     to push if the merge-back fails)
-    let pushedToOrigin = false;
-    if (!job.dryRun) {
-      // Non-null assertion: we only reach this block via the
-      // pushEnabled=true path (prompt-only short-circuit at [5b]
-      // returns early), so `branch` was assigned at step [3].
-      if (!branch) throw new Error('internal: branch is null at push step');
-      if (protectedList.includes(branch)) {
-        throw new Error(`aborting push: target branch "${branch}" is protected`);
-      }
-      if (opts?.skipChildPush) {
-        // B3 will FF-merge our work into the orchestrator's branch
-        // and push only that, keeping origin tidy. Local branch
-        // stays for the merge step. Franck 2026-04-25.
-        console.log(
-          `[cron] skipChildPush=true, deferring push to B3 merge-back ` +
-            `(branch="${branch}" stays local for now)`,
-        );
-      } else {
-        await setPhase('pushing', `git push origin ${branch}`);
-        const push = await pushBranch(projectFsPath, branch, job.branchMode === 'stable');
-        if (!push.ok) throw new Error(`push failed: ${push.error}\n${push.output}`);
-        pushedToOrigin = true;
-        console.log(`[cron] pushed ${branch}`);
-      }
-    } else {
-      console.log(`[cron] dryRun=true, skipping push`);
-    }
-
-    // [8b] Auto-open PR/MR (Phase 2, Franck 2026-04-19 22:49) -----------------
-    // Only when the push actually happened (i.e. not dry-run) and the
-    // parent Project has autoOpenPR=true with valid platform config.
-    // Failure here never fails the run \u2014 the branch is already
-    // pushed; worst case prState='failed' and the user opens the PR
-    // manually via the Teams link.
-    let prUrl: string | null = null;
-    let prNumber: number | null = null;
-    let prState: string | null = null;
-    // Only attempt PR auto-open when we ACTUALLY pushed the branch.
-    // skipChildPush=true means the branch is local-only at this
-    // point; opening a PR against a non-existent remote branch
-    // would be a 422 from the platform anyway. Franck 2026-04-25.
-    if (!job.dryRun && branch && pushedToOrigin) {
-      const platformTarget = project.prTargetBranch ?? policy.baseBranch;
-      const resolved = resolveGitPlatform({
-        gitUrl: project.gitUrl,
-        platform: project.platform,
-        platformApiUrl: project.platformApiUrl,
-        platformTokenRef: project.platformTokenRef,
-        remoteProjectRef: project.remoteProjectRef,
-        autoOpenPR: project.autoOpenPR,
-      });
-      if (resolved.ok) {
-        await setPhase('pr', `opening ${resolved.platform === 'github' ? 'pull request' : 'merge request'}`);
-        const reviewers = (project.prRequiredReviewers ?? '')
-          .split(',').map((s) => s.trim()).filter(Boolean);
-        const labels = (project.prLabels ?? '')
-          .split(',').map((s) => s.trim()).filter(Boolean);
-        const prBody =
-          `Automated by KDust task **${job.name}**.\n\n` +
-          `**Diff:** ${filesChanged} file(s), +${linesAdded} / -${linesRemoved} lines\n` +
-          `**Commit:** \`${commitSha?.slice(0, 12) ?? 'n/a'}\`\n` +
-          `**Base:** \`${platformTarget}\`\n` +
-          `**KDust run:** ${process.env.KDUST_PUBLIC_URL ? `${process.env.KDUST_PUBLIC_URL}/run/${run.id}` : `run ${run.id}`}\n\n` +
-          `---\n\n` +
-          `**Agent summary**\n\n${agentText.slice(0, 2000)}${agentText.length > 2000 ? '\n\n\u2026 (truncated)' : ''}`;
-        const r = await resolved.adapter.openPullRequest({
-          head: branch,
-          base: platformTarget,
-          title: `[KDust] ${job.name}`,
-          body: prBody,
-          draft: true,
-          reviewers,
-          labels,
-        });
-        if (r.ok) {
-          prUrl = r.url;
-          prNumber = r.number;
-          prState = r.state;
-          console.log(`[cron] opened ${resolved.platform} PR #${r.number} ${r.url}`);
-        } else {
-          prState = 'failed';
-          console.warn(`[cron] PR open failed (${resolved.platform}): ${r.error}`);
-        }
-      } else {
-        // Not actionable as a run failure \u2014 just trace for later.
-        console.log(`[cron] PR auto-open skipped: ${resolved.reason}`);
-      }
-    }
-
-    // [8c] B3 auto-merge-back into parent (Franck 2026-04-24 20:47) --------
-    // When this run was dispatched via run_task (sync path) with a
-    // postMergeTargetBranch, we now fast-forward-merge this run's
-    // branch into the orchestrator's branch and push it. Running
-    // BEFORE the concurrency lock is released guarantees no sibling
-    // run can grab the worktree mid-merge.
-    //
-    // Preconditions for B3 to fire:
-    //   - caller requested it (opts.postMergeTargetBranch)
-    //   - we actually produced commits on a pushed branch
-    //   - not a dry-run (dry-run = no branch, no push, nothing to merge)
-    //   - target differs from this run's branch (no-op otherwise)
-    //
-    // Edge cases explicitly handled:
-    //   - no commits     → status 'skipped', nothing to do
-    //   - non-FF history → status 'refused', don't force, don't 3-way merge
-    //   - push fails     → status 'failed', log details for the UI
-    //
-    // In all non-ok cases the run itself remains 'success' — the
-    // child's own work was valid; only the upstream propagation
-    // failed and the orchestrator is expected to react (abort,
-    // retry, merge manually).
-    let mergeBackStatus: 'skipped' | 'ff' | 'refused' | 'failed' | null = null;
-    let mergeBackDetails: string | null = null;
-    const mergeTarget = opts?.postMergeTargetBranch?.trim();
-    if (mergeTarget && !job.dryRun && branch && project) {
-      if (!commitSha) {
-        mergeBackStatus = 'skipped';
-        mergeBackDetails = 'child produced no commits; nothing to merge back';
-        console.log(`[cron] B3: ${mergeBackDetails}`);
-      } else if (mergeTarget === branch) {
-        mergeBackStatus = 'skipped';
-        mergeBackDetails = `merge target equals run branch (${branch}); no-op`;
-        console.log(`[cron] B3: ${mergeBackDetails}`);
-      } else if (protectedList.includes(mergeTarget)) {
-        // Defence-in-depth: refuse to fast-forward-push over a
-        // protected branch even if the caller asked us to. The
-        // orchestrator should use the PR flow for those.
-        mergeBackStatus = 'refused';
-        mergeBackDetails = `merge target "${mergeTarget}" is protected; B3 will not push`;
-        console.warn(`[cron] B3: ${mergeBackDetails}`);
-      } else {
-        await setPhase('merging', `FF-merging ${branch} into ${mergeTarget}`);
-        console.log(`[cron] B3: checkout ${mergeTarget} + ff-merge ${branch}`);
-        const co = await checkoutExistingBranch(projectFsPath, mergeTarget);
-        if (!co.ok) {
-          mergeBackStatus = 'failed';
-          mergeBackDetails = `checkout ${mergeTarget} failed: ${co.error}\n${co.output}`;
-          console.warn(`[cron] B3: ${mergeBackDetails}`);
-        } else {
-          const merge = await mergeFastForward(projectFsPath, branch);
-          if (!merge.ok) {
-            mergeBackStatus = 'refused';
-            mergeBackDetails =
-              `FF-only merge refused (non-linear history or divergent ` +
-              `commits). Orchestrator must reconcile manually. Git output:\n${merge.output}`;
-            console.warn(`[cron] B3: ${mergeBackDetails}`);
-            // Fallback-push the child branch when skipChildPush
-            // was active so the work isn't stranded local-only.
-            // Without this, a B3 refusal would lose the run's
-            // commits to origin entirely \u2014 they'd only exist on
-            // the worker's filesystem. Franck 2026-04-25.
-            if (opts?.skipChildPush && !pushedToOrigin) {
-              console.warn(
-                `[cron] B3 refused: fallback-pushing child branch ` +
-                  `"${branch}" to preserve work on origin`,
-              );
-              const fallback = await pushBranch(
-                projectFsPath,
-                branch,
-                job.branchMode === 'stable',
-              );
-              if (fallback.ok) {
-                pushedToOrigin = true;
-                mergeBackDetails +=
-                  `\n\nFallback: child branch "${branch}" pushed to origin so the work is recoverable.`;
-              } else {
-                mergeBackDetails +=
-                  `\n\nFallback push ALSO failed: ${fallback.error}. Work is local-only on the worker.`;
-              }
-            }
-          } else {
-            const pushBack = await pushBranch(projectFsPath, mergeTarget, false);
-            if (!pushBack.ok) {
-              mergeBackStatus = 'failed';
-              mergeBackDetails = `push ${mergeTarget} failed: ${pushBack.error}\n${pushBack.output}`;
-              console.warn(`[cron] B3: ${mergeBackDetails}`);
-            } else {
-              mergeBackStatus = 'ff';
-              mergeBackDetails = `fast-forward merged ${branch} into ${mergeTarget} and pushed`;
-              console.log(`[cron] B3: ${mergeBackDetails}`);
-              // From the run's POV, its commits ARE on origin now
-              // (via mergeTarget). Useful state for downstream
-              // logic like Teams cards that report "pushed yes/no".
-              // The child branch itself is still local-only when
-              // skipChildPush was active \u2014 that's the whole point
-              // (keeping origin tidy).
-              pushedToOrigin = true;
-
-              // Orchestrator-chain cleanup (Franck 2026-04-25):
-              // when this run was part of an auto-inherit chain
-              // (skipChildPush=true), its own branch may have been
-              // auto-pushed to origin by the resolveB2B3 helper of
-              // a downstream child needing a base ref. Now that
-              // the work has reached origin via mergeTarget, that
-              // transit branch is a redundant ref. Delete it so a
-              // 3-level orchestration shows ONE branch on origin
-              // instead of N. Idempotent: noop if the branch was
-              // never pushed (the common leaf-worker case).
-              if (opts?.skipChildPush) {
-                const cleanup = await deleteRemoteBranch(projectFsPath, branch);
-                if (cleanup.ok) {
-                  if (!cleanup.error) {
-                    console.log(
-                      `[cron] B3 cleanup: deleted origin/${branch} (transit branch, work reached origin via ${mergeTarget})`,
-                    );
-                    mergeBackDetails += `; cleaned up origin/${branch}`;
-                  } else {
-                    // soft-success noop branch (was never pushed)
-                    console.log(`[cron] B3 cleanup: ${cleanup.error}`);
-                  }
-                } else {
-                  console.warn(
-                    `[cron] B3 cleanup: failed to delete origin/${branch}: ${cleanup.error}`,
-                  );
-                }
-              }
-            }
-          }
-        }
-      }
-    }
+    // [8] Commit + push (incl. [8b] PR auto-open + [8c] B3 merge-back)
+    // \u2014 extracted to ./runner/phases/commit-and-push.ts (ADR-0006
+    // Step I). The most behaviourally complex extraction: 3 conditional
+    // paths (dryRun, skipChildPush, postMergeTargetBranch), B3 fallback
+    // push, B3 transit-branch cleanup. See module header for the full
+    // invariant list. Non-null assertion on `branch`: we only reach
+    // here via pushEnabled=true (prompt-only short-circuited at [5]).
+    if (!branch) throw new Error('internal: branch is null at push step');
+    const pushResult = await runCommitAndPush({
+      projectFsPath,
+      project,
+      policy,
+      job: {
+        name: job.name,
+        agentSId: job.agentSId,
+        agentName: job.agentName,
+        dryRun: job.dryRun,
+        branchMode: job.branchMode,
+      },
+      branch,
+      protectedList,
+      runId: run.id,
+      agentText,
+      filesChanged,
+      linesAdded,
+      linesRemoved,
+      opts: {
+        skipChildPush: opts?.skipChildPush,
+        postMergeTargetBranch: opts?.postMergeTargetBranch,
+      },
+      setPhase,
+    });
+    commitSha = pushResult.commitSha;
+    const prUrl = pushResult.prUrl;
+    const prNumber = pushResult.prNumber;
+    const prState = pushResult.prState;
+    const mergeBackStatus = pushResult.mergeBackStatus;
+    const mergeBackDetails = pushResult.mergeBackDetails;
 
     // [9a] Orchestrator failure propagation (Franck 2026-04-24 22:10).
     // If this task is an orchestrator (taskRunnerEnabled) and one

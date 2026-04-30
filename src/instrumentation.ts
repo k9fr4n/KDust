@@ -29,26 +29,47 @@ export async function register() {
     //
     // Scope: node runtime only. The instrumentation hook fires once
     // per worker so we add the listener at most once.
+    //
+    // 2026-04-30 fix (Franck): Node delivers `unhandledRejection` to
+    // EVERY registered listener. Next.js installs its own listener
+    // very early in the dev server (the one that prints the scary
+    // `⨯ unhandledRejection:` line in red). So our dampener was
+    // demoting the message to a [warn], but Next's listener kept
+    // firing in parallel and re-logging at [error] — exactly the
+    // duplicate noise we observe in the buffer. We can't catch the
+    // rejection at the source either: it originates in undici's
+    // internal Response-body reader which the Dust SDK never awaits.
+    //
+    // Solution: purge any existing `unhandledRejection` listeners
+    // before installing ours, so we become the single source of
+    // truth. For non-benign rejections we re-emit a log line that
+    // mimics Next's `⨯ unhandledRejection:` prefix so existing
+    // dashboards / log greps keep working. The dev-overlay error
+    // path is unaffected because that runs through React's error
+    // boundary, not through `process.on('unhandledRejection')`.
+    process.removeAllListeners('unhandledRejection');
     process.on('unhandledRejection', (reason: unknown) => {
       const r = reason as { name?: string; code?: string; message?: string; cause?: { code?: string; syscall?: string } } | null;
       const isTerminated =
         r?.name === 'TypeError' && /terminated/i.test(r?.message ?? '');
       const isFetchTimeout =
         r?.cause?.code === 'ETIMEDOUT' || r?.code === 'ETIMEDOUT';
+      const isSocketClosed =
+        r?.cause?.code === 'UND_ERR_SOCKET' || r?.code === 'UND_ERR_SOCKET';
       const isAbort = r?.name === 'AbortError' || r?.code === 'ABORT_ERR';
-      if (isTerminated || isFetchTimeout || isAbort) {
+      if (isTerminated || isFetchTimeout || isSocketClosed || isAbort) {
         console.warn(
           `[instrumentation] swallowed benign SSE rejection: ${r?.name ?? 'UnknownError'} ` +
             `(${r?.message ?? 'no message'}, cause=${r?.cause?.code ?? '-'})`,
         );
         return;
       }
-      // Non-benign: re-log the original reason so existing pino/
-      // console pipelines still capture the stack. We intentionally
-      // DO NOT re-throw here: Next.js already has its own unhandled
-      // rejection path that would turn this into a 500 on the next
-      // request; surfacing the log is enough for observability.
-      console.error('[instrumentation] unhandledRejection:', reason);
+      // Non-benign: mimic Next's prefix so the line is visually
+      // identical to what operators are used to seeing — observability
+      // preserved, duplication gone. We intentionally DO NOT re-throw:
+      // surfacing the log is enough and avoids killing in-flight runs
+      // under `--unhandled-rejections=throw`.
+      console.error('⨯ unhandledRejection:', reason);
     });
 
     // Folder hierarchy migration (Franck 2026-04-27, Phase 1).

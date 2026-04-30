@@ -44,7 +44,7 @@ const PHASES: { key: RunPhase; label: string }[] = [
   { key: 'done',       label: 'Done' },
 ];
 
-export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initialRun: Run }) {
+export function TaskLiveStatus({ taskId, initialRun }: { taskId: string; initialRun: Run }) {
   const router = useRouter();
   const [run, setRun] = useState<Run>(initialRun);
   const [cancelling, setCancelling] = useState(false);
@@ -64,7 +64,7 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`/api/task/${cronId}`, { cache: 'no-store' });
+        const r = await fetch(`/api/task/${taskId}`, { cache: 'no-store' });
         if (!r.ok) return;
         const data = await r.json();
         const latest: Run | undefined = data?.task?.runs?.find((x: Run) => x.id === run.id) ?? data?.task?.runs?.[0];
@@ -76,7 +76,7 @@ export function TaskLiveStatus({ cronId, initialRun }: { cronId: string; initial
     };
     const id = setInterval(tick, 1500);
     return () => { cancelled = true; clearInterval(id); };
-  }, [cronId, run.id, run.status, router]);
+  }, [taskId, run.id, run.status, router]);
 
   // Tick local clock so "Xs elapsed" updates smoothly.
   useEffect(() => {

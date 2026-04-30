@@ -20,10 +20,10 @@ import { UI_FLASH_MS, UI_SAVE_RESET_MS } from '@/lib/constants';
  * already-loaded task row. We fetch /api/projects lazily on first open.
  */
 export function RunNowButton({
-  cronId,
+  taskId,
   isGeneric = false,
 }: {
-  cronId: string;
+  taskId: string;
   isGeneric?: boolean;
 }) {
   const [state, setState] = useState<'idle' | 'running' | 'ok' | 'ko'>('idle');
@@ -54,7 +54,7 @@ export function RunNowButton({
     try {
       await apiSend(
         'POST',
-        `/api/task/${cronId}/run`,
+        `/api/task/${taskId}/run`,
         projectOverride ? { project: projectOverride } : undefined,
       );
       setState('ok');

@@ -512,7 +512,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                     )}
                   </td>
                   <td className="text-right">
-                    <RunNowButton cronId={c.id} isGeneric={c.projectPath === null} />
+                    <RunNowButton taskId={c.id} isGeneric={c.projectPath === null} />
                   </td>
                 </ClickableTaskRow>
               );

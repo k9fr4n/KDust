@@ -276,15 +276,15 @@ export function slugifyRef(s: string): string {
     .slice(0, 80);
 }
 
-/** Compose a branch name according to the cron's branchMode. */
+/** Compose a branch name according to the task's branchMode. */
 export function composeBranchName(
   mode: 'timestamped' | 'stable',
   prefix: string,
-  cronName: string,
+  taskName: string,
   now: Date = new Date(),
 ): string {
   const pfx = slugifyRef(prefix) || 'kdust';
-  const slug = slugifyRef(cronName) || 'job';
+  const slug = slugifyRef(taskName) || 'job';
   if (mode === 'stable') return `${pfx}/${slug}`;
   const ts = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}${String(
     now.getUTCDate(),

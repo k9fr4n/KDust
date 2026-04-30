@@ -122,7 +122,7 @@ export function RunCard({ run }: { run: RunCardData }) {
         <div className="flex items-center gap-2 pr-20">
           {pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
           <span className="text-sm font-medium truncate flex-1">
-            {run.task?.name ?? '(deleted cron)'}
+            {run.task?.name ?? '(deleted task)'}
           </span>
           <span
             className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs shrink-0 ${statusCls}`}

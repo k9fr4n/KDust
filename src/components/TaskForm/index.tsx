@@ -32,13 +32,13 @@ export type { CronFormValues } from './state';
 
 export function TaskForm({
   initial,
-  cronId,
+  taskId,
 }: {
   initial?: Partial<CronFormValues>;
-  cronId?: string; // when set => edit mode (PATCH), otherwise create mode (POST)
+  taskId?: string; // when set => edit mode (PATCH), otherwise create mode (POST)
 }) {
   const router = useRouter();
-  const isEdit = Boolean(cronId);
+  const isEdit = Boolean(taskId);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -83,7 +83,7 @@ export function TaskForm({
     setErr(null);
     setLoading(true);
     const agentName = agents.find((a) => a.sId === form.agentSId)?.name;
-    const url = isEdit ? `/api/task/${cronId}` : '/api/task';
+    const url = isEdit ? `/api/task/${taskId}` : '/api/task';
     const method = isEdit ? 'PATCH' : 'POST';
     const res = await fetch(url, {
       method,
@@ -174,7 +174,7 @@ export function TaskForm({
     }
 
     setLoading(false);
-    router.push(isEdit ? `/task/${cronId}` : '/task');
+    router.push(isEdit ? `/task/${taskId}` : '/task');
     router.refresh();
   };
 
@@ -199,7 +199,7 @@ export function TaskForm({
       <OrchestrationSection
         form={form}
         setForm={setForm}
-        cronId={cronId}
+        taskId={taskId}
         isEdit={isEdit}
         pendingBindings={pendingBindings}
         setPendingBindings={setPendingBindings}
@@ -222,7 +222,7 @@ export function TaskForm({
         {isEdit && (
           <button
             type="button"
-            onClick={() => router.push(`/task/${cronId}`)}
+            onClick={() => router.push(`/task/${taskId}`)}
             className="inline-flex items-center justify-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             Cancel

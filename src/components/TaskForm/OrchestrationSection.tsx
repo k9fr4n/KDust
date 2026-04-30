@@ -12,12 +12,12 @@ import type { SectionProps } from './state';
 export function OrchestrationSection({
   form,
   setForm,
-  cronId,
+  taskId,
   isEdit,
   pendingBindings,
   setPendingBindings,
 }: SectionProps & {
-  cronId: string | undefined;
+  taskId: string | undefined;
   isEdit: boolean;
   pendingBindings: BindingDraft[];
   setPendingBindings: React.Dispatch<React.SetStateAction<BindingDraft[]>>;
@@ -91,8 +91,8 @@ export function OrchestrationSection({
                              task row is created (see submit() above)
             When command-runner is off we swap in a hint so the user
             doesn't wonder where the bindings went. */}
-        {form.commandRunnerEnabled && isEdit && cronId && (
-          <TaskSecretBindings taskId={cronId} />
+        {form.commandRunnerEnabled && isEdit && taskId && (
+          <TaskSecretBindings taskId={taskId} />
         )}
         {form.commandRunnerEnabled && !isEdit && (
           <TaskSecretBindings

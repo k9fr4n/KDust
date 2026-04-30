@@ -330,7 +330,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
       {/* Running: live view */}
       {run.status === 'running' && run.task ? (
         <TaskLiveStatus
-          cronId={run.task.id}
+          taskId={run.task.id}
           initialRun={{
             id: run.id,
             status: run.status,

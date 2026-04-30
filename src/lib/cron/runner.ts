@@ -12,8 +12,6 @@ import { resolveGitPlatform } from '../git-platform';
 import {
   parseGitRepo,
   buildGitLinks,
-  composeBranchName,
-  checkoutWorkingBranch,
   diffStatFromHead,
   commitAll,
   pushBranch,
@@ -34,6 +32,7 @@ import {
 import type { RunPhase } from './phases';
 import { runPreflight } from './runner/phases/preflight';
 import { runPreSync } from './runner/phases/pre-sync';
+import { runBranchSetup } from './runner/phases/branch-setup';
 import { buildAutomationPrompt, buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import { resolveRunTimeoutMs } from './runner/timeout';
@@ -409,46 +408,20 @@ export async function runTask(
     // run_task(project=...). The automation pipeline below handles
     // every task uniformly.
 
-    // [3] Branch setup --------------------------------------------------------
-    // Skipped when pushEnabled=false: no commit/push \u2192 no need for a
-    // dedicated work branch. Agent runs on the freshly-reset base
-    // branch. Any files it writes stay uncommitted in the working
-    // tree (next task run will reset them on [2]).
-    // Note: protectedList is declared at function scope because step
-    // [8] (push) also consults it regardless of this branch creation.
-    const protectedList = policy.protectedBranches
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (job.pushEnabled) {
-      branch = composeBranchName(
-        (job.branchMode === 'stable' ? 'stable' : 'timestamped') as 'stable' | 'timestamped',
-        policy.branchPrefix,
-        job.name,
-      );
-      if (protectedList.includes(branch) || protectedList.includes(policy.baseBranch) && branch === policy.baseBranch) {
-        throw new Error(`refusing to work on protected branch "${branch}"`);
-      }
-      await setPhase('branching', `Creating work branch ${branch}`);
-      const co = await checkoutWorkingBranch(projectFsPath, branch);
-      if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
-      console.log(`[cron] branch=${branch}`);
-      // Persist the working branch IMMEDIATELY (Franck 2026-04-25
-      // 11:14). Critical for B2 auto-inherit chaining: when this
-      // run is an orchestrator that will dispatch children, the
-      // MCP run_task layer reads `parentRun.branch` from DB to
-      // decide whether to auto-inherit. Before this update, the
-      // branch was only written at terminal points (no-op /
-      // success / failed) \u2014 which meant children dispatched MID-
-      // run saw parentBranch=null in the DB and fell back to
-      // branching from main, breaking the entire orchestration
-      // chain. Symptom: orchestrator branch stays at base SHA,
-      // children's commits land on independent fan-out branches,
-      // quality-gate runs on an empty tree.
-      await db.taskRun.update({ where: { id: run.id }, data: { branch } });
-    } else {
-      console.log(`[cron] pushEnabled=false \u2192 skipping branch setup, running on ${policy.baseBranch}`);
-    }
+    // [3] Branch setup \u2014 extracted to ./runner/phases/branch-setup.ts
+    // (ADR-0006 Step D). Builds protectedList (also consumed by [8])
+    // and, when pushEnabled=true, composes + checks out the work
+    // branch and persists it on TaskRun IMMEDIATELY (B2 invariant,
+    // see module header for the 2026-04-25 incident analysis).
+    const branchSetup = await runBranchSetup({
+      projectFsPath,
+      policy,
+      job: { name: job.name, pushEnabled: job.pushEnabled, branchMode: job.branchMode },
+      runId: run.id,
+      setPhase,
+    });
+    branch = branchSetup.branch;
+    const protectedList = branchSetup.protectedList;
 
     // [4] MCP fs -------------------------------------------------------------
     await setPhase('mcp', 'Registering fs-cli MCP server');

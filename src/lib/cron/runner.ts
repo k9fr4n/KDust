@@ -29,6 +29,7 @@ import { runBranchSetup } from './runner/phases/branch-setup';
 import { runSetupMcp } from './runner/phases/setup-mcp';
 import { runAgent } from './runner/phases/run-agent';
 import { runMeasureDiff } from './runner/phases/measure-diff';
+import { guardLargeDiff } from './runner/phases/guard-large-diff';
 import { buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import {
@@ -478,13 +479,16 @@ export async function runTask(
     // diff.files is consumed by phase [10]'s success Teams card (file list).
     const diff = diffResult.diff;
 
-    // [7] Guard-rail: diff too large ----------------------------------------
-    const totalLines = linesAdded + linesRemoved;
-    if (totalLines > job.maxDiffLines) {
-      throw new Error(
-        `diff too large: +${linesAdded}/-${linesRemoved} over ${filesChanged} file(s) exceeds maxDiffLines=${job.maxDiffLines}. Refusing to commit/push. Review the agent's work manually in /projects/${projectFsPath}.`,
-      );
-    }
+    // [7] Guard-rail \u2014 extracted to ./runner/phases/guard-large-diff.ts
+    // (ADR-0006 Step H). Throws when the diff exceeds job.maxDiffLines;
+    // the outer catch turns it into a 'failed' TaskRun row.
+    guardLargeDiff({
+      filesChanged,
+      linesAdded,
+      linesRemoved,
+      maxDiffLines: job.maxDiffLines,
+      projectFsPath,
+    });
 
     // [8] Commit + push ------------------------------------------------------
     await setPhase('committing', `Committing ${filesChanged} file(s)`);

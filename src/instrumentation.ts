@@ -121,6 +121,40 @@ export async function register() {
       );
     }
 
+    // Boot notification (Franck 2026-04-30). Sends a single Telegram
+    // message to AppConfig.defaultTelegramChatId so the operator
+    // knows when the container restarts (planned redeploy, OOM kill,
+    // host reboot, etc.). Silent no-op if the token or chat_id is
+    // missing — same UX as run-completion notifications. We post
+    // AFTER the scheduler + bridge boot so the message implies "the
+    // whole stack is up", and we never throw: a notification glitch
+    // must not abort the instrumentation hook.
+    try {
+      const { postToTelegram } = await import('./lib/telegram');
+      const { getAppConfig } = await import('./lib/config');
+      const cfg = await getAppConfig();
+      const chatId = cfg.defaultTelegramChatId;
+      if (chatId && process.env.KDUST_TELEGRAM_BOT_TOKEN) {
+        const facts = [
+          { name: 'host', value: process.env.HOSTNAME ?? 'unknown' },
+          { name: 'pid', value: String(process.pid) },
+          { name: 'node', value: process.version },
+        ];
+        const sha = process.env.KDUST_GIT_SHA;
+        if (sha) facts.push({ name: 'git', value: sha.slice(0, 12) });
+        await postToTelegram(chatId, {
+          title: 'KDust started',
+          summary: `Container is up at ${new Date().toISOString()}.`,
+          status: 'success',
+          facts,
+        });
+      }
+    } catch (e) {
+      console.warn(
+        `[instrumentation] boot notification failed: ${(e as Error).message}`,
+      );
+    }
+
     // Note: a one-shot cleanup of legacy mandatory audit tasks used
     // to live here (Franck 2026-04-22 audit nuke). It was removed the
     // same day because `prisma db push --accept-data-loss` in

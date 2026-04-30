@@ -15,9 +15,17 @@ function run(cmd: string, args: string[]) {
   });
 }
 
+// Discriminated union: a row is either a successful entry (full
+// stat fields) or an error wrapper (no path was readable). Keeping
+// the shapes union-typed avoids `any[]` while letting the catch
+// branch keep its single-error fallback semantics.
+type SshDebugFile =
+  | { name: string; mode: string; size: number; uid: number; gid: number }
+  | { error: string };
+
 export async function GET(req: Request) {
   const host = new URL(req.url).searchParams.get('host') ?? 'github.com';
-  let files: any[] = [];
+  let files: SshDebugFile[] = [];
   try {
     const sshDir = process.env.HOME ? `${process.env.HOME}/.ssh` : '/home/node/.ssh';
     const entries = await readdir(sshDir);

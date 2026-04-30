@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { errCode } from '../errors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import type { ZodRawShape } from 'zod';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import { getDustClient } from '../dust/client';
 import { allFsTools } from './fs-tools';
@@ -75,7 +76,11 @@ export async function startFsServer(projectName: string): Promise<FsServerHandle
       tool.name,
       {
         description: `${tool.description} (project root: ${root})`,
-        inputSchema: tool.schema.shape as any,
+        // The SDK accepts a ZodRawShape (`{ key: ZodType }` map). Our
+        // defineTool factory keeps `schema` as a generic `ZodTypeAny`
+        // for inference flexibility, so we type-assert to ZodRawShape
+        // here (each tool actually uses z.object(...) under the hood).
+        inputSchema: tool.schema.shape as ZodRawShape,
       },
       // Layer-1 observability (Franck 2026-04-28): wrap every tool
       // execution to emit a normalized `[mcp]` log line with

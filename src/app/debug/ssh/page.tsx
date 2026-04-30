@@ -2,16 +2,26 @@
 import { useState } from 'react';
 import { Button } from '@/components/Button';
 
+// Mirrors the JSON returned by GET /api/ssh-debug. Keep loose around
+// `files` because the API returns a discriminated union (file row vs
+// `{error}` wrapper) and we render through JSON.stringify only.
+type SshDebugResponse = {
+  who: string;
+  env: Record<string, string | null | undefined>;
+  files: unknown;
+  ssh: { code: number; out: string };
+};
+
 export default function SshDebugPage() {
   const [host, setHost] = useState('github.com');
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<SshDebugResponse | null>(null);
 
   const run = async () => {
     setLoading(true);
     setData(null);
     const r = await fetch(`/api/ssh-debug?host=${encodeURIComponent(host)}`);
-    setData(await r.json());
+    setData((await r.json()) as SshDebugResponse);
     setLoading(false);
   };
 
@@ -63,10 +73,10 @@ export default function SshDebugPage() {
           </section>
           <section>
             <h2 className="font-semibold text-sm">
-              ssh -vT git@{host} (exit {data.ssh?.code})
+              ssh -vT git@{host} (exit {data.ssh.code})
             </h2>
             <pre className="text-xs bg-slate-100 dark:bg-slate-900 rounded p-2 overflow-x-auto whitespace-pre-wrap">
-              {data.ssh?.out}
+              {data.ssh.out}
             </pre>
           </section>
         </div>

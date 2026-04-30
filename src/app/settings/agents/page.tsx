@@ -63,7 +63,7 @@ function AgentAvatar({ agent, isDefault }: { agent: Agent; isDefault: boolean })
   }
   return (
     <div className="shrink-0">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+      { }
       <img
         key={agent.sId}
         src={agent.pictureUrl}

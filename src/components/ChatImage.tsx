@@ -72,7 +72,7 @@ export function ChatImage({ src, alt, title }: Props) {
         className="inline-block my-2 max-w-full group relative align-top"
         title={title ?? alt ?? 'Open image'}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
+        { }
         <img
           src={src}
           alt={alt ?? ''}
@@ -142,7 +142,7 @@ export function ChatImage({ src, alt, title }: Props) {
               may want to right-click > Save As). Click on the
               surrounding padding still closes via the backdrop. */}
           <div className="flex-1 flex items-center justify-center px-4 pb-4 overflow-auto">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+            { }
             <img
               src={src}
               alt={alt ?? ''}

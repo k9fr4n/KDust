@@ -1222,9 +1222,9 @@ interface CommandSpec {
 }
 
 // Forward declaration so the /help spec can read the table.
-let COMMAND_SPECS: CommandSpec[];
-
-COMMAND_SPECS = [
+// Two-phase declaration is unnecessary — the literal is fully self-
+// contained. Kept as `const` for prefer-const conformance.
+const COMMAND_SPECS: CommandSpec[] = [
   {
     names: ['/new'],
     description: 'start a fresh conversation',

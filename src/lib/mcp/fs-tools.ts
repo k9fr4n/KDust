@@ -193,7 +193,7 @@ export const searchFiles = defineTool({
       });
       if (files.length === 0) return toText(`No files found for: ${args.pattern}`);
 
-      let results = files.map((f) => ({
+      const results = files.map((f) => ({
         rel: f,
         abs: path.resolve(cwd, f),
         mtime: 0,

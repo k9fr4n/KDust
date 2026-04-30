@@ -122,7 +122,7 @@ export async function cloneOrPull(
     }
 
     // Happy path: the requested branch exists upstream.
-    let r = await runGit(['clone', '--branch', branch, '--single-branch', gitUrl, target]);
+    const r = await runGit(['clone', '--branch', branch, '--single-branch', gitUrl, target]);
     let combined = r.out;
 
     // Tolerate empty / freshly-created remotes (no branch yet) and repos
@@ -219,7 +219,7 @@ export async function cloneOrPull(
 /** Parse a git remote URL into host/path info. Supports ssh, https, and the
  *  `git@host:path.git` shorthand. Unknown hosts degrade gracefully. */
 export function parseGitRepo(gitUrl: string): GitRepo {
-  let m =
+  const m =
     gitUrl.match(/^git@([^:]+):(.+?)(?:\.git)?\/?$/) ||
     gitUrl.match(/^ssh:\/\/git@([^/]+)\/(.+?)(?:\.git)?\/?$/) ||
     gitUrl.match(/^https?:\/\/(?:[^@/]+@)?([^/]+)\/(.+?)(?:\.git)?\/?$/);

@@ -802,7 +802,7 @@ function AgentsSection({
         ) : current ? (
           <span className="inline-flex items-center gap-2 px-2 py-1 rounded bg-brand-50 dark:bg-brand-950/30 border border-brand-300 dark:border-brand-800">
             {current.pictureUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
+               
               <img src={current.pictureUrl} alt="" className="w-4 h-4 rounded-full" />
             )}
             <span className="font-medium">{current.name}</span>

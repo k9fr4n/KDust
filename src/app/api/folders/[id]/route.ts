@@ -23,17 +23,23 @@ export const maxDuration = 90;
  *   400 invalid body / unknown id
  *   409 sibling name collision OR active run on a child project
  */
-const RenameInput = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, 'name must match [a-zA-Z0-9._-]+'),
-});
+const NAME_RE = /^[a-zA-Z0-9._-]+$/;
+const NAME_HINT =
+  'folder name must be 1-64 chars, letters/digits/. _ - only (no spaces, slashes or accents)';
+
+const RenameInput = z.object({ name: z.string() });
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const parsed = RenameInput.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return badRequest(parsed.error.format());
+    return badRequest('invalid request body');
   }
-  const r = await renameFolder(id, parsed.data.name);
+  const name = parsed.data.name.trim();
+  if (name.length === 0) return badRequest('name is required');
+  if (name.length > 64) return badRequest('name is too long (max 64 chars)');
+  if (!NAME_RE.test(name)) return badRequest(NAME_HINT);
+  const r = await renameFolder(id, name);
   if (!r.ok) {
     const status =
       r.reason === 'invalid_target' ? 404

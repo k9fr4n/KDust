@@ -2,11 +2,7 @@ import { db } from '../db';
 import type { TeamsCardFact } from '../teams';
 import { getAppConfig } from '../config';
 import { createDustConversation, streamAgentReply } from '../dust/chat';
-import {
-  getFsServerId,
-  getTaskRunnerServerId,
-  releaseTaskRunnerServer,
-} from '../mcp/registry';
+import { releaseTaskRunnerServer } from '../mcp/registry';
 
 import { resolveGitPlatform } from '../git-platform';
 import {
@@ -33,6 +29,7 @@ import type { RunPhase } from './phases';
 import { runPreflight } from './runner/phases/preflight';
 import { runPreSync } from './runner/phases/pre-sync';
 import { runBranchSetup } from './runner/phases/branch-setup';
+import { runSetupMcp } from './runner/phases/setup-mcp';
 import { buildAutomationPrompt, buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import { resolveRunTimeoutMs } from './runner/timeout';
@@ -423,46 +420,20 @@ export async function runTask(
     branch = branchSetup.branch;
     const protectedList = branchSetup.protectedList;
 
-    // [4] MCP fs -------------------------------------------------------------
-    await setPhase('mcp', 'Registering fs-cli MCP server');
-    let mcpServerIds: string[] | null = null;
-    try {
-      const id = await getFsServerId(projectFsPath);
-      mcpServerIds = [id];
-      console.log(`[cron] mcp serverId=${id}`);
-    } catch (e) {
-      console.warn(`[cron] MCP register failed: ${(e as Error).message} — running without fs tools`);
-    }
-    // Task-runner MCP (Franck 2026-04-20 22:58). Only attached when
-    // the task opts in via taskRunnerEnabled=true (the "orchestrator"
-    // flag). Grants the agent access to the run_task tool, which can
-    // dispatch sibling tasks in the same project sequentially. Bound
-    // to *this* run's id so run_task calls carry an unambiguous parent
-    // link without trusting the agent to pass it.
-    if (job.taskRunnerEnabled) {
-      try {
-        const trId = await getTaskRunnerServerId(run.id, projectFsPath);
-        mcpServerIds = [...(mcpServerIds ?? []), trId];
-        console.log(`[cron] task-runner serverId=${trId}`);
-      } catch (e) {
-        console.warn(`[cron] task-runner register failed: ${(e as Error).message}`);
-      }
-    }
-
-    // Command-runner MCP (Franck 2026-04-21 13:39). Opt-in per task
-    // via commandRunnerEnabled. Provides the `run_command` tool whose
-    // invocations are persisted in the `Command` table (audit trail,
-    // forensic, replayable in the UI). Released by the finally block.
-    if (job.commandRunnerEnabled) {
-      try {
-        const { getCommandRunnerServerId } = await import('../mcp/registry');
-        const crId = await getCommandRunnerServerId(run.id, projectFsPath);
-        mcpServerIds = [...(mcpServerIds ?? []), crId];
-        console.log(`[cron] command-runner serverId=${crId}`);
-      } catch (e) {
-        console.warn(`[cron] command-runner register failed: ${(e as Error).message}`);
-      }
-    }
+    // [4] MCP fs \u2014 extracted to ./runner/phases/setup-mcp.ts
+    // (ADR-0006 Step E). Registers fs-cli (always), task-runner
+    // (when taskRunnerEnabled), command-runner (when
+    // commandRunnerEnabled). Each registration's failure mode is
+    // identical to the legacy code: warn-and-continue, never abort.
+    const mcpServerIds = await runSetupMcp({
+      projectFsPath,
+      runId: run.id,
+      job: {
+        taskRunnerEnabled: job.taskRunnerEnabled,
+        commandRunnerEnabled: job.commandRunnerEnabled,
+      },
+      setPhase,
+    });
 
     // [5] Dust agent ---------------------------------------------------------
     await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);

@@ -752,6 +752,27 @@ function ProjectsPageInner() {
 /* -------------------------------------------------------------- */
 /*  Folder management panel                                       */
 /* -------------------------------------------------------------- */
+
+/**
+ * Best-effort stringifier for `{ error }` payloads returned by
+ * /api/folders. Most routes now return a string (#5 helpers); this
+ * keeps a graceful fallback for legacy zod `.format()` objects so
+ * the user never sees a bare "HTTP 400".
+ */
+function humanizeApiError(j: unknown, status: number): string {
+  if (j && typeof j === 'object' && 'error' in j) {
+    const e = (j as { error: unknown }).error;
+    if (typeof e === 'string') return e;
+    if (e && typeof e === 'object') {
+      try {
+        const flat = JSON.stringify(e);
+        if (flat && flat !== '{}') return flat;
+      } catch { /* ignore */ }
+    }
+  }
+  return `HTTP ${status}`;
+}
+
 function FoldersPanel({
   tree,
   onChanged,
@@ -781,10 +802,7 @@ function FoldersPanel({
       setNewL1('');
       await onChanged();
     } else {
-      setMsg({
-        kind: 'err',
-        text: `Create failed: ${typeof j.error === 'string' ? j.error : `HTTP ${r.status}`}`,
-      });
+      setMsg({ kind: 'err', text: `Create failed: ${humanizeApiError(j, r.status)}` });
     }
   };
 
@@ -803,10 +821,7 @@ function FoldersPanel({
       setNewL2For(null);
       await onChanged();
     } else {
-      setMsg({
-        kind: 'err',
-        text: `Create failed: ${typeof j.error === 'string' ? j.error : `HTTP ${r.status}`}`,
-      });
+      setMsg({ kind: 'err', text: `Create failed: ${humanizeApiError(j, r.status)}` });
     }
   };
 
@@ -870,6 +885,7 @@ function FoldersPanel({
           <input
             className={inputCls + ' font-mono'}
             placeholder="new top-level folder"
+            title="Allowed: letters, digits, . _ - (no spaces, no slashes, no accents)"
             value={newL1}
             onChange={(e) => setNewL1(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void createL1(); }}
@@ -946,6 +962,7 @@ function FoldersPanel({
                     autoFocus
                     className={inputCls + ' font-mono flex-1'}
                     placeholder="subfolder name"
+                    title="Allowed: letters, digits, . _ - (no spaces, no slashes, no accents)"
                     value={newL2Name}
                     onChange={(e) => setNewL2Name(e.target.value)}
                     onKeyDown={(e) => {

@@ -66,17 +66,27 @@ export async function GET() {
  *   - name unique within parent (DB @@unique enforces, we surface
  *     a 409 mapped error).
  */
+const NAME_RE = /^[a-zA-Z0-9._-]+$/;
+const NAME_HINT =
+  'folder name must be 1-64 chars, letters/digits/. _ - only (no spaces, slashes or accents)';
+
 const CreateInput = z.object({
-  name: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, 'name must match [a-zA-Z0-9._-]+'),
+  name: z.string(),
   parentId: z.string().nullable().optional(),
 });
 
 export async function POST(req: Request) {
   const parsed = CreateInput.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
-    return badRequest(parsed.error.format());
+    return badRequest('invalid request body');
   }
-  const { name, parentId } = parsed.data;
+  const { parentId } = parsed.data;
+  const name = parsed.data.name.trim();
+  // Friendly, single-string validation messages (the UI surfaces
+  // j.error verbatim when it's a string — see #5 helpers).
+  if (name.length === 0) return badRequest('name is required');
+  if (name.length > 64) return badRequest('name is too long (max 64 chars)');
+  if (!NAME_RE.test(name)) return badRequest(NAME_HINT);
 
   if (parentId) {
     // Only root folders may host children. depth==='root' covers

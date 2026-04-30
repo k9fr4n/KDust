@@ -1,11 +1,15 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { RunPhase } from '@/lib/cron/phases';
 
 type Run = {
   id: string;
   status: string;
-  phase: string | null;
+  // Prisma stores `phase` as String for forward-compat (free-form);
+  // the API surface narrows it to the well-known enum here so a
+  // typo in any new producer is rejected by tsc.
+  phase: RunPhase | null;
   phaseMessage: string | null;
   startedAt: string;
   finishedAt: string | null;
@@ -22,7 +26,13 @@ type Run = {
   thinkingOutput: string | null;
 };
 
-const PHASES: { key: string; label: string }[] = [
+// Subset of RunPhase rendered in the timeline. We omit `pr` and
+// `merging` because they're transient push-pipeline phases and would
+// clutter the strip; the runner still emits them, the dashboard's
+// phaseMessage just shows them as the active step under "Push".
+// Typing `key` as RunPhase guarantees that any phase removed from
+// the union breaks the build here too.
+const PHASES: { key: RunPhase; label: string }[] = [
   { key: 'queued',     label: 'Queued' },
   { key: 'syncing',    label: 'Git sync' },
   { key: 'branching',  label: 'Branch' },

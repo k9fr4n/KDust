@@ -33,6 +33,7 @@ import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
+import { isRunPhase } from '@/lib/cron/phases';
 import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
@@ -333,7 +334,9 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           initialRun={{
             id: run.id,
             status: run.status,
-            phase: run.phase,
+            // Prisma stores phase as a free-form String (forward-
+            // compat); narrow at the boundary into the live UI.
+            phase: isRunPhase(run.phase) ? run.phase : null,
             phaseMessage: run.phaseMessage,
             startedAt: run.startedAt.toISOString(),
             finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,

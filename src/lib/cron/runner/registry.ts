@@ -1,5 +1,6 @@
 import { db } from '../../db';
 import type { AbortReason } from './abort';
+import type { RunPhase } from '../phases';
 
 /**
  * Registry of in-flight runs so the HTTP API can abort them on demand.
@@ -139,7 +140,7 @@ export async function cancelRunCascade(
           where: { id: { in: ids } },
           data: {
             status: 'aborted',
-            phase: 'done',
+            phase: 'done' satisfies RunPhase,
             phaseMessage: reason,
             error: reason,
             finishedAt: new Date(),

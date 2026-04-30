@@ -33,6 +33,7 @@ import {
   abortReasonDetail,
 } from './runner/abort';
 import { BRANCH_NAME_RE } from './runner/constants';
+import type { RunPhase } from './phases';
 import { getAncestorRunIds } from './runner/ancestors';
 import { buildAutomationPrompt, buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
@@ -464,7 +465,7 @@ export async function runTask(
       // 'explicit' (caller passed base_branch) or 'auto-inherit'
       // (MCP layer propagated from parent run).
       baseBranchSource,
-      phase: 'queued',
+      phase: 'queued' satisfies RunPhase,
       phaseMessage: 'Starting',
       parentRunId: opts?.parentRunId ?? null,
       runDepth: opts?.runDepth ?? 0,
@@ -516,7 +517,10 @@ export async function runTask(
   const startedAt = Date.now();
   console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${effectiveProjectPath}${opts?.projectOverride ? ' (via override, task is generic)' : ''} base=${policy.baseBranch} mode=${job.branchMode}`);
 
-  const setPhase = (phase: string, message: string) =>
+  // Typed via RunPhase so a typo (e.g. "comitting") is rejected at
+  // compile-time. Prisma's column is still `String`, so the runtime
+  // shape is unchanged.
+  const setPhase = (phase: RunPhase, message: string) =>
     db.taskRun.update({ where: { id: run.id }, data: { phase, phaseMessage: message } }).catch(() => {});
 
   const appCfg = await getAppConfig();
@@ -909,7 +913,7 @@ export async function runTask(
         where: { id: run.id },
         data: {
           status: 'success',
-          phase: 'done',
+          phase: 'done' satisfies RunPhase,
           phaseMessage: 'Prompt-only (push disabled)',
           output: agentText,
           finishedAt: new Date(),
@@ -963,7 +967,7 @@ export async function runTask(
         where: { id: run.id },
         data: {
           status: 'no-op',
-          phase: 'done',
+          phase: 'done' satisfies RunPhase,
           phaseMessage: 'No changes produced',
           branch,
           filesChanged: 0,
@@ -1305,7 +1309,7 @@ export async function runTask(
         where: { id: run.id },
         data: {
           status: 'failed',
-          phase: 'done',
+          phase: 'done' satisfies RunPhase,
           phaseMessage: `Failed via child: ${childFailureSummary.slice(0, 100)}`,
           error:
             `Orchestrator's own agent completed, but one or more dispatched ` +
@@ -1334,7 +1338,7 @@ export async function runTask(
         where: { id: run.id },
         data: {
           status: 'success',
-          phase: 'done',
+          phase: 'done' satisfies RunPhase,
           phaseMessage: job.dryRun ? 'Done (dry-run, no push)' : 'Completed successfully',
           branch,
           commitSha,
@@ -1430,7 +1434,7 @@ export async function runTask(
       where: { id: run.id },
       data: {
         status: terminalStatus,
-        phase: 'done',
+        phase: 'done' satisfies RunPhase,
         phaseMessage: wasAborted
           ? abortSummary ?? 'Aborted'
           : `Failed: ${msg.slice(0, 120)}`,

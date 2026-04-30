@@ -62,7 +62,16 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   const where: Record<string, unknown> = {};
   if (cookieProjectFsPath) where.projectName = cookieProjectFsPath;
   if (agentFilter) where.agentSId = agentFilter;
-  if (q) where.title = { contains: q };
+  // Live search (Franck 2026-04-30): match the query against the
+  // conversation title OR any message content. SQLite `contains`
+  // is a LIKE filter; acceptable at current volume, FTS5 would be
+  // the next step if latency degrades.
+  if (q) {
+    where.OR = [
+      { title: { contains: q } },
+      { messages: { some: { content: { contains: q } } } },
+    ];
+  }
 
   // Parallel count + page fetch. count() respects the `where` so
   // the total reflects the active filter (project, agent, q). The

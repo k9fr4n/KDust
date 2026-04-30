@@ -10,6 +10,7 @@ async function main() {
     console.error(JSON.stringify(res.error, null, 2).slice(0, 4000));
     process.exit(2);
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- diagnostic, SDK union type narrowing not worth it
   console.log('SDK OK. conversation has', (res.value as any).content?.length, 'message groups');
 }
 main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

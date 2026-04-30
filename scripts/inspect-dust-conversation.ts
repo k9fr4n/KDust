@@ -36,6 +36,7 @@ async function main() {
     console.error('HTTP', res.status, await res.text());
     process.exit(2);
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw API payload, intentionally untyped
   const json: any = await res.json();
   const content = json?.conversation?.content;
   console.log('content.length =', content?.length);

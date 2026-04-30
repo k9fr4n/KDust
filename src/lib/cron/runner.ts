@@ -7,10 +7,7 @@ import { releaseTaskRunnerServer } from '../mcp/registry';
 // Public symbols (AbortReason, cancelTaskRun, cancelRunCascade,
 // isRunActive, isTaskRunActive) are re-exported below so existing
 // importers of '@/lib/cron/runner' keep working unchanged.
-import {
-  type AbortReason,
-  abortReasonSummary,
-} from './runner/abort';
+import { type AbortReason } from './runner/abort';
 import type { RunPhase } from './phases';
 import { runPreflight } from './runner/phases/preflight';
 import { runPreSync } from './runner/phases/pre-sync';
@@ -21,6 +18,7 @@ import { runMeasureDiff } from './runner/phases/measure-diff';
 import { guardLargeDiff } from './runner/phases/guard-large-diff';
 import { runCommitAndPush } from './runner/phases/commit-and-push';
 import { runNotifySuccess } from './runner/phases/notify-success';
+import { runHandleFailure } from './runner/phases/handle-failure';
 import { buildDockerHostContext } from './runner/prompt';
 import { buildNotifier } from './runner/notify';
 import {
@@ -669,70 +667,24 @@ export async function runTask(
       console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
     }
   } catch (err) {
-    const wasAborted = !!(err as { aborted?: boolean })?.aborted;
-    const abortReason = (err as { abortReason?: AbortReason })?.abortReason;
-    const msg = err instanceof Error ? err.message : String(err);
-    const terminalStatus = wasAborted ? 'aborted' : 'failed';
-    const abortSummary = wasAborted ? abortReasonSummary(abortReason) : null;
-    await db.taskRun.update({
-      where: { id: run.id },
-      data: {
-        status: terminalStatus,
-        phase: 'done' satisfies RunPhase,
-        phaseMessage: wasAborted
-          ? abortSummary ?? 'Aborted'
-          : `Failed: ${msg.slice(0, 120)}`,
-        error: msg,
-        branch,
-        commitSha,
-        filesChanged,
-        linesAdded,
-        linesRemoved,
-        output: agentText || null,
-        finishedAt: new Date(),
-      },
+    // Failure path \u2014 extracted to ./runner/phases/handle-failure.ts
+    // (ADR-0006 Step K). Persists the terminal TaskRun row, emits the
+    // failure Teams card, and fire-and-forgets the cascade cancel for
+    // descendant runs. See module header for the full invariant list.
+    await runHandleFailure({
+      err,
+      runId: run.id,
+      job: { id: job.id, name: job.name },
+      policy,
+      effectiveProjectPath,
+      branch,
+      commitSha,
+      filesChanged,
+      linesAdded,
+      linesRemoved,
+      agentText,
+      notify,
     });
-    await db.task.update({
-      where: { id: job.id },
-      data: { lastRunAt: new Date(), lastStatus: terminalStatus },
-    });
-    await notify(
-      `${wasAborted ? '⏹️' : '❌'} KDust cron : ${job.name}`,
-      wasAborted
-        ? `${abortSummary ?? 'Aborted'} on ${effectiveProjectPath}`
-        : `Failed on ${effectiveProjectPath}`,
-      'failed',
-      branch
-        ? [
-            { name: 'Branch attempt', value: branch },
-            { name: 'Base', value: policy.baseBranch },
-          ]
-        : [],
-      msg,
-    );
-    console.error(`[cron] ${wasAborted ? 'ABORTED' : 'FAILED'} job="${job.name}": ${msg}`);
-
-    // Cascade cancellation (Franck 2026-04-22 23:37):
-    // When a parent run ends in a non-success terminal state, any
-    // descendant still running/pending should not keep working on
-    // behalf of a dead orchestrator. This matters most for
-    // dispatch_task children (fire-and-forget) whose lifetime is
-    // NOT tied to the parent's await stack.
-    //
-    // Fire-and-forget the cascade itself so the `finally` block
-    // below still releases locks promptly. The cascade does its
-    // own DB work with per-row atomic updates; no need to await.
-    void cancelRunCascade(
-      run.id,
-      `parent run ended with status=${terminalStatus}`,
-      { kind: 'cascade', parentRunId: run.id, parentStatus: terminalStatus },
-    ).catch(
-      (cascadeErr) => {
-        console.warn(
-          `[cron] cascade cancel from ${run.id} raised: ${(cascadeErr as Error)?.message ?? cascadeErr}`,
-        );
-      },
-    );
   } finally {
     // Always release the per-task lock so the next scheduler fire (or
     // a manual /run trigger) can proceed. Safe even if the try-block

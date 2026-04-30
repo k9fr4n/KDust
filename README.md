@@ -379,3 +379,164 @@ looked up the Project row, and is by construction non-null.
 - Documentation impact: `docs/tasks.md`, `docs/push-pipeline.md`
   and `docs/task-runner.md` should add a one-line pointer to this
   ADR the next time they are touched.
+
+### ADR-0006 — RunContext split for runner.ts (2026-04-30)
+
+**Status**: Proposed
+**Author**: Franck (drafted by KDust Dev Agent)
+**Supersedes**: nothing (extends ADR-0003 push pipeline)
+
+**Context**:
+
+`src/lib/cron/runner.ts:runTask()` has grown to a single 1500-line
+function with 11 inline phases marked `[0] .. [10]` in the source.
+All state — `job`, `run`, `policy`, `branch`, `protectedList`,
+agent output, diff stats, abort signal, redactor, MCP handle — is
+held in mutable locals threaded by closure across phases. The
+runner/ subfolder already extracts pure helpers (abort, ancestors,
+constants, notify, prompt, registry, timeout) but the orchestration
+itself is monolithic.
+
+Symptoms:
+
+1. **Untestable**. With Vitest now landed (2026-04-30 commit
+   `2d34252`) the rest of the test roadmap is gated on
+   phase-level mocking, which the current shape forbids: there
+   is no surface to mock against.
+2. **High cognitive cost**. Anyone modifying phase [8] (commit +
+   push) must read all of [0]–[7] to know which closure variables
+   are valid at that point. This was raised by Franck during the
+   2026-04-29 review of #1.
+3. **Brittle ordering invariants**. `branch` is created in [3] but
+   read by [8] for push and by [10] for the Teams report. The B2
+   inheritance bug (Franck 2026-04-25 11:14) was caused by branch
+   being persisted only at terminal points; making the branch ↔
+   phase contract explicit would have made it a 1-line type error
+   instead of a multi-hour debug.
+4. **No clean place for new phases**. The `[2b] Audit
+   short-circuit REMOVED 2026-04-22` comment is what a removed
+   phase looks like in this shape. Adding one is symmetrically
+   awkward.
+
+**Decision**:
+
+Introduce a typed `RunContext` and split `runTask()` into a fixed
+sequence of phase functions. The shape:
+
+```
+type RunContext = Readonly<{
+  // Immutable inputs resolved at [0]:
+  task: Task;
+  effectiveProjectPath: string;
+  projectFsPath: string;
+  policy: PushPolicy;
+  options: RunTaskOptions;
+  // Mutable run record + helpers shared across phases:
+  run: TaskRun;             // re-fetched at each setPhase
+  setPhase: (p: RunPhase, message?: string) => Promise<void>;
+  abortSignal: AbortReason | null;
+  redactor: (s: string) => string;
+  // Per-phase outputs accumulated by `with*()` helpers:
+  branch?: string;          // set by [3]
+  mcpServerId?: string;     // set by [4]
+  agentOutput?: AgentOutput; // set by [5]
+  diff?: DiffStats;         // set by [6]
+  pushOutcome?: PushOutcome; // set by [8]
+}>;
+
+type Phase = (ctx: RunContext) => Promise<RunContext>;
+```
+
+`runTask()` becomes:
+
+```
+const phases: Phase[] = [
+  preflight,        // [0] resolve project, lock, create TaskRun
+  preSync,          // [2]
+  branchSetup,      // [3]
+  setupMcp,         // [4]
+  runAgent,         // [5]
+  measureDiff,      // [6]
+  guardLargeDiff,   // [7]
+  commitAndPush,    // [8]
+  notify,           // [10]
+];
+
+let ctx = await initContext(taskId, opts);
+for (const p of phases) {
+  if (ctx.abortSignal) break;
+  ctx = await p(ctx);
+}
+return ctx.run.id;
+```
+
+Each phase is a top-level async function in
+`src/lib/cron/runner/phases/<name>.ts`, exporting one default
+function and zero free state. Tests mock the SDK / git / MCP
+boundaries by passing fakes via `RunTaskOptions.deps` (a new opt
+slot kept undefined in production).
+
+**Migration plan** (incremental, 1 phase per commit):
+
+1. **Step A** — define `RunContext` + `Phase` types in
+   `src/lib/cron/runner/context.ts`. No behaviour change. (~50 LoC,
+   this commit.)
+2. **Step B** — extract `preflight` (current [0] + [1]) into
+   `runner/phases/preflight.ts`. `runTask()` calls it but keeps
+   the rest inline. Validate by running 1 manual task end-to-end.
+   Vitest covers `preflight()` against a tmp sqlite + Prisma fake.
+3. **Steps C..J** — extract one phase per commit, in execution
+   order. Each commit:
+   - moves the phase body into `phases/<name>.ts`;
+   - asserts `runTask()` still type-checks and lints;
+   - adds `phases/__tests__/<name>.spec.ts` with at least the
+     happy path + 1 error branch.
+4. **Step K** — replace the `[0..10]` if-chain inside `runTask()`
+   with the `for (const p of phases)` loop. This is the
+   commit where the shape change becomes visible.
+5. **Step L** — convert `setPhase` into a closure built by
+   `initContext()`, eliminating the last shared mutable.
+
+Any commit may be reverted in isolation; the runner stays
+runnable at every step.
+
+**Consequences**:
+
+Positive:
+- Each phase is unit-testable against an in-memory Prisma + the new
+  `deps` injection seam. Closes the test-coverage gap on the push
+  pipeline.
+- Adding a new phase is 1 file + 1 entry in the `phases[]` array.
+  No more closure-variable archaeology.
+- Type system enforces the "branch ↔ phase" invariant: phases
+  past [3] can read `ctx.branch!`, prior ones cannot.
+- B2 / B3 logic stays in its current files (resolveB2B3 already
+  factored out). RunContext just makes its inputs (parentRunId,
+  branch) cheaper to thread.
+
+Negative:
+- 1 extra layer of indirection (`RunContext` shape) — readers must
+  learn one new vocabulary item. Mitigated by colocated JSDoc.
+- Diff blame on `runner.ts` will be heavily perturbed during
+  Steps B..J. Mitigated by adding the migration commits to
+  `.git-blame-ignore-revs` (parallel follow-up).
+- ~10 commits to land the full refactor. Each individually
+  small; collectively a ~3-4h project gated on the test suite.
+
+Neutral:
+- The `runner/` subfolder grows a `phases/` sub-subfolder with
+  one file per phase. The `__tests__/` mirror lives next to it.
+- `src/lib/cron/runner.ts` shrinks from 1517 to ~120 lines
+  (init + loop + exports). The rest is dispersed but each piece
+  is < 200 lines.
+
+**Out of scope**:
+
+- Replacing the cron lib (`croner`) or the scheduler tick loop
+  (`scheduler.ts`). RunContext is per-run; the scheduler doesn't
+  need to know.
+- Touching `src/lib/cron/runner/*.ts` helpers that already live
+  outside `runner.ts` (abort, registry, timeout, …). They become
+  injectable through `RunContext.deps` without rewriting them.
+- Renaming any DB column. Phase 1 of ADR-0005 still applies and
+  is independently sequenced.

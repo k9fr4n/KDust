@@ -49,8 +49,10 @@ export async function Nav() {
             />
           ))}
         </nav>
-        <HeaderIcons />
-        <UserMenu />
+        <div className="flex items-center gap-1">
+          <HeaderIcons />
+          <UserMenu />
+        </div>
       </div>
     </header>
   );

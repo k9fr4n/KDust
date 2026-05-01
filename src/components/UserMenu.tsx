@@ -67,18 +67,16 @@ export function UserMenu() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 px-2 py-1.5 rounded-full border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 max-w-[220px]"
+        className="relative inline-flex items-center justify-center w-9 h-9 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
         title={displayName}
+        aria-label={displayName}
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <CircleUser
-          size={22}
-          className={connected ? 'text-green-600 shrink-0' : 'text-slate-400 shrink-0'}
+          size={20}
+          className={connected ? 'text-green-600' : 'text-slate-400'}
         />
-        <span className="hidden sm:inline text-sm font-medium truncate">
-          {displayName}
-        </span>
       </button>
 
       {open && (

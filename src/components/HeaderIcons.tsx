@@ -1,12 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { BarChart3, ScrollText } from 'lucide-react';
+import { ScrollText } from 'lucide-react';
 
 /**
- * Two utility icons squeezed between the main nav and the UserMenu:
+ * Utility icon squeezed between the main nav and the UserMenu:
  *
- *   - BarChart3 -> /settings/usage  (quick jump to the usage dashboard)
  *   - ScrollText -> /logs           (paints red when the in-memory log
  *                                    buffer currently contains entries
  *                                    with level='error')
@@ -65,14 +64,6 @@ export function HeaderIcons() {
 
   return (
     <div className="flex items-center gap-1">
-      <Link
-        href="/settings/usage"
-        title="Usage dashboard"
-        aria-label="Usage dashboard"
-        className="relative inline-flex items-center justify-center w-9 h-9 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-      >
-        <BarChart3 size={18} />
-      </Link>
       <Link
         href="/logs"
         title={logsTitle}

@@ -35,7 +35,11 @@ const REPO = resolve(__dirname, '..');
 const APPLY = process.argv.includes('--apply');
 const FORCE = process.argv.includes('--force'); // skip confirm prompts
 
-const PROJECT_PATH = 'terraform-provider-windows';
+// Full hierarchical project path as stored in the Task.projectPath
+// column (cf. legacy launchers' projectPath shown by the script's
+// own DELETE prompt: "Perso/fsallet/terraform-provider-windows").
+// Using the bare leaf creates "generic" rows (no project binding).
+const PROJECT_PATH = 'Perso/fsallet/terraform-provider-windows';
 const AGENT_NAME = 'TF-ProviderOrchestrator';
 
 // IDs of tasks to delete (legacy launchers, see chat 2026-05-01).
@@ -257,9 +261,17 @@ function commonTaskFields(meta, prompt, agentSId) {
 }
 
 async function upsertSubPipeline(meta, prompt, agentSId) {
-  const existing = await db.task.findFirst({
-    where: { name: meta.name, projectPath: PROJECT_PATH },
-  });
+  // Match by name only: a previous run of this script may have created
+  // the row with a wrong projectPath (e.g. bare leaf vs hierarchical
+  // path). We want UPDATE-with-fix, not duplicate CREATE.
+  const candidates = await db.task.findMany({ where: { name: meta.name } });
+  if (candidates.length > 1) {
+    throw new Error(
+      `Found ${candidates.length} tasks named ${meta.name} \u2014 manual cleanup required: ` +
+      candidates.map((c) => `${c.id}@${c.projectPath ?? 'null'}`).join(', ')
+    );
+  }
+  const existing = candidates[0] ?? null;
   const data = commonTaskFields(meta, prompt, agentSId);
   if (existing) {
     if (

@@ -136,6 +136,49 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           },
         });
         await db.conversation.update({ where: { id }, data: { updatedAt: new Date() } });
+
+        // Title sync (Franck 2026-04-23, restored 2026-05-01).
+        // Dust auto-generates a human-readable title on the
+        // conversation after the first agent turn (e.g.
+        // "génère moi une image" → "Demande d'image générée par IA").
+        // Re-fetch it once the reply is saved and persist locally so
+        // the /chat header and listing match what users see on
+        // dust.tt. Best-effort: failures are logged but never block
+        // the stream response.
+        //
+        // KDust → Dust remains the only message-content flow
+        // (commit d760ff9); we read back the *title* only, not
+        // messages, so the "DB is sole source of truth" invariant
+        // for chat history is preserved.
+        try {
+          const convSId = conv.dustConversationSId as string;
+          const latest = await cli.client.getConversation({
+            conversationId: convSId,
+          });
+          if (latest.isOk()) {
+            const dustTitle = latest.value?.title?.trim();
+            if (dustTitle && dustTitle !== conv.title) {
+              await db.conversation.update({
+                where: { id },
+                data: { title: dustTitle },
+              });
+              console.log(
+                `[chat stream] title synced conv=${id} → "${dustTitle}"`,
+              );
+            }
+          } else {
+            console.warn(
+              '[chat stream] title sync getConversation err',
+              latest.error?.message,
+            );
+          }
+        } catch (e) {
+          console.warn(
+            '[chat stream] title sync threw',
+            e instanceof Error ? e.message : e,
+          );
+        }
+
         succeeded = true;
       } catch (err) {
         send('error', err instanceof Error ? err.message : String(err));

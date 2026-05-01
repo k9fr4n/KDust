@@ -222,10 +222,23 @@ function ChatPageInner({
    *   - 'error':     upload failed; shown with a red tint, user can
    *                  click the X to remove and retry.
    *
-   * Using clientId (crypto.randomUUID) rather than the server sId as
-   * the React key because uploads start before the sId is known. The
-   * sId lands on the same row when the upload resolves.
+   * Using clientId (genClientId) rather than the server sId as the
+   * React key because uploads start before the sId is known. The sId
+   * lands on the same row when the upload resolves.
+   *
+   * NOTE on the helper: we cannot rely on crypto.randomUUID() because
+   * Web Crypto's randomUUID is only exposed in secure contexts (HTTPS
+   * or localhost). KDust is frequently accessed over plain HTTP on a
+   * LAN IP/hostname, where window.crypto.randomUUID is undefined and
+   * throws "is not a function" — which previously broke both file
+   * picker upload and clipboard image paste (Franck 2026-05-01). The
+   * id is purely client-side React-key plumbing, no security need.
    */
+  const genClientId = (): string => {
+    const c = (globalThis as { crypto?: Crypto }).crypto;
+    if (c?.randomUUID) return c.randomUUID();
+    return `cid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  };
   type PendingAttachment = {
     clientId: string;
     name: string;
@@ -819,7 +832,7 @@ function ChatPageInner({
     // Seed placeholder rows synchronously so the UI reflects the
     // selection immediately. We upload them one by one below.
     const rows: PendingAttachment[] = list.map((f) => ({
-      clientId: crypto.randomUUID(),
+      clientId: genClientId(),
       name: f.name,
       size: f.size,
       contentType: f.type || 'application/octet-stream',

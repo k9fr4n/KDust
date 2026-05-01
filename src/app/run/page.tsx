@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { ClickableRunRow } from '@/components/ClickableRunRow';
+import { RunCard } from '@/components/RunCard';
 import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import { Pagination } from '@/components/Pagination';
@@ -499,7 +500,45 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       {runs.length === 0 ? (
         <p className="text-slate-500 text-sm">No runs match these filters.</p>
       ) : (
-        <table className="w-full text-sm">
+        <>
+          {/* Mobile card view (Franck 2026-05-01 mobile L3, level 1):
+              <lg the 9-column table is unusable. We render the same
+              `rendered` rows as <RunCard>s — they're already mobile-
+              friendly and reuse the dashboard styling. Tree-mode
+              indentation is collapsed into a `↳ child of …` mini-
+              badge above the card so the relationship stays visible
+              without ASCII connectors. The desktop table is hidden
+              below `lg`. We lose trigger / branch / live-duration
+              / open-chat-icon on mobile — clicking the card lands
+              on /run/:id where everything lives anyway. */}
+          <ul className="lg:hidden divide-y divide-slate-200 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-md overflow-hidden">
+            {rendered.map((r) => {
+              const parent =
+                view === 'tree' && r.depth > 0 && r.parentRunId
+                  ? byId.get(r.parentRunId)
+                  : null;
+              return parent ? (
+                // Tree mode: prefix the card with a "child of …"
+                // mini-banner. We render an outer wrapper <li> and
+                // let the RunCard's own <li> sit inside as a block;
+                // keeps ARIA semantics close enough without forking
+                // RunCard.
+                <li key={`m-${r.id}`} className="list-none">
+                  <div className="px-3 pt-1.5 text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                    <span className="select-none">↳</span>
+                    <span className="truncate">
+                      child of {parent.task?.name ?? '(deleted)'}
+                    </span>
+                  </div>
+                  <RunCard run={r} />
+                </li>
+              ) : (
+                <RunCard run={r} key={`m-${r.id}`} />
+              );
+            })}
+          </ul>
+
+        <table className="w-full text-sm hidden lg:table">
           <thead className="text-left text-slate-500">
             <tr>
               <SortableTh col="status"   sort={sort} dir={dir} href={sortHref('status')}>Status</SortableTh>
@@ -659,6 +698,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             })}
           </tbody>
         </table>
+        </>
       )}
 
       {/* Pagination. Note: in tree view, `totalRuns` still counts

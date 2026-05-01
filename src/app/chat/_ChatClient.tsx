@@ -25,6 +25,7 @@ import {
   Paperclip,
   X as XIcon,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
 
 type Agent = { sId: string; name: string };
@@ -1332,30 +1333,9 @@ function ChatPageInner({
                 <span className="text-xs text-slate-500 shrink-0" title="Agent">
                   {'\u00b7 ' + agentName}
                 </span>
-                {/* Open-in-dust link only (Franck 2026-05-01).
-                    The sId code + copy button used to live here but
-                    were removed: users almost always want the external
-                    link, not the raw id. `ml-3` keeps some air between
-                    the title block and the link. */}
-                <span className="ml-3 flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-                  {currentConv?.dustConversationSId && workspaceId && (
-                    <a
-                      // dust.tt URL shape: /w/<workspaceSId>/assistant/<convSId>
-                      // e.g. https://app.dust.tt/w/afoH8Y2BIz/conversation/ZZ4Vo645fo
-                      // Using app.dust.tt (the primary app host); the
-                      // short-form dust.tt/w redirects work too but
-                      // users paste this URL around and matching the
-                      // canonical host avoids a redirect flash.
-                      href={`https://app.dust.tt/w/${workspaceId}/conversation/${currentConv.dustConversationSId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                      title="Open in Dust"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-                    </a>
-                  )}
-                </span>
+                {/* Open-in-dust link moved to the right-cluster
+                    next to the New-chat button (Franck 2026-05-01).
+                    See cluster below. */}
               </>
             );
           })() : (
@@ -1439,6 +1419,30 @@ function ChatPageInner({
               sidebar (hover) and on the dashboard, so the toolbar
               keeps a single right-aligned action: New chat.
             */}
+            {/* Open-in-Dust external link, styled exactly like the
+                neighbouring New-chat Button (Franck 2026-05-01).
+                Rendered as <a target=_blank> so cmd/middle-click and
+                paste-link still work; classes mirror the Button
+                primary md variant + the same `px-1.5` square padding
+                used by New chat for visual parity. Only visible when
+                we have both a workspace and a Dust-side conversation
+                sId (otherwise the link would 404). */}
+            {currentId && workspaceId && (() => {
+              const conv = convs.find((c) => c.id === currentId);
+              if (!conv?.dustConversationSId) return null;
+              return (
+                <a
+                  href={`https://app.dust.tt/w/${workspaceId}/conversation/${conv.dustConversationSId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open in Dust"
+                  aria-label="Open conversation in Dust"
+                  className="inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none px-1.5 py-1.5 text-sm bg-brand-600 text-white border border-brand-600 hover:bg-brand-700 hover:border-brand-700"
+                >
+                  <ExternalLink size={14} />
+                </a>
+              );
+            })()}
             {/* Icon-only button (Franck 2026-05-01). Square padding
                 so the brand square doesn't visually dwarf the
                 neighbouring 28x28 MCP chips. aria-label preserves

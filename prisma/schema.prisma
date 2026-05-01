@@ -1,5 +1,10 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Build host (CI) is typically x86 debian; deploy host (Raspberry Pi)
+  // is arm64. Listing both targets makes the same image runnable on
+  // either arch without an arch-specific build matrix.
+  // Added 2026-05-01 to fix arm64 deploy of seed-provider-pipeline.mjs.
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {

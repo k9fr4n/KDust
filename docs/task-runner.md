@@ -780,3 +780,35 @@ case without a new tool.
   single `formatRunResult()` helper owns the output serialisation
   for `run_task` and `wait_for_run`.
 - ❌ Slightly larger MCP `tools/list` payload. Negligible.
+
+## Pattern: split a long pipeline into sub-pipelines (ADR-0007)
+
+An orchestrator that fans out to many sequential children with
+bounded retry loops can blow the Dust agent's planner step budget
+(typically capped around 25–50 iterations). Symptom: the agent
+reply truncates mid-pipeline with `status="success"` but no final
+report, and downstream stages never dispatch.
+
+When the worst-case dispatch count (initial + retries) approaches
+~15+, split the orchestrator into:
+
+1. A **thin orchestrator** that chains 2–3 sub-pipeline tasks via
+   `run_task`/`wait_for_run` and aggregates their JSON results.
+2. **Sub-pipeline tasks** (also orchestrators, but covering 2–4
+   stages each) that own their own retry budgets.
+
+Each sub-pipeline should:
+
+- Start with a **single-step idempotence preamble** — group all
+  `ls`/`cat` checks into one `fs_cli__run_command` invocation — to
+  detect already-produced artefacts in WORK_DIR.
+- Accept an optional `RESUME_FROM:<N>` override so failed reruns
+  skip stages whose artefacts are valid.
+- Return a structured **JSON tail block** with a stable `*_status`
+  field so the thin orchestrator can decide in inline reasoning
+  (no extra empty-analysis step).
+
+Reference implementation: `provider-orchestrator` /
+`provider-pipeline-build` / `provider-pipeline-finalize` on the
+`terraform-provider-windows` project. Prompts in
+`docs/prompts/`. Seed: `scripts/seed-provider-pipeline.mjs`.

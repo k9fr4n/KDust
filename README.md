@@ -540,3 +540,113 @@ Neutral:
   injectable through `RunContext.deps` without rewriting them.
 - Renaming any DB column. Phase 1 of ADR-0005 still applies and
   is independently sequenced.
+
+### ADR-0007 — Split provider-orchestrator into build + finalize sub-pipelines (2026-05-01)
+
+**Status**: Proposed
+**Author**: Franck (drafted by KDust Dev Agent)
+**Supersedes**: nothing (specialises ADR-0004 task-runner MCP)
+
+**Context**:
+
+The `provider-orchestrator` task on the `terraform-provider-windows`
+project is a 6-stage Dust agent pipeline (spec → schema → code → local
+tests → quality gate → real Windows GHA validation) with bounded retry
+loops at stages 4, 5 and 6. Driven by the `TF-ProviderOrchestrator`
+agent which enforces a strict "1 tool per step, `wait_for_run` alone"
+discipline (Rules 1–4 of its system prompt) to dodge the
+`multi_actions_error` planner bug.
+
+The night of 2026-04-30/05-01 a full run terminated with
+`status="success"` but the agent reply was truncated mid-step-4: no
+final report, stages 5–6 never dispatched. Root cause is structural,
+not a bug.
+
+Measured cost per run:
+
+| Source | Steps |
+|---|---|
+| Initial dispatch of each of the 6 stages | 6 |
+| `wait_for_run` polls per long child (5–15 min) | 1–3 each |
+| Forced "empty analysis step" between dispatch and next dispatch | 6 |
+| Worst-case retry loops (3 + 2 + 2) at stages 4/5/6 | up to 14 extra dispatches |
+
+Worst-case total: 70–100 agent steps. The Dust agent runtime caps an
+agent run around 25–50 planner iterations, after which it forces a
+final response. The pipeline thus deterministically truncates on
+long-tail runs — exactly what was observed.
+
+Secondary issue: no idempotence. Every rerun (manual or after a
+truncation) replays stages 1–4 even if their artefacts are already
+on disk and committed.
+
+**Decision**:
+
+Split `provider-orchestrator` into three tasks, all sharing the same
+Dust agent (`TF-ProviderOrchestrator`) and bound to
+`terraform-provider-windows`:
+
+1. **`provider-orchestrator`** (rewritten in place, same id) —
+   *thin chainer*. Dispatches `provider-pipeline-build`, then
+   `provider-pipeline-finalize`. Aggregates results. Worst-case
+   budget: ~6–8 steps.
+2. **`provider-pipeline-build`** (NEW) — stages 1–4
+   (`win-spec-analyst` → `schema-architect` → `provider-coder` initial
+   → `test-engineer` + code↔test loop max 3). Worst-case budget:
+   ~25–35 steps.
+3. **`provider-pipeline-finalize`** (NEW) — stages 5–6
+   (`quality-gate` + review↔code loop max 2, then `test-gh-runner` +
+   gh↔code loop max 2). Worst-case budget: ~25–35 steps.
+
+Each sub-pipeline contains a 1-step **idempotence preamble** that
+groups `ls`/`cat` checks of WORK_DIR artefacts into a single
+`fs_cli__run_command` invocation, plus an explicit `RESUME_FROM`
+override. Skipped stages do not consume budget.
+
+Each sub-pipeline returns a structured JSON tail block
+(`build_status` / `finalize_status`) so the thin orchestrator can
+decide in inline reasoning instead of an extra step.
+
+The legacy thin launchers `windows_feature` and `windows_services`
+are deleted: the orchestrator is now invoked directly with an
+`input` override (`RESOURCE_NAME`/`DESCRIPTION`/`WORK_DIR`).
+
+**Consequences**:
+
+*Positive*:
+
+- Step budget margin: each sub-pipeline runs comfortably below the
+  agent ceiling. Truncation at stage 4 is no longer reachable.
+- Cheap retries: a failed finalize replays only stages 5–6; a
+  failed build can resume at any stage via `RESUME_FROM:N`.
+- Honest status reporting: the thin orchestrator returns
+  `PARTIAL`/`ESCALATED` with a precise `RESUME_FROM` recommendation
+  instead of a misleading `success`.
+- Same agent for the 3 tasks — no new system prompt to maintain.
+
+*Negative*:
+
+- Three prompts to maintain instead of one. Mitigated by storing
+  human-readable specs in `docs/prompts/*.md`, the seed script
+  `scripts/seed-provider-pipeline.mjs` being the single source of
+  truth for DB content.
+- B3 merge-back happens twice (once per sub-pipeline) instead of
+  once; chain trees are deeper. Not a problem under current B3
+  semantics (fast-forward only) but worth re-checking if we ever
+  switch to non-FF.
+- Dust agent's "step d'analyse sans outil" convention (in
+  `TF-ProviderOrchestrator` system prompt) remains a small
+  per-stage tax. The new prompts mitigate by combining reasoning
+  with the next `run_task` call inline (allowed by Rules 1–4, just
+  pessimistically un-applied in the original convention).
+
+**Out of scope** (deliberate):
+
+- No change to worker tasks (`win-spec-analyst`, `schema-architect`,
+  `provider-coder`, `test-engineer`, `quality-gate`, `test-gh-runner`).
+- No change to the `TF-ProviderOrchestrator` agent system prompt.
+  A future ADR may relax the "empty analysis step" pattern.
+- No parallelisation of stages 4 and 5 (would require disabling B3
+  on one branch — forbidden by current safety guard-rail).
+- No external scheduler / state-file model (the current Dust
+  iteration cap is still livable with split + resume).

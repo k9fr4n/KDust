@@ -154,7 +154,7 @@ function MobileNavDrawerOverlay({
         role="dialog"
         aria-modal="true"
         aria-label="Navigation"
-        className={`md:hidden fixed top-0 left-0 h-full w-[85vw] max-w-[320px] bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 shadow-2xl z-[70] transition-transform duration-200 ease-out flex flex-col ${
+        className={`md:hidden fixed top-0 left-0 h-full w-max min-w-[220px] max-w-[85vw] bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 shadow-2xl z-[70] transition-transform duration-200 ease-out flex flex-col ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

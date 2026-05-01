@@ -59,9 +59,17 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
     // cap wasted horizontal space on wide screens. Parent layout
     // already provides horizontal padding.
     <div>
-      <div className="flex items-start justify-between gap-4 mb-2">
-        <h1 className="text-2xl font-bold">{task.name}</h1>
-        <div className="flex items-center gap-2 shrink-0">
+      {/* Header (Franck 2026-05-01 mobile L3):
+          - <sm: title on its own row (break-words on long names),
+            action cluster wraps below right-aligned. The cluster
+            itself uses `flex-wrap` so 4 buttons can spill on 2
+            rows on extreme widths.
+          - sm+: original side-by-side layout. */}
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2 mb-2">
+        <h1 className="text-xl sm:text-2xl font-bold break-words min-w-0 flex-1">
+          {task.name}
+        </h1>
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end shrink-0">
           <TaskRunButton
             id={task.id}
             name={task.name}
@@ -274,7 +282,7 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
             {task.prompt.split(/\r?\n/).length.toLocaleString('fr-FR')} lines
           </span>
         </div>
-        <pre className="whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">{task.prompt}</pre>
+        <pre className="whitespace-pre-wrap break-words rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm overflow-x-auto">{task.prompt}</pre>
       </section>
     </div>
   );

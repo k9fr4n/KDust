@@ -78,15 +78,25 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
     return (
       <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <FolderGit2 size={20} className="text-slate-400 shrink-0" />
-          <h1 className="text-2xl font-bold flex items-baseline gap-2 min-w-0">
-            <span className="truncate">{current.name}</span>
-            <span className="text-base font-normal text-slate-500 font-mono">{current.branch}</span>
-          </h1>
-          <div className="ml-auto flex items-center gap-2 shrink-0">
+        {/* Header (Franck 2026-05-01 mobile L2):
+            - <sm: 2 rows. Row 1 = icon + name + branch (truncate-
+              friendly); Row 2 = action buttons aligned right.
+            - sm+: single row, actions pushed to the right with ml-auto.
+            `flex-wrap` + `w-full sm:w-auto` on the action group does
+            the trick without media-query JS. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <FolderGit2 size={20} className="text-slate-400 shrink-0" />
+            <h1 className="text-xl sm:text-2xl font-bold flex items-baseline gap-2 min-w-0">
+              <span className="truncate">{current.name}</span>
+              <span className="text-sm sm:text-base font-normal text-slate-500 font-mono truncate">
+                {current.branch}
+              </span>
+            </h1>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto sm:ml-auto justify-end">
             <SyncProjectButton projectId={current.id} />
-            {/* Settings button sits next to \"Sync now\" (Franck
+            {/* Settings button sits next to "Sync now" (Franck
                 2026-04-19 18:29) so the user can jump straight to
                 /settings/projects/:id to edit gitUrl / branch and
                 see the full identity panel. */}
@@ -102,33 +112,41 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         </div>
 
         <section className="rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-2 text-sm">
-          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-            <LinkIcon size={14} /> <code className="font-mono break-all">{current.gitUrl}</code>
+          {/* Identity panel (Franck 2026-05-01 mobile L2):
+              `items-start` + `min-w-0` on the <code> child so long
+              git URLs actually wrap via `break-all` instead of pushing
+              the section beyond the viewport. */}
+          <div className="flex items-start gap-2 text-slate-600 dark:text-slate-400">
+            <LinkIcon size={14} className="mt-0.5 shrink-0" />
+            <code className="font-mono break-all min-w-0">{current.gitUrl}</code>
           </div>
           <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-            <GitBranch size={14} /> branch <code>{current.branch}</code>
+            <GitBranch size={14} className="shrink-0" /> branch{' '}
+            <code className="break-all min-w-0">{current.branch}</code>
           </div>
-          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-            <Activity size={14} />
-            Last sync:{' '}
-            {current.lastSyncAt ? (
-              <>
-                {formatDateTime(current.lastSyncAt, tz)} ·{' '}
-                <span
-                  className={
-                    current.lastSyncStatus === 'success' ? 'text-green-600' : 'text-red-500'
-                  }
-                >
-                  {current.lastSyncStatus}
-                </span>
-              </>
-            ) : (
-              'never'
-            )}
+          <div className="flex items-start gap-2 text-slate-600 dark:text-slate-400 flex-wrap">
+            <Activity size={14} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">
+              Last sync:{' '}
+              {current.lastSyncAt ? (
+                <>
+                  {formatDateTime(current.lastSyncAt, tz)} ·{' '}
+                  <span
+                    className={
+                      current.lastSyncStatus === 'success' ? 'text-green-600' : 'text-red-500'
+                    }
+                  >
+                    {current.lastSyncStatus}
+                  </span>
+                </>
+              ) : (
+                'never'
+              )}
+            </span>
           </div>
         </section>
 
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <section className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <StatTile
             href="/conversation"
             value={nbConvs}
@@ -173,23 +191,28 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             icon={<PlayCircle size={18} />}
             pulse={nbRunsRunning > 0}
           />
-          <StatTile
-            href={`/run?status=aborted`}
-            value={undefined}
-            label="see aborted"
-            color="orange"
-            icon={<AlertTriangle size={18} />}
-            small
-          />
-          <StatTile
-            href="/conversation?project=_global"
-            value={undefined}
-            label="global conversations"
-            color="slate"
-            icon={<Pin size={18} />}
-            small
-          />
         </section>
+
+        {/* Secondary quick links (Franck 2026-05-01 mobile L2):
+            split out of the main stat grid so the 2x3 / 3x2 tile
+            grid stays visually homogeneous. These are pure nav
+            shortcuts, not metrics. */}
+        <nav className="flex flex-wrap gap-2 text-sm">
+          <Link
+            href="/run?status=aborted"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-orange-400 hover:text-orange-600 dark:hover:text-orange-400 transition-colors"
+          >
+            <AlertTriangle size={14} className="text-orange-500" />
+            See aborted runs
+          </Link>
+          <Link
+            href="/conversation?project=_global"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-slate-400 transition-colors"
+          >
+            <Pin size={14} className="text-slate-400" />
+            Global conversations
+          </Link>
+        </nav>
 
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>

@@ -80,7 +80,7 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
             \u2022 Line 2 groups agent name + project badge + relative
               timestamp together \u2014 the timestamp is now directly
               adjacent to the project name, as requested. */}
-        <div className="flex items-center gap-2 pr-20">
+        <div className="flex items-center gap-2 pr-16">
           {pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
           <span className="text-sm font-medium truncate flex-1">{conv.title}</span>
         </div>
@@ -91,17 +91,22 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
             icon + brand-colored name) separated by middle dots.
             Timestamp now sits right after the agent name instead of
             being pushed to the far right with ml-auto. */}
-        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 min-w-0">
+        {/* Meta row (Franck 2026-05-01 mobile L2):
+            `flex-wrap` so on narrow widths the trailing items wrap
+            below instead of clipping under the absolute action
+            cluster. The cluster is now top-aligned (top-2) so this
+            second row gets the full width. */}
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 min-w-0">
           {conv.projectName ? (
-            <span className="shrink-0 inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 font-mono">
-              <FolderGit2 size={11} />
-              {conv.projectName}
+            <span className="shrink-0 inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 font-mono max-w-full truncate">
+              <FolderGit2 size={11} className="shrink-0" />
+              <span className="truncate">{conv.projectName}</span>
             </span>
           ) : (
             <span className="shrink-0 text-slate-400 italic">no project</span>
           )}
           <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
-          <span className="truncate">{conv.agentName ?? conv.agentSId}</span>
+          <span className="truncate min-w-0">{conv.agentName ?? conv.agentSId}</span>
           <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
           <span className="text-slate-400 shrink-0">{fmtRel(conv.updatedAt)}</span>
         </div>
@@ -112,7 +117,7 @@ export function ConversationCard({ conv }: { conv: ConvSummary }) {
           discoverability poor and was invisible on touch devices.
           The pin icon goes amber when active so the state is legible
           at a glance. */}
-      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white/70 dark:bg-slate-900/70 backdrop-blur px-1 rounded">
+      <div className="absolute right-2 top-2 flex items-center gap-1 bg-white/70 dark:bg-slate-900/70 backdrop-blur px-1 rounded">
         <button
           onClick={togglePin}
           disabled={busy}

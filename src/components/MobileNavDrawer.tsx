@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -54,7 +55,17 @@ export function MobileNavDrawer({
   projectScoped: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const pathname = usePathname() ?? '/';
+
+  // The drawer is rendered through a portal to escape the header's
+  // stacking context (the header uses `backdrop-blur` which creates
+  // a new stacking context, so any z-index on a descendant is
+  // confined inside it). Portaling to <body> guarantees the drawer
+  // and its backdrop layer above the rest of the page.
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Close on route change so tapping a link dismisses the drawer.
   useEffect(() => {
@@ -91,11 +102,49 @@ export function MobileNavDrawer({
         <Menu size={20} />
       </button>
 
+      {mounted &&
+        createPortal(
+          <MobileNavDrawerOverlay
+            open={open}
+            onClose={() => setOpen(false)}
+            items={items}
+            projectScoped={projectScoped}
+            pathname={pathname}
+            itemBase={itemBase}
+          />,
+          document.body,
+        )}
+    </>
+  );
+}
+
+/**
+ * The portal payload: backdrop + slide-in aside. Rendered through
+ * createPortal to <body> so the header's `backdrop-blur` stacking
+ * context cannot trap it.
+ */
+function MobileNavDrawerOverlay({
+  open,
+  onClose,
+  items,
+  projectScoped,
+  pathname,
+  itemBase,
+}: {
+  open: boolean;
+  onClose: () => void;
+  items: MobileNavItem[];
+  projectScoped: boolean;
+  pathname: string;
+  itemBase: string;
+}) {
+  return (
+    <>
       {/* Backdrop — md:hidden so it never covers desktop. */}
       <div
-        onClick={() => setOpen(false)}
+        onClick={onClose}
         aria-hidden
-        className={`md:hidden fixed inset-0 bg-black/40 backdrop-blur-[2px] z-40 transition-opacity duration-200 ${
+        className={`md:hidden fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[60] transition-opacity duration-200 ${
           open ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       />
@@ -105,7 +154,7 @@ export function MobileNavDrawer({
         role="dialog"
         aria-modal="true"
         aria-label="Navigation"
-        className={`md:hidden fixed top-0 left-0 h-full w-[85vw] max-w-[320px] bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 shadow-2xl z-50 transition-transform duration-200 ease-out flex flex-col ${
+        className={`md:hidden fixed top-0 left-0 h-full w-[85vw] max-w-[320px] bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 shadow-2xl z-[70] transition-transform duration-200 ease-out flex flex-col ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -115,7 +164,7 @@ export function MobileNavDrawer({
           </span>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={onClose}
             aria-label="Close navigation menu"
             className="inline-flex items-center justify-center w-10 h-10 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
           >

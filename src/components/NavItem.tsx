@@ -24,8 +24,13 @@ export function NavItem({
   disabled?: boolean;
 }) {
   const pathname = usePathname() ?? '/';
+  // Height aligned with ProjectSwitcher / HeaderIcons / UserMenu (all
+  // h-9) so every element in the top bar sits on the same baseline.
+  // `flex-1 justify-center` makes items split the available nav
+  // space evenly (tab-bar feel) — see Nav.tsx where the parent <nav>
+  // is `flex-1` and there is exactly one consumer of NavItem.
   const base =
-    'flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors';
+    'flex flex-1 items-center justify-center gap-2 h-9 px-3 rounded-md text-sm transition-colors';
 
   if (disabled) {
     return (

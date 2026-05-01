@@ -17,6 +17,8 @@ import {
   Square,
   Trash2,
   Wrench,
+  FolderTree,
+  ListChecks,
   Clock,
   Pin,
   PinOff,
@@ -1433,61 +1435,50 @@ function ChatPageInner({
               New chat. `ml-auto` pushes the cluster regardless of
               whether the title/agent column is wide or narrow. */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            {currentProject && (
-              <span
-                // Status chip colors pull from the semantic tokens
-                // (danger/success/warning) instead of raw red/green/
-                // amber shades so all status indicators across the
-                // app stay in lockstep with the design system.
-                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors ${
-                  mcpStatus === 'ready'
-                    ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
-                    : mcpStatus === 'starting'
-                      ? 'border-amber-300 dark:border-amber-800 text-warning-strong dark:text-amber-400 bg-warning-subtle dark:bg-amber-950/30'
-                      : mcpStatus === 'error'
-                        ? 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
-                        : 'border-slate-300 dark:border-slate-700 text-slate-500'
-                }`}
-                title={
-                  mcpServerId
-                    ? `MCP fs tools active (serverId=${mcpServerId})`
-                    : 'MCP fs tools inactive'
-                }
-              >
-                <Wrench size={12} />
-                {mcpStatus === 'ready'
-                  ? `fs · ${currentProject}`
-                  : mcpStatus === 'starting'
-                    ? `starting…`
-                    : mcpStatus === 'error'
-                      ? 'fs error'
-                      : `fs idle`}
-              </span>
-            )}
             {/*
-              Task-runner MCP status chip (Franck 2026-04-25 11:51).
-              Mirrors the fs-cli chip so the user can see at a glance
-              whether list_tasks / run_task / dispatch_task are
-              actually exposed to the agent. Two states only \u2014 either
-              a serverId is registered ("ready") or it isn't
-              ("inactive"). No "starting" because the parallel ensure
-              completes before the chat is interactive.
+              MCP tool status indicators (Franck 2026-05-01).
+              Compact icon-only chips: one icon per MCP server, colored
+              green when the server is registered/ready, red otherwise.
+              Hover tooltip carries the human-readable status. Replaces
+              the previous text chips ("fs · <project>", "tasks · ready")
+              to free up header space.
             */}
             {currentProject && (
               <span
-                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors ${
+                className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
+                  mcpStatus === 'ready'
+                    ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
+                    : 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
+                }`}
+                title={
+                  mcpStatus === 'ready'
+                    ? `MCP fs tools active on ${currentProject}${mcpServerId ? ` (serverId=${mcpServerId})` : ''}`
+                    : mcpStatus === 'starting'
+                      ? 'MCP fs tools starting…'
+                      : mcpStatus === 'error'
+                        ? 'MCP fs tools failed to start'
+                        : 'MCP fs tools inactive'
+                }
+                aria-label={`fs MCP ${mcpStatus}`}
+              >
+                <FolderTree size={14} />
+              </span>
+            )}
+            {currentProject && (
+              <span
+                className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
                   taskRunnerServerId
                     ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
-                    : 'border-slate-300 dark:border-slate-700 text-slate-500'
+                    : 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
                 }`}
                 title={
                   taskRunnerServerId
                     ? `KDust task-runner MCP active (serverId=${taskRunnerServerId}) — list_tasks / run_task / dispatch_task / wait_for_run available`
                     : 'KDust task-runner MCP inactive — agent cannot dispatch tasks from chat'
                 }
+                aria-label={`task-runner MCP ${taskRunnerServerId ? 'ready' : 'off'}`}
               >
-                <Wrench size={12} />
-                {taskRunnerServerId ? 'tasks · ready' : 'tasks · off'}
+                <ListChecks size={14} />
               </span>
             )}
             {currentId && (() => {

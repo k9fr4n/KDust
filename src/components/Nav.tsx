@@ -3,6 +3,7 @@ import { ProjectSwitcher } from './ProjectSwitcher';
 import { HomeLogo } from './HomeLogo';
 import { NavItem } from './NavItem';
 import { HeaderIcons } from './HeaderIcons';
+import { MobileNavDrawer } from './MobileNavDrawer';
 import { getCurrentProject } from '@/lib/current-project';
 
 export async function Nav() {
@@ -35,10 +36,19 @@ export async function Nav() {
 
   return (
     <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur">
-      <div className="px-4 lg:px-6 h-14 flex items-center gap-4">
+      {/* Header layout (Franck 2026-05-01 mobile L1):
+          - <md: burger drawer | logo | ProjectSwitcher (flex-1) | icons | menu
+          - md+: logo | ProjectSwitcher | horizontal NavItems (flex-1) | icons | menu
+          ProjectSwitcher / HeaderIcons / UserMenu stay in the bar at
+          all widths (1-tap reach). Only the NavItem list moves into
+          the drawer below md. */}
+      <div className="px-3 sm:px-4 lg:px-6 h-14 flex items-center gap-2 sm:gap-3 md:gap-4">
+        <MobileNavDrawer items={main} projectScoped={projectScoped} />
         <HomeLogo />
-        <ProjectSwitcher />
-        <nav className="flex items-center gap-1 flex-1">
+        <div className="flex-1 md:flex-initial min-w-0">
+          <ProjectSwitcher />
+        </div>
+        <nav className="hidden md:flex items-center gap-1 flex-1">
           {main.map((item) => (
             <NavItem
               key={item.label}

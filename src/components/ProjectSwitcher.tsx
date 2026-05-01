@@ -255,7 +255,16 @@ export function ProjectSwitcher() {
             aria-hidden
           />
         <div
-          className="absolute left-0 mt-2 w-[560px] max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col"
+          // Positioning rationale (Franck 2026-05-01):
+          // - Mobile (<md): the trigger is offset from the left edge
+          //   by [burger + logo], so anchoring the panel on `left-0`
+          //   of the trigger pushes its 560px width past the right
+          //   edge of the viewport — which gives the page a phantom
+          //   horizontal scrollbar. We escape the trigger's frame
+          //   with `fixed` and center the panel on the viewport.
+          // - md+: keep the original behaviour (anchored under the
+          //   trigger, GitLab-style).
+          className="fixed left-1/2 -translate-x-1/2 top-[3.75rem] w-[calc(100vw-1.5rem)] max-w-[560px] md:absolute md:left-0 md:translate-x-0 md:top-auto md:mt-2 md:w-[560px] md:max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col"
           style={{ animation: 'kd-pop-in 140ms ease-out' }}
         >
           {/* Search header */}

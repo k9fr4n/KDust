@@ -3,7 +3,6 @@ import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, us
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
-import { UI_FLASH_MS } from '@/lib/constants';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { ChatMessageBubble } from '@/components/ChatMessageBubble';
 import {
@@ -22,7 +21,6 @@ import {
   Clock,
   Pin,
   PinOff,
-  Copy,
   Check,
   Paperclip,
   X as XIcon,
@@ -101,50 +99,6 @@ function elapsed(sinceIso?: string | null, nowMs?: number): string {
   if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${String(m % 60).padStart(2, '0')}m`;
-}
-
-/**
- * Small inline copy-to-clipboard button used in the conversation
- * header strip (for the sId) and in message bubbles (for the raw
- * message content). Shows a check mark for 1.5s after a successful
- * copy; swallows errors silently (clipboard access can be denied
- * in some iframed / non-secure contexts).
- */
-function CopyIdButton({
-  value,
-  label = 'Copy',
-  size = 12,
-  className = '',
-}: {
-  value: string;
-  label?: string;
-  size?: number;
-  className?: string;
-}) {
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      onClick={async (e) => {
-        e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(value);
-          setDone(true);
-          window.setTimeout(() => setDone(false), UI_FLASH_MS);
-        } catch {
-          /* silent */
-        }
-      }}
-      className={
-        'inline-flex items-center gap-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 ' +
-        className
-      }
-      title={done ? 'Copied!' : label}
-      aria-label={label}
-    >
-      {done ? <Check size={size} className="text-green-600" /> : <Copy size={size} />}
-    </button>
-  );
 }
 
 /**
@@ -1336,23 +1290,23 @@ function ChatPageInner({
         {/* Compact single-row toolbar (Franck 2026-04-23 19:27).
             Everything fits on one horizontal line. Two render modes:
               \u2022 Active conversation (currentId != null):
-                [\ud83d\udcac] Title \u00b7 Agent(name as text)
-                       sId [copy] [open-in-dust]
-                                             [MCP] [pin/del] [+New]
+                Title \u00b7 Agent(name as text)
+                                       [open-in-dust] [MCP] [+]
                 Agent is rendered as a muted label (not a combobox)
                 because changing the agent mid-conversation is
                 unsupported by Dust \u2014 the picker was always
                 disabled anyway, so we drop the control entirely.
               \u2022 No conversation (currentId == null):
-                [\ud83d\udcac] <agent select>               [MCP] [+New]
+                <agent select>                       [MCP] [+]
                 Full picker because the user is choosing an agent
                 before their first message.
             Single flex row, min-w-0 + truncate on the title so long
             titles collapse gracefully instead of pushing buttons
             off-screen. */}
         <div className="p-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 min-w-0">
-          <MessageSquare size={16} className="text-slate-400 shrink-0" />
-
+          {/* Leading MessageSquare icon removed (Franck 2026-05-01):
+              the toolbar context is already obvious from the page
+              chrome, the icon was just pushing the title column. */}
           {currentId ? (() => {
             const currentConv = convs.find((c) => c.id === currentId);
             const agentName =
@@ -1364,7 +1318,6 @@ function ChatPageInner({
             // users recognise from dust.tt and what they paste to
             // cross-link. Falls back to the cuid only before the
             // sId has been synced (first-message race).
-            const displayedId = currentConv?.dustConversationSId ?? currentId;
             return (
               <>
                 {/* Title block \u2014 truncates. Agent name is shown as
@@ -1379,14 +1332,12 @@ function ChatPageInner({
                 <span className="text-xs text-slate-500 shrink-0" title="Agent">
                   {'\u00b7 ' + agentName}
                 </span>
-                {/* sId group: monospace id + copy + open-in-dust.
-                    `ml-3` keeps some air between the title block and
-                    the identity group so the eye separates them. */}
+                {/* Open-in-dust link only (Franck 2026-05-01).
+                    The sId code + copy button used to live here but
+                    were removed: users almost always want the external
+                    link, not the raw id. `ml-3` keeps some air between
+                    the title block and the link. */}
                 <span className="ml-3 flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-                  <code className="font-mono" title={displayedId}>
-                    {displayedId}
-                  </code>
-                  <CopyIdButton value={displayedId} />
                   {currentConv?.dustConversationSId && workspaceId && (
                     <a
                       // dust.tt URL shape: /w/<workspaceSId>/assistant/<convSId>
@@ -1481,38 +1432,24 @@ function ChatPageInner({
                 <ListChecks size={14} />
               </span>
             )}
-            {currentId && (() => {
-              const currentConv = convs.find((c) => c.id === currentId);
-              const isPinned = !!currentConv?.pinned;
-              return (
-                <div className="flex items-center gap-1 border border-slate-200 dark:border-slate-800 rounded px-1 py-0.5">
-                  <button
-                    type="button"
-                    onClick={() => void togglePin(currentId, !isPinned)}
-                    title={isPinned ? 'Unpin conversation' : 'Pin conversation'}
-                    aria-label={isPinned ? 'Unpin conversation' : 'Pin conversation'}
-                    className={`p-1 rounded-md transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
-                      isPinned
-                        ? 'text-amber-500'
-                        : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void removeConv(currentId)}
-                    title="Delete conversation"
-                    aria-label="Delete conversation"
-                    className="p-1 rounded-md transition-colors hover:bg-danger-subtle dark:hover:bg-red-950/30 text-slate-400 hover:text-danger-solid dark:hover:text-red-400"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              );
-            })()}
-            <Button onClick={newChat} title="Start a new conversation">
-              <Plus size={14} /> New
+            {/*
+              Pin / Delete buttons used to live here (cluster
+              `[pin/del]`) but Franck removed them on 2026-05-01:
+              the same actions are still available per-row in the
+              sidebar (hover) and on the dashboard, so the toolbar
+              keeps a single right-aligned action: New chat.
+            */}
+            {/* Icon-only button (Franck 2026-05-01). Square padding
+                so the brand square doesn't visually dwarf the
+                neighbouring 28x28 MCP chips. aria-label preserves
+                the action name for screen readers. */}
+            <Button
+              onClick={newChat}
+              title="Start a new conversation"
+              aria-label="Start a new conversation"
+              className="px-1.5"
+            >
+              <Plus size={14} />
             </Button>
           </div>
         </div>

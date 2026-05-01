@@ -167,7 +167,7 @@ export function RunCard({ run }: { run: RunCardData }) {
           <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
           <span className="text-slate-400 shrink-0">{fmtRel(run.startedAt)}</span>
           {run.filesChanged !== null && run.filesChanged !== undefined && (
-            <span className="font-mono shrink-0 text-slate-400 w-full sm:w-auto sm:ml-auto">
+            <span className="font-mono shrink-0 text-slate-400 ml-auto">
               {run.filesChanged}f <span className="text-green-600 dark:text-green-400">+{run.linesAdded ?? 0}</span>/<span className="text-red-600 dark:text-red-400">-{run.linesRemoved ?? 0}</span>
             </span>
           )}

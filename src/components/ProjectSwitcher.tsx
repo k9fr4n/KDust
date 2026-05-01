@@ -228,7 +228,12 @@ export function ProjectSwitcher() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 max-w-[320px]"
+        // h-9 matches NavItem / HeaderIcons / UserMenu so all top-bar
+        // elements sit on the same baseline. Width is capped tight on
+        // md (where the horizontal NavItems compete for space) and
+        // relaxed on lg+. On mobile the parent wrapper carries
+        // `flex-1 min-w-0` to let the truncate kick in.
+        className="flex items-center gap-2 h-9 px-3 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 w-full md:w-auto md:max-w-[200px] lg:max-w-[260px]"
         title={triggerLabel}
       >
         <FolderGit2 size={14} className="shrink-0" />

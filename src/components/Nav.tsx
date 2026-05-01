@@ -42,13 +42,23 @@ export async function Nav() {
           ProjectSwitcher / HeaderIcons / UserMenu stay in the bar at
           all widths (1-tap reach). Only the NavItem list moves into
           the drawer below md. */}
-      <div className="px-3 sm:px-4 lg:px-6 h-14 flex items-center gap-2 sm:gap-3 md:gap-4">
+      {/* Top bar (Franck 2026-05-01):
+          Unified spec for visual coherence — every interactive
+          element in this row is h-9 with gap-2. Layout:
+          - <md: burger | logo | ProjectSwitcher (flex-1) | icons | menu
+          - md+: logo | ProjectSwitcher (capped) | NavItems (flex-1
+                 splitting the remaining width evenly) | icons | menu
+          The horizontal NavItem list expands to take all available
+          space (each NavItem is `flex-1 justify-center`); the
+          ProjectSwitcher is capped at 200/260px to leave that space.
+      */}
+      <div className="px-3 sm:px-4 lg:px-6 h-14 flex items-center gap-2 md:gap-3">
         <MobileNavDrawer items={main} projectScoped={projectScoped} />
         <HomeLogo />
-        <div className="flex-1 md:flex-initial min-w-0">
+        <div className="flex-1 md:flex-initial md:shrink-0 min-w-0">
           <ProjectSwitcher />
         </div>
-        <nav className="hidden md:flex items-center gap-1 flex-1">
+        <nav className="hidden md:flex items-center gap-2 flex-1 min-w-0">
           {main.map((item) => (
             <NavItem
               key={item.label}
@@ -59,7 +69,7 @@ export async function Nav() {
             />
           ))}
         </nav>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <HeaderIcons />
           <UserMenu />
         </div>

@@ -119,9 +119,9 @@ export function RunCard({ run }: { run: RunCardData }) {
             Status chip moved to *after* the title so the eye reads
             the task first and the state as secondary info (same
             reading order as GitHub Actions / CI dashboards). */}
-        <div className="flex items-center gap-2 pr-20">
+        <div className="flex items-center gap-2 pr-16">
           {pinned && <Pin size={12} className="text-amber-500 shrink-0" />}
-          <span className="text-sm font-medium truncate flex-1">
+          <span className="text-sm font-medium truncate flex-1 min-w-0">
             {run.task?.name ?? '(deleted task)'}
           </span>
           <span
@@ -144,11 +144,16 @@ export function RunCard({ run }: { run: RunCardData }) {
             equivalent for runs), not at the far right. Diff stats
             (files / added / removed) are kept but pushed to the right
             margin as they are a secondary numeric metric. */}
-        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 min-w-0">
+        {/* Meta row (Franck 2026-05-01 mobile L2):
+            `flex-wrap` + `gap-y-0.5` so trailing items wrap below
+            instead of clipping under the absolute action cluster.
+            Diff stats wrap to their own line on narrow widths,
+            stay pushed right (`sm:ml-auto`) on sm+. */}
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 min-w-0">
           {run.task?.projectPath ? (
-            <span className="shrink-0 inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 font-mono">
-              <FolderGit2 size={11} />
-              {run.task.projectPath}
+            <span className="shrink-0 inline-flex items-center gap-1 text-brand-600 dark:text-brand-400 font-mono max-w-full truncate">
+              <FolderGit2 size={11} className="shrink-0" />
+              <span className="truncate">{run.task.projectPath}</span>
             </span>
           ) : (
             <span className="shrink-0 text-slate-400 italic">no project</span>
@@ -156,20 +161,20 @@ export function RunCard({ run }: { run: RunCardData }) {
           {run.task?.kind && (
             <>
               <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
-              <span className="truncate">{run.task.kind}</span>
+              <span className="truncate min-w-0">{run.task.kind}</span>
             </>
           )}
           <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
           <span className="text-slate-400 shrink-0">{fmtRel(run.startedAt)}</span>
           {run.filesChanged !== null && run.filesChanged !== undefined && (
-            <span className="font-mono shrink-0 ml-auto text-slate-400">
+            <span className="font-mono shrink-0 text-slate-400 w-full sm:w-auto sm:ml-auto">
               {run.filesChanged}f <span className="text-green-600 dark:text-green-400">+{run.linesAdded ?? 0}</span>/<span className="text-red-600 dark:text-red-400">-{run.linesRemoved ?? 0}</span>
             </span>
           )}
         </div>
       </Link>
       {/* Action cluster — always visible, same look as ConversationCard. */}
-      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 bg-white/70 dark:bg-slate-900/70 backdrop-blur px-1 rounded">
+      <div className="absolute right-2 top-2 flex items-center gap-1 bg-white/70 dark:bg-slate-900/70 backdrop-blur px-1 rounded">
         <button
           type="button"
           onClick={togglePin}

@@ -353,7 +353,117 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       {paged.length === 0 ? (
         <p className="text-slate-500 text-sm">No cron matches the filters.</p>
       ) : (
-        <table className="w-full text-sm">
+        <>
+        {/* Mobile card list (Franck 2026-05-01 mobile L3, level 1):
+            <lg the 9-column table is too dense to be useful. We render
+            a compact card per task with:
+              row 1: kind-coloured left bar + name + template pill + RunNow
+              row 2: project · agent
+              row 3: enabled chip · last-status chip · last run time
+              row 4: next run (only when scheduled) — manual hidden to save lines
+            Tapping the card lands on /task/:id (full settings page).
+            The desktop table is hidden below `lg`. */}
+        <ul className="lg:hidden space-y-2">
+          {paged.map((c) => {
+            const isRunning = runningIds.has(c.id);
+            const last = c.runs[0];
+            const isGeneric = c.projectPath === null;
+            const isOrchestrator = c.taskRunnerEnabled;
+            const next =
+              c.schedule && c.schedule !== 'manual'
+                ? nextRunAt(c.schedule, c.timezone)
+                : null;
+            const isManual = c.schedule === 'manual' || !c.schedule;
+            const kindBorder = isOrchestrator
+              ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
+              : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
+            const lastStatusCls =
+              last?.status === 'success'
+                ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
+                : last?.status === 'failed'
+                  ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
+                  : last?.status === 'aborted'
+                    ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400'
+                    : last?.status === 'skipped'
+                      ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600';
+            return (
+              <li
+                key={`m-${c.id}`}
+                className={`relative rounded-md border border-slate-200 dark:border-slate-800 ${kindBorder}`}
+              >
+                <Link
+                  href={`/task/${c.id}`}
+                  className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
+                >
+                  <div className="flex items-center gap-2 pr-20">
+                    <span className="text-sm font-medium truncate min-w-0 flex-1">
+                      {c.name}
+                    </span>
+                    {isGeneric && (
+                      <span
+                        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 font-semibold"
+                        title="Generic / reusable task template (no project bound)"
+                      >
+                        template
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-slate-500 min-w-0">
+                    <span className="font-mono text-brand-600 dark:text-brand-400 truncate min-w-0">
+                      {c.projectPath ?? <span className="text-slate-400 italic">no project</span>}
+                    </span>
+                    <span className="text-slate-300 dark:text-slate-600 shrink-0">·</span>
+                    <span className="truncate min-w-0">{c.agentName ?? c.agentSId}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                    <span
+                      className={
+                        c.enabled
+                          ? 'inline-block px-1.5 py-0.5 rounded text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
+                          : 'inline-block px-1.5 py-0.5 rounded text-xs bg-slate-100 dark:bg-slate-800 text-slate-500'
+                      }
+                    >
+                      {c.enabled ? 'on' : 'off'}
+                    </span>
+                    {isRunning ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                        </span>
+                        running
+                      </span>
+                    ) : last ? (
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${lastStatusCls}`}>
+                        {last.status}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">never ran</span>
+                    )}
+                    <span className="text-slate-400 ml-auto">
+                      {last?.finishedAt
+                        ? formatDateTime(last.finishedAt, tz)
+                        : last?.startedAt
+                          ? formatDateTime(last.startedAt, tz)
+                          : '—'}
+                    </span>
+                  </div>
+                  {!isManual && next && (
+                    <div className="mt-0.5 text-[11px] text-slate-400">
+                      next: {formatDateTime(next, tz)}
+                    </div>
+                  )}
+                </Link>
+                <div className="absolute right-2 top-2">
+                  <RunNowButton taskId={c.id} isGeneric={isGeneric} />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
+        <table className="w-full text-sm hidden lg:table">
           <thead className="text-left text-slate-500">
             <tr>
               {/* "Kind" column removed 2026-04-19 13:39 \u2014 replaced
@@ -519,6 +629,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             })}
           </tbody>
         </table>
+        </>
       )}
 
       <Pagination

@@ -208,7 +208,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const dbOrderBy: Prisma.TaskRunOrderByWithRelationInput | Prisma.TaskRunOrderByWithRelationInput[] =
     sort === 'status'  ? { status:    dir } :
     sort === 'task'    ? { task: { name: dir } } :
-    sort === 'project' ? { task: { projectPath: dir } } :
+    sort === 'project' ? [{ projectPath: dir }, { task: { projectPath: dir } }] :
     sort === 'branch'  ? { branch:    dir } :
     sort === 'started' ? { startedAt: dir } :
     { startedAt: 'desc' }; // duration / diff \u2192 in-memory re-sort below
@@ -578,7 +578,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       triggeredBy={(r as unknown as { triggeredBy?: string | null }).triggeredBy ?? null}
                     />
                   </td>
-                  <td className="text-xs font-mono text-slate-500">{r.task?.projectPath ?? '-'}</td>
+                  <td className="text-xs font-mono text-slate-500">{r.projectPath ?? r.task?.projectPath ?? '-'}</td>
                   <td className="text-xs">
                     {/* Started cell is the entry-point to the per-
                         run detail page /run/:id (full agent output,

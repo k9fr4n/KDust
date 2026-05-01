@@ -12,6 +12,25 @@ type SshDebugResponse = {
   ssh: { code: number; out: string };
 };
 
+// Heuristic: git hosting providers signal a successful SSH auth via a
+// well-known greeting in the verbose output, regardless of the exit code
+// (GitHub exits 1 because it denies shell access; GitLab exits 0).
+function classifySsh(out: string): { ok: boolean; message: string } {
+  const m = out.match(/Hi ([^!]+)! You've successfully authenticated/);
+  if (m) return { ok: true, message: `Authenticated as ${m[1]} (GitHub)` };
+  const gl = out.match(/Welcome to GitLab, @([^!]+)!/);
+  if (gl) return { ok: true, message: `Authenticated as ${gl[1]} (GitLab)` };
+  if (/Permission denied \(publickey\)/.test(out))
+    return { ok: false, message: 'Permission denied (publickey) — no matching key on the remote.' };
+  if (/Could not resolve hostname/.test(out))
+    return { ok: false, message: 'Could not resolve hostname — DNS / network issue.' };
+  if (/Connection timed out|Connection refused/.test(out))
+    return { ok: false, message: 'Connection refused or timed out — host unreachable.' };
+  if (/Host key verification failed/.test(out))
+    return { ok: false, message: 'Host key verification failed.' };
+  return { ok: false, message: 'SSH connection did not authenticate.' };
+}
+
 export default function SshDebugPage() {
   const [host, setHost] = useState('github.com');
   const [loading, setLoading] = useState(false);
@@ -56,8 +75,26 @@ export default function SshDebugPage() {
         ))}
       </div>
 
-      {data && (
+      {data && (() => {
+        const status = classifySsh(data.ssh.out);
+        return (
         <div className="space-y-3">
+          <div
+            role="status"
+            className={
+              'rounded-md border px-4 py-3 text-sm font-medium ' +
+              (status.ok
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100'
+                : 'border-red-300 bg-red-50 text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100')
+            }
+          >
+            <div className="flex items-center gap-2">
+              <span aria-hidden>{status.ok ? '✅' : '❌'}</span>
+              <span>
+                {status.ok ? 'SSH OK' : 'SSH KO'} — {host}: {status.message}
+              </span>
+            </div>
+          </div>
           <section>
             <h2 className="font-semibold text-sm">Identity &amp; env</h2>
             <pre className="text-xs bg-slate-100 dark:bg-slate-900 rounded p-2 overflow-x-auto">
@@ -80,7 +117,8 @@ export default function SshDebugPage() {
             </pre>
           </section>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

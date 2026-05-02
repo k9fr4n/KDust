@@ -40,12 +40,12 @@ export function registerRunTaskTool(
           `\n\n` +
           `CONSTRAINTS: nested orchestrators ARE allowed — a child task ` +
           `may itself have task-runner enabled and dispatch its own children. ` +
-          `The chain depth (root run → … → this dispatch) is bounded by ` +
-          `MAX_DEPTH (default 3, override via KDUST_MAX_RUN_DEPTH); a ` +
-          `dispatch that would exceed it is refused with a structured ` +
-          `error. One call at a time — do not attempt parallel run_task ` +
-          `calls from the same orchestrator (use dispatch_task + ` +
-          `wait_for_run for fan-out).`,
+          `The chain depth (root run → … → this dispatch) is bounded ` +
+          `by the operator-tunable maxDepth setting (Settings → Task ` +
+          `Runner; default 3); a dispatch that would exceed it is ` +
+          `refused with a structured error. One call at a time — do ` +
+          `not attempt parallel run_task calls from the same ` +
+          `orchestrator (use dispatch_task + wait_for_run for fan-out).`,
         inputSchema: {
           task: z
             .string()

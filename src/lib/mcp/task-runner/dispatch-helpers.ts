@@ -1,6 +1,6 @@
 import { db } from '../../db';
 import { resolveProjectByPathOrName } from '../../folder-path';
-import { MAX_DEPTH } from './constants';
+import { getTaskRunnerMaxDepth } from '@/lib/config';
 import { resolveTaskForProject } from './resolve-task';
 import type { OrchestratorContext } from './context';
 
@@ -49,10 +49,11 @@ export async function validateDispatch(
   if (!child) {
     return err(`task not found in project "${ctx.projectName}": ${taskRef}`);
   }
+  const maxDepth = await getTaskRunnerMaxDepth();
   if (child.taskRunnerEnabled) {
     console.log(
       `[mcp/task-runner] dispatching nested orchestrator "${child.name}" ` +
-        `(child has taskRunnerEnabled=true; depth is bounded by MAX_DEPTH=${MAX_DEPTH})`,
+        `(child has taskRunnerEnabled=true; depth is bounded by maxDepth=${maxDepth})`,
     );
   }
 
@@ -106,9 +107,9 @@ export async function validateDispatch(
       })
     : null;
   const nextDepth = (parent?.runDepth ?? 0) + 1;
-  if (nextDepth > MAX_DEPTH) {
+  if (nextDepth > maxDepth) {
     return err(
-      `max run depth exceeded (${nextDepth} > ${MAX_DEPTH}). Aborting to prevent runaway recursion.`,
+      `max run depth exceeded (${nextDepth} > ${maxDepth}). Aborting to prevent runaway recursion. Adjust the cap in Settings → Task Runner if a legitimate pipeline needs deeper chains.`,
     );
   }
   return { ok: true, child, projectOverride, nextDepth };

@@ -68,8 +68,12 @@ export function registerEnqueueFollowupTool(
           .string()
           .optional()
           .describe(
-            "Override for the successor's stored prompt. Use a JSON-encoded " +
-              'string when passing structured payload (branch, report, etc.).',
+            'Variable bindings APPENDED to the successor task\'s stored ' +
+              'prompt under a `# Input` section. The successor keeps its ' +
+              'own logic (no replacement); use this to forward KEY/VALUE ' +
+              'parameters such as WORK_DIR, ATTEMPT, FEEDBACK_FILE, etc. ' +
+              'Plain text — newline-separated KEY: VALUE lines is the ' +
+              'idiomatic format.',
           ),
         project: z
           .string()
@@ -95,7 +99,12 @@ export function registerEnqueueFollowupTool(
     },
     async (args) => {
       const taskRef = args.task as string;
-      const promptOverride = (args.input as string | undefined) ?? undefined;
+      // ADR-0008 commit 5 (2026-05-02): `input` is APPENDED to the
+      // target task's stored prompt under a `# Input` section, not
+      // a wholesale replacement. The previous semantics (mapped to
+      // promptOverride, replacing the prompt entirely) lost the
+      // worker's own logic in chain dispatches \u2014 broken by design.
+      const inputAppend = (args.input as string | undefined) ?? undefined;
       const projectArg =
         (args.project as string | undefined)?.trim() || undefined;
       const explicitBaseBranch =
@@ -185,7 +194,7 @@ export function registerEnqueueFollowupTool(
       const childFinished = runTask(child.id, {
         parentRunId: null,
         runDepth: 0,
-        promptOverride,
+        inputAppend,
         projectOverride,
         baseBranchOverride: explicitBaseBranch,
         baseBranchOverrideSource: explicitBaseBranch ? 'explicit' : undefined,

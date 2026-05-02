@@ -728,6 +728,18 @@ Rollout, in three commits on branch `task-runner/decoupled-chain`:
    `docs/task-runner.md` accordingly; scrub stale references
    to `parentRunId` / `runDepth` / `B2` / `B3` / orchestrator
    vocabulary across docs and prompts.
+5. **Commit 5**: fix `input` semantics. Previously
+   `enqueue_followup`'s `input` mapped to `promptOverride`,
+   wholesale-replacing the successor's stored prompt — broken by
+   design in the chain model since each worker would lose its
+   own logic. Now `input` is APPENDED under a `# Input` section
+   via a new `RunTaskOptions.inputAppend` opt; `promptOverride`
+   is preserved for legacy callers that need full replacement.
+   `/api/task/[id]/run` POST learns the same `input` field;
+   `RunNowButton` exposes it via Shift-click (project-bound) or
+   the existing popover (generic). Doc updated in
+   `docs/task-runner.md`.
+
 4. **Commit 4**: collapse the orchestrator/worker role.
    `Task.taskRunnerEnabled`, `AppConfig.orchestratorRunTimeoutMs`,
    `AppConfig.taskRunnerMaxDepth` are dropped (Prisma migration

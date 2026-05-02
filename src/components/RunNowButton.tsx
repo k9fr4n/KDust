@@ -9,12 +9,17 @@ import { UI_FLASH_MS, UI_SAVE_RESET_MS } from '@/lib/constants';
  * Run-now trigger button.
  *
  * Behaviour by task kind:
- *   - Project-bound task (isGeneric=false): single click = fire-and-forget
- *     POST /api/task/:id/run with an empty body.
- *   - Generic task (isGeneric=true): clicking opens a minimalist
- *     project-picker popover. The API rejects a generic run without
- *     a `project` body, so asking the user here avoids a wasted
- *     round-trip and surfaces the choice in the UI.
+ *   - Project-bound task (isGeneric=false):
+ *       - plain click       \u2192 fire-and-forget (no input, no project)
+ *       - shift-click       \u2192 open the popover to provide an input
+ *                              (variable bindings appended to the
+ *                              stored prompt under a `# Input` section,
+ *                              ADR-0008 commit 5)
+ *   - Generic task (isGeneric=true): clicking opens the popover.
+ *     The API rejects a generic run without a `project` body, so
+ *     asking the user here avoids a wasted round-trip and surfaces
+ *     the choice in the UI. The same popover hosts the optional
+ *     input textarea.
  *
  * The `isGeneric` prop is passed by the list / details page from the
  * already-loaded task row. We fetch /api/projects lazily on first open.
@@ -35,10 +40,11 @@ export function RunNowButton({
     Array<{ name: string; branch: string; fsPath: string | null }>
   >([]);
   const [picked, setPicked] = useState('');
+  const [inputText, setInputText] = useState('');
   const router = useRouter();
 
   useEffect(() => {
-    if (!open || projects.length > 0) return;
+    if (!open || projects.length > 0 || !isGeneric) return;
     apiGet<{ projects?: { name: string; branch: string; fsPath: string | null }[] }>(
       '/api/projects',
     )
@@ -46,17 +52,21 @@ export function RunNowButton({
       .catch(() => {
         /* non-fatal: user can still close the popover */
       });
-  }, [open, projects.length]);
+  }, [open, projects.length, isGeneric]);
 
-  const fire = async (projectOverride?: string) => {
+  const fire = async (projectOverride?: string, inputAppend?: string) => {
     setState('running');
     setOpen(false);
     try {
+      const body: { project?: string; input?: string } = {};
+      if (projectOverride) body.project = projectOverride;
+      if (inputAppend) body.input = inputAppend;
       await apiSend(
         'POST',
         `/api/task/${taskId}/run`,
-        projectOverride ? { project: projectOverride } : undefined,
+        Object.keys(body).length > 0 ? body : undefined,
       );
+      setInputText('');
       setState('ok');
       setTimeout(() => {
         setState('idle');
@@ -68,8 +78,11 @@ export function RunNowButton({
     }
   };
 
-  const run = () => {
-    if (isGeneric) {
+  const run = (e: React.MouseEvent) => {
+    // Shift-click on a project-bound task = open popover to type
+    // an input. The popover always opens for generic tasks
+    // (project picker required).
+    if (isGeneric || e.shiftKey) {
       setOpen((v) => !v);
       return;
     }
@@ -96,20 +109,26 @@ export function RunNowButton({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          run();
+          run(e);
         }}
         disabled={state === 'running'}
         className="inline-flex items-center justify-center p-1.5 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-        title={isGeneric ? 'Run now — pick a project' : aria}
+        title={
+          isGeneric
+            ? 'Run now \u2014 pick a project (optional input)'
+            : `${aria} (Shift+click for input variables)`
+        }
         aria-label={aria}
       >
         {icon}
       </button>
 
-      {/* Project picker popover for generic tasks. Kept minimal:
-          right-aligned, small select + Run button. Closes on outside
-          click via a transparent backdrop. */}
-      {isGeneric && open && (
+      {/* Popover: project picker (generic only) + input textarea
+          (always). Right-aligned, closes on outside click via a
+          transparent backdrop. The input goes through to the API
+          as `body.input` and is appended to the task's stored
+          prompt under a `# Input` section (ADR-0008 commit 5). */}
+      {open && (
         <>
           <div
             className="fixed inset-0 z-40"
@@ -117,13 +136,15 @@ export function RunNowButton({
             aria-hidden
           />
           <div
-            className="absolute right-0 mt-1 z-50 w-64 p-2 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs space-y-2"
+            className="absolute right-0 mt-1 z-50 w-80 p-2 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs space-y-2"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="font-medium text-slate-700 dark:text-slate-300">
-              Run this generic task on:
-            </div>
-            <select
+            {isGeneric && (
+              <>
+                <div className="font-medium text-slate-700 dark:text-slate-300">
+                  Run this generic task on:
+                </div>
+                <select
               className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1"
               value={picked}
               onChange={(e) => setPicked(e.target.value)}
@@ -154,7 +175,27 @@ export function RunNowButton({
                   </optgroup>
                 ));
               })()}
-            </select>
+                </select>
+              </>
+            )}
+
+            <div className="font-medium text-slate-700 dark:text-slate-300">
+              Input variables (optional):
+            </div>
+            <textarea
+              className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 font-mono text-[11px] resize-y min-h-[80px]"
+              placeholder={'WORK_DIR: work/foo\nRESOURCE: foo\nDESCRIPTION: \u2026'}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              spellCheck={false}
+              autoFocus={!isGeneric}
+            />
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
+              Appended to the task\u2019s stored prompt under a{' '}
+              <code>{'# Input'}</code> section. Same semantics as{' '}
+              <code>enqueue_followup</code>\u2019s <code>input</code>.
+            </div>
+
             <div className="flex gap-1 justify-end">
               <button
                 type="button"
@@ -165,8 +206,13 @@ export function RunNowButton({
               </button>
               <button
                 type="button"
-                disabled={!picked}
-                onClick={() => void fire(picked)}
+                disabled={isGeneric && !picked}
+                onClick={() =>
+                  void fire(
+                    isGeneric ? picked : undefined,
+                    inputText.trim() || undefined,
+                  )
+                }
                 className="px-2 py-1 rounded bg-brand-500 text-white disabled:opacity-40"
               >
                 Run

@@ -11,18 +11,24 @@ export const runtime = 'nodejs';
  * immediately without holding the request open for the whole run.
  *
  * Optional JSON body:
- *   { project?: string }   — project context override. Required for
+ *   { project?: string,    — project context override. Required for
  *                            generic tasks (projectPath=null); the
  *                            API validates it exists in the Project
  *                            table before dispatch. Rejected for
  *                            project-bound tasks (safety: never run
  *                            a task somewhere it wasn't designed for).
+ *     input?: string }     — variable bindings appended to the task's
+ *                            stored prompt under a `# Input` section
+ *                            (ADR-0008 commit 5). Same semantics as
+ *                            enqueue_followup's `input`: the agent
+ *                            keeps its own logic and just sees these
+ *                            KEY/VALUE lines as parameters.
  */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   // Tolerate empty body (legacy callers).
-  let body: { project?: string } = {};
+  let body: { project?: string; input?: string } = {};
   try {
     const text = await req.text();
     if (text) body = JSON.parse(text);
@@ -30,6 +36,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return badRequest('invalid JSON body');
   }
   const projectArg = body.project?.trim() || undefined;
+  const inputAppend = body.input?.trim() || undefined;
 
   const task = await db.task.findUnique({
     where: { id },
@@ -87,6 +94,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
   void runTask(id, {
     ...(resolvedProjectArg ? { projectOverride: resolvedProjectArg } : {}),
+    ...(inputAppend ? { inputAppend } : {}),
     trigger: 'manual',
     triggeredBy,
   });

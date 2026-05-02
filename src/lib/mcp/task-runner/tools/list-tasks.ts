@@ -46,11 +46,12 @@ export function registerListTasksTool(
     //                        describe_task to keep list_tasks payload
     //                        small.
     //
-    // Self-listing is allowed (the calling orchestrator appears in
-    // its own list_tasks output). Filtering it out would be a footgun:
-    // agents can legitimately re-dispatch themselves with a different
-    // input. The runner already guards against runaway recursion via
-    // runDepth checks.
+    // Self-listing is allowed (the caller appears in its own
+    // list_tasks output). Filtering it out would be a footgun:
+    // agents can legitimately re-enqueue themselves with a different
+    // input as part of an iterative chain. ADR-0008 removed the
+    // runDepth recursion guard; cycle prevention is now the prompt's
+    // responsibility.
     // ---------------------------------------------------------------
     server.registerTool(
       'list_tasks',
@@ -111,7 +112,6 @@ export function registerListTasksTool(
             projectPath: true,
             agentName: true,
             agentSId: true,
-            taskRunnerEnabled: true,
             pushEnabled: true,
             prompt: true,
             description: true,
@@ -128,7 +128,6 @@ export function registerListTasksTool(
           scope: t.projectPath ? 'bound' : 'generic',
           project_path: t.projectPath,
           agent_name: t.agentName ?? t.agentSId,
-          is_orchestrator: !!t.taskRunnerEnabled,
           push_enabled: !!t.pushEnabled,
           prompt_preview:
             t.prompt.length > 200 ? `${t.prompt.slice(0, 200).trim()}\u2026` : t.prompt.trim(),

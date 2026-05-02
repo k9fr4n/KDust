@@ -560,6 +560,21 @@ model TaskRun {
   parentRun     TaskRun?  @relation("TaskRunTree", fields: [parentRunId], references: [id], onDelete: SetNull)
   childRuns     TaskRun[] @relation("TaskRunTree")
 
+  // --- Decoupled chain successor (Franck 2026-05-02, ADR-0008) ---
+  // Forward pointer to the run enqueued via the enqueue_followup MCP
+  // tool. Soft reference (no FK, no cascade): a deleted successor
+  // leaves a dangling pointer that the UI tolerates and the runner
+  // ignores. NULL when this run had no successor or hasn't enqueued
+  // one yet.
+  //
+  // This is the SOLE linkage between runs in the new "decoupled
+  // chain" model. The legacy parentRunId/runDepth columns above are
+  // retained only for historical rows and the legacy tree view; new
+  // chain runs leave them at NULL/0. Cascade-abort is replaced by
+  // the natural property: if a run fails before reaching its
+  // enqueue_followup call, the successor is never created.
+  followupRunId String?
+
   // --- Effective project (Franck 2026-04-29) ---
   // Project context this run actually executed against. Mirrors
   // task.projectPath for bound tasks, and captures the runtime
@@ -577,6 +592,7 @@ model TaskRun {
   @@index([dustConversationSId])
   @@index([parentRunId])
   @@index([projectPath])
+  @@index([followupRunId])
   @@map("CronRun")
 
   commands Command[]

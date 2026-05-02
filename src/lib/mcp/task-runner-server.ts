@@ -57,27 +57,22 @@ import { DustMcpServerTransport } from '@dust-tt/client';
 type ServerWithTransport = import("@modelcontextprotocol/sdk/server/mcp.js").McpServer & { __transport?: import("@dust-tt/client").DustMcpServerTransport };
 import { getDustClient } from '../dust/client';
 
-// ADR-0004 (2026-04-29): one-file-per-tool layout. The six MCP
-// tools (list_tasks, describe_task, update_task_routing, run_task,
-// wait_for_run, dispatch_task) live each in their own module under
-// ./task-runner/tools/, and the shared dispatch helpers
-// (resolveB2B3, validateDispatch, formatRunResult, getParentTaskName,
-// MAX_DEPTH, resolveTaskForProject) live next to them. This file is
-// now a thin assembly: build the OrchestratorContext, create the
-// MCP server, register each tool, attach the transport.
+// ADR-0004 (2026-04-29): one-file-per-tool layout. The four
+// remaining MCP tools (list_tasks, describe_task,
+// update_task_routing, enqueue_followup) each live in their own
+// module under ./task-runner/tools/. Shared helpers
+// (formatRunResult, getParentTaskName, resolveTaskForProject) live
+// next to them. This file is a thin assembly: build the
+// OrchestratorContext, create the MCP server, register each tool,
+// attach the transport. ADR-0008 (2026-05-02) removed the legacy
+// run_task / wait_for_run / dispatch_task tools and their
+// helpers (b2b3.ts, dispatch-helpers.ts).
 import type { OrchestratorContext } from './task-runner/context';
-import { resolveB2B3 } from './task-runner/b2b3';
 import { registerListTasksTool } from './task-runner/tools/list-tasks';
 import { registerDescribeTaskTool } from './task-runner/tools/describe-task';
 import { registerUpdateTaskRoutingTool } from './task-runner/tools/update-task-routing';
-import { registerRunTaskTool } from './task-runner/tools/run-task';
-import { registerWaitForRunTool } from './task-runner/tools/wait-for-run';
-import { registerDispatchTaskTool } from './task-runner/tools/dispatch-task';
+import { registerEnqueueFollowupTool } from './task-runner/tools/enqueue-followup';
 import { MCP_REGISTRATION_TIMEOUT_MS } from '../constants';
-
-// resolveB2B3 is re-exported because src/lib/mcp/registry.ts
-// (chat-mode dispatch path) imports it from here.
-export { resolveB2B3 };
 
 export interface TaskRunnerHandle {
   orchestratorRunId: string | null;
@@ -102,18 +97,17 @@ export async function startTaskRunnerServer(
 
   const server = new McpServer({ name: 'task-runner', version: '0.1.0' });
 
-  // 6 MCP tools registered through one-file-per-tool modules
-  // (ADR-0004, 2026-04-29). Shared helpers live in helpers.ts
-  // and dispatch-helpers.ts. The OrchestratorContext is the
-  // single channel by which projectName + orchestratorRunId
-  // reach each tool \u2014 closures no longer capture them.
+  // 4 MCP tools registered through one-file-per-tool modules
+  // (ADR-0004, 2026-04-29). Shared helpers live in helpers.ts.
+  // The OrchestratorContext is the single channel by which
+  // projectName + orchestratorRunId reach each tool \u2014 closures
+  // no longer capture them. ADR-0008 (2026-05-02) trimmed the
+  // legacy hierarchical trio.
   const ctx: OrchestratorContext = { orchestratorRunId, projectName };
   registerListTasksTool(server, ctx);
   registerDescribeTaskTool(server, ctx);
   registerUpdateTaskRoutingTool(server, ctx);
-  registerRunTaskTool(server, ctx);
-  registerWaitForRunTool(server, ctx);
-  registerDispatchTaskTool(server, ctx);
+  registerEnqueueFollowupTool(server, ctx);
 
 
   const HEARTBEAT_MS = Math.max(

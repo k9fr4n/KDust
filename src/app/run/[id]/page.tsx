@@ -94,10 +94,16 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   });
   if (!run) return notFound();
 
-  // Lineage (Franck 2026-04-20 22:58): parent + direct children to
-  // materialise the orchestrator tree. We stop at one level of
-  // children; full-tree view would need a recursive CTE and is not
-  // worth the complexity for the POC \u2014 users can click through.
+  // Lineage. Two flavours coexist after ADR-0008 (2026-05-02):
+  //   - Legacy hierarchical tree (parentRunId / childRuns) for runs
+  //     created before the decoupled-chain rewrite. Kept for
+  //     historical visibility; new runs leave parentRunId=NULL.
+  //   - Decoupled chain (followupRunId) for new runs. The forward
+  //     pointer goes from THIS run to its successor; the reverse
+  //     ("predecessor") is found by looking for the run whose
+  //     followupRunId equals THIS run's id.
+  // We surface both in the UI so a chain crossing the migration
+  // boundary stays walkable.
   const parentRun = run.parentRunId
     ? await db.taskRun.findUnique({
         where: { id: run.parentRunId },
@@ -107,6 +113,17 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   const childRuns = await db.taskRun.findMany({
     where: { parentRunId: run.id },
     orderBy: { startedAt: 'asc' },
+    include: { task: { select: { name: true } } },
+  });
+  // ADR-0008 forward chain.
+  const followupRun = run.followupRunId
+    ? await db.taskRun.findUnique({
+        where: { id: run.followupRunId },
+        include: { task: { select: { name: true } } },
+      })
+    : null;
+  const predecessorRun = await db.taskRun.findFirst({
+    where: { followupRunId: run.id },
     include: { task: { select: { name: true } } },
   });
 
@@ -273,55 +290,103 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           has a parent, has children, or its own runDepth > 0.
           Otherwise the whole block is hidden to avoid clutter on
           regular (top-level) runs. */}
-      {(parentRun || childRuns.length > 0 || run.runDepth > 0) && (
+      {(parentRun ||
+        childRuns.length > 0 ||
+        run.runDepth > 0 ||
+        followupRun ||
+        predecessorRun) && (
         <section className="mb-6 rounded-md border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 p-3 text-sm">
           <h2 className="text-xs uppercase tracking-wide text-indigo-700 dark:text-indigo-300 mb-2">
-            Orchestration lineage
-            <span className="ml-2 text-[10px] text-slate-500 normal-case">
-              depth {run.runDepth}
-              {childRuns.length > 0 && ` · ${childRuns.length} child run${childRuns.length > 1 ? 's' : ''}`}
-            </span>
+            Run lineage
           </h2>
-          {parentRun && (
+
+          {/* ADR-0008 decoupled chain: forward + backward pointers via
+              followupRunId. Independent of the legacy parent/child
+              tree below; both can coexist on transitional runs. */}
+          {predecessorRun && (
             <div className="mb-2">
-              <span className="text-slate-500 text-xs">▲ Parent run: </span>
+              <span className="text-slate-500 text-xs">◀ Previous run in chain: </span>
               <Link
-                href={`/run/${parentRun.id}`}
+                href={`/run/${predecessorRun.id}`}
                 className="underline font-mono text-xs hover:text-brand-500"
               >
-                {parentRun.id.slice(0, 8)}
-              </Link>
-              {' '}
+                {predecessorRun.id.slice(0, 8)}
+              </Link>{' '}
               <span className="text-slate-500">— task</span>{' '}
-              <span className="font-mono text-xs">{parentRun.task?.name ?? '(deleted)'}</span>
-              {' '}
-              <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${badgeClass(parentRun.status)}`}>
-                {parentRun.status}
+              <span className="font-mono text-xs">{predecessorRun.task?.name ?? '(deleted)'}</span>{' '}
+              <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${badgeClass(predecessorRun.status)}`}>
+                {predecessorRun.status}
               </span>
             </div>
           )}
-          {childRuns.length > 0 && (
-            <div>
-              <div className="text-slate-500 text-xs mb-1">▼ Child runs (invoked via run_task, sequential):</div>
-              <ol className="space-y-1 pl-4 border-l border-indigo-300 dark:border-indigo-800">
-                {childRuns.map((c, i) => (
-                  <li key={c.id} className="text-xs flex items-center gap-2">
-                    <span className="text-slate-400 font-mono">#{i + 1}</span>
-                    <Link href={`/run/${c.id}`} className="underline font-mono hover:text-brand-500">
-                      {c.id.slice(0, 8)}
-                    </Link>
-                    <span className="font-mono">{c.task?.name ?? '(deleted)'}</span>
-                    <span className={`px-1.5 rounded border text-[10px] uppercase ${badgeClass(c.status)}`}>
-                      {c.status}
-                    </span>
-                    {c.finishedAt && (
-                      <span className="text-slate-400">
-                        {((c.finishedAt.getTime() - c.startedAt.getTime()) / 1000).toFixed(1)}s
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ol>
+          {followupRun && (
+            <div className="mb-2">
+              <span className="text-slate-500 text-xs">▶ Successor enqueued: </span>
+              <Link
+                href={`/run/${followupRun.id}`}
+                className="underline font-mono text-xs hover:text-brand-500"
+              >
+                {followupRun.id.slice(0, 8)}
+              </Link>{' '}
+              <span className="text-slate-500">— task</span>{' '}
+              <span className="font-mono text-xs">{followupRun.task?.name ?? '(deleted)'}</span>{' '}
+              <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${badgeClass(followupRun.status)}`}>
+                {followupRun.status}
+              </span>
+            </div>
+          )}
+
+          {/* Legacy hierarchical tree (parentRunId / childRuns).
+              Pre-ADR-0008 runs only; new runs leave parentRunId=NULL. */}
+          {(parentRun || childRuns.length > 0 || run.runDepth > 0) && (
+            <div className="mt-2 pt-2 border-t border-indigo-200 dark:border-indigo-900/60">
+              <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+                Legacy hierarchy
+                <span className="ml-2 normal-case">
+                  depth {run.runDepth}
+                  {childRuns.length > 0 && ` · ${childRuns.length} child run${childRuns.length > 1 ? 's' : ''}`}
+                </span>
+              </div>
+              {parentRun && (
+                <div className="mb-2">
+                  <span className="text-slate-500 text-xs">▲ Parent run: </span>
+                  <Link
+                    href={`/run/${parentRun.id}`}
+                    className="underline font-mono text-xs hover:text-brand-500"
+                  >
+                    {parentRun.id.slice(0, 8)}
+                  </Link>{' '}
+                  <span className="text-slate-500">— task</span>{' '}
+                  <span className="font-mono text-xs">{parentRun.task?.name ?? '(deleted)'}</span>{' '}
+                  <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${badgeClass(parentRun.status)}`}>
+                    {parentRun.status}
+                  </span>
+                </div>
+              )}
+              {childRuns.length > 0 && (
+                <div>
+                  <div className="text-slate-500 text-xs mb-1">▼ Child runs (legacy, sequential):</div>
+                  <ol className="space-y-1 pl-4 border-l border-indigo-300 dark:border-indigo-800">
+                    {childRuns.map((c, i) => (
+                      <li key={c.id} className="text-xs flex items-center gap-2">
+                        <span className="text-slate-400 font-mono">#{i + 1}</span>
+                        <Link href={`/run/${c.id}`} className="underline font-mono hover:text-brand-500">
+                          {c.id.slice(0, 8)}
+                        </Link>
+                        <span className="font-mono">{c.task?.name ?? '(deleted)'}</span>
+                        <span className={`px-1.5 rounded border text-[10px] uppercase ${badgeClass(c.status)}`}>
+                          {c.status}
+                        </span>
+                        {c.finishedAt && (
+                          <span className="text-slate-400">
+                            {((c.finishedAt.getTime() - c.startedAt.getTime()) / 1000).toFixed(1)}s
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
             </div>
           )}
         </section>

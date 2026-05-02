@@ -147,6 +147,17 @@ export interface RunTaskOptions {
   // parent TaskRun, so the MCP server passes orchestratorRunId=null
   // through to runTask. Persisted as TaskRun.parentRunId=null.
   parentRunId?: string | null;
+  /**
+   * Run ID of the predecessor in a decoupled-chain dispatch
+   * (ADR-0008). Used ONLY by preflight's concurrency-lock bypass:
+   * the predecessor is typically still flagged 'running' in the
+   * milliseconds between its enqueue_followup call and its own
+   * completion, and would otherwise block the successor on the
+   * project lock. Distinct from parentRunId — which stays null
+   * in the decoupled model so the successor is a fresh top-level
+   * run with no lineage inheritance.
+   */
+  predecessorRunId?: string | null;
   runDepth?: number;
   promptOverride?: string;
   /**

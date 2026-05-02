@@ -193,6 +193,14 @@ export function registerEnqueueFollowupTool(
       // the current run is the followupRunId pointer we set below.
       const childFinished = runTask(child.id, {
         parentRunId: null,
+        // Concurrency-lock bypass only (NOT a lineage link): the
+        // current run is still flagged 'running' until its
+        // tool-call returns, and would block the successor on the
+        // per-project lock. Forwarded to preflight's excludeIds.
+        // null when the chat-mode dispatcher calls this tool with
+        // no orchestratorRunId \u2014 in that case there's no
+        // predecessor to skip.
+        predecessorRunId: ctx.orchestratorRunId ?? null,
         runDepth: 0,
         inputAppend,
         projectOverride,

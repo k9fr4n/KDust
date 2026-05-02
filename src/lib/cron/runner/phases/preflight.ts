@@ -165,7 +165,24 @@ export async function runPreflight(
   // are "paused" waiting on their tool call — not actively manipulating
   // the working tree. We therefore EXCLUDE ancestor run IDs from the
   // "concurrent" lookup so the child can take over the lock legitimately.
-  const excludeIds = opts?.parentRunId ? await getAncestorRunIds(opts.parentRunId) : [];
+  // Two distinct sources feed excludeIds:
+  //   1. parentRunId chain  - legacy (pre-ADR-0008) orchestrator
+  //                            spawning a child via run_task. The
+  //                            orchestrator and its ancestors are
+  //                            paused waiting on the tool call.
+  //   2. predecessorRunId   - decoupled-chain successor (ADR-0008
+  //                            commit 5b). The predecessor is
+  //                            still flagged 'running' for the
+  //                            handful of ms between its
+  //                            enqueue_followup call and its own
+  //                            completion; we exclude it so the
+  //                            successor can grab the project lock
+  //                            without the predecessor being
+  //                            mistaken for a sibling collision.
+  const excludeIds = [
+    ...(opts?.parentRunId ? await getAncestorRunIds(opts.parentRunId) : []),
+    ...(opts?.predecessorRunId ? [opts.predecessorRunId] : []),
+  ];
   // Concurrency check uses TaskRun.projectPath (Franck 2026-04-29)
   // instead of joining task.projectPath. This fixes a silent gap on
   // generic tasks where two runs of the same template against the

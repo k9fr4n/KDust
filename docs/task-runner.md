@@ -588,17 +588,24 @@ is the depth counter, incremented at every dispatch and walked via
 `parentRunId`. Configurable:
 
 ```
-env KDUST_MAX_RUN_DEPTH  (default 3)
+Settings → Task Runner → Maximum nested chain depth   (default 3)
+DB column: AppConfig.taskRunnerMaxDepth — clamped [1, 10]
 ```
 
 `runDepth` counts runs in the chain (root = 1, its child = 2, …),
 so the default 3 allows up to **2 nested orchestrator levels**
 above a leaf worker — e.g.
 `provider-orchestrator (1) → provider-pipeline-build (2) →
-provider-coder (3)`. Tightened from 10 on 2026-05-02: real
+provider-coder (3)`. Tightened from 10 to 3 on 2026-05-02: real
 pipelines stay shallow and a low cap surfaces accidental
-recursion fast. Raise the env var if a legitimate pipeline ever
-needs deeper chains.
+recursion fast.
+
+The cap is now an operator-tunable AppConfig field rather than
+an env-time constant (Franck 2026-05-02): change it from
+**Settings → Task Runner** in the UI and the new value takes
+effect on the next dispatch (cache TTL ≤ 60 s, flushed
+immediately by the PATCH endpoint). The legacy
+`KDUST_MAX_RUN_DEPTH` env var is no longer consumed.
 
 When the limit is reached, the dispatch is refused with a clear
 error so runaway recursion (A → B → A) terminates immediately.

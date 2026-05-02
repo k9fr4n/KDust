@@ -7,6 +7,7 @@ import {
   Bot,
   KeyRound,
   MessageCircle,
+  Workflow,
 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 
@@ -64,6 +65,18 @@ export default function SettingsIndex() {
         'Encrypted credentials injected as environment variables into command-runner tasks (GitHub tokens, cloud creds, ...). Values never reach the LLM.',
       icon: <KeyRound size={18} />,
       accent: 'text-rose-600 dark:text-rose-400',
+    },
+    {
+      // Task Runner MCP settings (Franck 2026-05-02). Knobs that
+      // tune the orchestration MCP server (max nested depth, …).
+      // Dedicated page rather than a section in /settings/global so
+      // future task-runner params have a coherent home.
+      href: '/settings/task-runner',
+      title: 'Task Runner',
+      description:
+        'Tune the orchestration MCP server: max nested chain depth (controls how deep an orchestrator may delegate before runs are refused).',
+      icon: <Workflow size={18} />,
+      accent: 'text-amber-600 dark:text-amber-400',
     },
     {
       // Telegram chat bridge (Franck 2026-04-25 22:00). Long-poll

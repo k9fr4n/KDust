@@ -10,8 +10,8 @@ Web UI perso
   10-stage pipeline, branch policy, guard-rails, PR/MR auto-opener,
   dry-run.
 - [`docs/task-runner.md`](docs/task-runner.md) — task-runner MCP server
-  (`run_task`, `dispatch_task`, `wait_for_run`), prompt patterns,
-  passing data between tasks, invariants, troubleshooting, ADR.
+  (`enqueue_followup` and the decoupled chain model, ADR-0008): prompt
+  patterns, passing data between tasks, invariants, troubleshooting.
 
 ## Features
 
@@ -19,7 +19,7 @@ Web UI perso
 - Chat persistant multi-conversations avec sélection d'agent, upload de fichiers.
 - Crons : expression cron + agent + prompt + dossier projet monté + webhook Teams.
 - Pipeline push automatisé : branche dédiée par run, commit/push, ouverture PR/MR, Teams report.
-- Orchestration multi-tâches via MCP `run_task` / `dispatch_task` / `wait_for_run`, avec auto-inherit de la branche parent (B2) et auto-merge-back fast-forward (B3).
+- Orchestration multi-tâches via MCP `enqueue_followup` : modèle de chaîne découplée (ADR-0008), une tâche déclare son successeur en fin de prompt, qui s'exécute comme un run top-level indépendant.
 - Back-office (`/settings`) pour configurer URL Dust, WorkOS, webhook Teams par défaut.
 - **Bridge Telegram** (`/settings/telegram`) : chat interactif avec un agent Dust depuis l'app Telegram, en long-polling sortant — KDust n'est jamais exposé sur Internet.
 - Mono-utilisateur, gate par mot de passe applicatif optionnel (`APP_PASSWORD`).
@@ -653,8 +653,8 @@ are deleted: the orchestrator is now invoked directly with an
 
 ### ADR-0008 — Decoupled chain model (2026-05-02)
 
-**Status**: Proposed (commit 1: additive primitive only — legacy
-hierarchy still functional alongside)
+**Status**: Accepted (commits 1+2+3 landed on
+`task-runner/decoupled-chain`)
 **Date**: 2026-05-02
 **Context**: The orchestrator/worker model (`run_task` synchronous,
 `dispatch_task` fire-and-forget, `wait_for_run` re-await) had grown

@@ -5,7 +5,6 @@ import {
   updateAppConfig,
   isValidTimezone,
   invalidateAppTimezoneCache,
-  invalidateTaskRunnerMaxDepthCache,
 } from '@/lib/config';
 import { badRequest } from "@/lib/api/responses";
 export const runtime = 'nodejs';
@@ -50,14 +49,6 @@ const Patch = z.object({
   telegramAllowedChatIds: z.string().nullable().optional(),
   telegramDefaultAgentSId: z.string().nullable().optional(),
   leafRunTimeoutMs: timeoutMs,
-  orchestratorRunTimeoutMs: timeoutMs,
-  // Task-runner MCP server config (Franck 2026-05-02). Caps
-  // nested orchestrator chain depth. Range [1, 10]:
-  //   - 1 = orchestrators may not dispatch any child (effectively
-  //         disables nested dispatching);
-  //   - 10 = legacy maximum, preserved as a hard ceiling so a
-  //         hand-edited DB row can't grant unbounded recursion.
-  taskRunnerMaxDepth: z.number().int().min(1).max(10).optional(),
   // IANA timezone validated against Node's Intl database. Refuse
   // typos at the boundary rather than silently saving a value
   // that would later break Cron scheduling with an obscure error.
@@ -80,12 +71,6 @@ export async function PATCH(req: Request) {
   // immediately on the scheduler and chat hot paths, without
   // waiting for the 60s TTL to expire.
   if (parsed.data.timezone !== undefined) invalidateAppTimezoneCache();
-  // Flush the task-runner depth cache so a tightened cap takes
-  // effect on the very next dispatch instead of waiting up to
-  // 60s for the in-memory TTL.
-  if (parsed.data.taskRunnerMaxDepth !== undefined) {
-    invalidateTaskRunnerMaxDepthCache();
-  }
   // Reflect Telegram toggle changes immediately: enabling starts
   // the long-poll loop right now, disabling aborts the in-flight
   // getUpdates and lets the loop exit on its next iteration.

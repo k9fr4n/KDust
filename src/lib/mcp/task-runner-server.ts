@@ -38,13 +38,11 @@
  *    is forbidden — it would need a second fs-cli server on a
  *    different project root and hit the multi-session limitation.
  *
- * 4. Anti-recursion. Multi-level orchestration is allowed (a child
- *    with taskRunnerEnabled=true can itself dispatch further tasks);
- *    the only guard is a max chain depth via KDUST_MAX_RUN_DEPTH
- *    (default 10) computed by walking the parentRunId chain. Before
- *    Franck 2026-04-22 19:41 any nested orchestrator was refused
- *    outright, which blocked legitimate multi-level pipelines
- *    (e.g. "test" → "Audit" → sub-tasks).
+ * 4. Anti-recursion. ADR-0008 (2026-05-02) replaced the depth cap
+ *    with structural decoupling: enqueue_followup creates a
+ *    top-level run (no parentRunId, no nesting), so an unbounded
+ *    A→B→A loop simply produces a flat sequence of independent
+ *    runs that the operator can stop at any time from the UI.
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DustMcpServerTransport } from '@dust-tt/client';

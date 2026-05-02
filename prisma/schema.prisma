@@ -28,20 +28,13 @@ model AppConfig {
   // Int32 range (e.g. supergroups -100xxxxxxxxxxx).
   defaultTelegramChatId String?
 
-  // Global wall-clock runtime caps (Franck 2026-04-23 09:56).
-  // Applied when Task.maxRuntimeMs is null. Clamp [30s, 6h] still
-  // enforced in runner.ts — out-of-range values fall back to the
-  // schema defaults below. Stored in ms for parity with task rows.
+  // Global wall-clock runtime cap (Franck 2026-04-23 09:56;
+  // unified by ADR-0008 on 2026-05-02). Applied when
+  // Task.maxRuntimeMs is null. Clamp [30s, 6h] still enforced
+  // in runner.ts. Stored in ms for parity with task rows.
+  // The orchestrator-specific timeout was removed: every chain
+  // step is a top-level run and shares this single cap.
   leafRunTimeoutMs         Int @default(1800000)   // 30 min
-  orchestratorRunTimeoutMs Int @default(3600000)   // 60 min
-
-  // Task-runner MCP server config (Franck 2026-05-02). Caps the
-  // depth of nested orchestrator chains; surfaced in
-  // Settings → Task Runner. runDepth counts runs in the chain
-  // (root=1), so 3 = up to 2 nested orchestrator levels above a
-  // leaf worker (e.g. provider-orchestrator → pipeline-build →
-  // provider-coder). API clamp [1, 10].
-  taskRunnerMaxDepth       Int @default(3)
 
   // Default timezone for schedules and human-facing timestamps
   // (Franck 2026-04-24 17:07). IANA name (e.g. "Europe/Paris",
@@ -310,14 +303,14 @@ model Task {
   //
   // NULLABLE (Franck 2026-04-22): a task with projectPath=null is a
   // "generic" / "template" task, not bound to a specific project.
-  // It can only be invoked via the task-runner MCP tool `run_task`
-  // with a `project` argument, which supplies the project context
-  // for the run (MCP chroot, registry lookup, {{PROJECT}} substitution
-  // in the prompt). Generic tasks MUST have:
-  //   - schedule = 'manual'          (no cron: scheduler has no project context)
-  //   - pushEnabled = false          (no git pipeline without a project)
-  //   - taskRunnerEnabled = false    (generics are leaves, not orchestrators)
-  //   - mandatory = false            (not auto-created with a project)
+  // It can only be invoked via the task-runner MCP tool
+  // `enqueue_followup` with a `project` argument, which supplies
+  // the project context for the run (MCP chroot, registry lookup,
+  // {{PROJECT}} substitution in the prompt). Generic tasks MUST
+  // have:
+  //   - schedule = 'manual'  (no cron: scheduler has no project context)
+  //   - pushEnabled = false  (no git pipeline without a project)
+  //   - mandatory = false    (not auto-created with a project)
   // These invariants are enforced at create/patch time in /api/tasks.
   projectPath    String?
   teamsWebhook   String?

@@ -21,7 +21,7 @@ import { IdentitySection } from './IdentitySection';
 import { ScheduleSection } from './ScheduleSection';
 import { PromptSection } from './PromptSection';
 import { RoutingSection } from './RoutingSection';
-import { OrchestrationSection } from './OrchestrationSection';
+import { ExecutionSection } from './ExecutionSection';
 import { AutomationPushSection } from './AutomationPushSection';
 import { NotificationsSection } from './NotificationsSection';
 
@@ -196,7 +196,7 @@ export function TaskForm({
 
       <PromptSection form={form} setForm={setForm} />
       <RoutingSection form={form} setForm={setForm} />
-      <OrchestrationSection
+      <ExecutionSection
         form={form}
         setForm={setForm}
         taskId={taskId}

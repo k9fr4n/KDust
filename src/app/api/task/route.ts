@@ -62,16 +62,16 @@ const TaskInput = z.object({
   enabled: z.boolean().default(true),
   // automation-push settings
   pushEnabled: z.boolean().default(true),
-  // Orchestration opt-in (Franck 2026-04-20 22:58). When true, the
-  // runner attaches the task-runner MCP server to this task's agent
-  // so it can invoke other tasks via run_task. Default false: the
-  // vast majority of tasks are plain workers; only a dedicated
-  // "orchestrator" should set this.
-  taskRunnerEnabled: z.boolean().default(false),
-  // Per-task wall-clock runtime cap in ms. Null = inherit env
-  // defaults (KDUST_ORCHESTRATOR_TIMEOUT_MS or KDUST_RUN_TIMEOUT_MS).
-  // Clamp to [30s, 6h] applied in runner.ts — out-of-range values
-  // here are accepted but silently ignored at dispatch time.
+  // ADR-0008 (2026-05-02): the legacy `taskRunnerEnabled` toggle
+  // was removed. The task-runner MCP server is now attached
+  // unconditionally; the field is silently accepted but ignored
+  // for backwards compatibility with older clients still posting
+  // the boolean.
+  taskRunnerEnabled: z.boolean().optional(),
+  // Per-task wall-clock runtime cap in ms. Null = inherit
+  // AppConfig.leafRunTimeoutMs (default 30min). Clamp to
+  // [30s, 6h] applied in runner.ts \u2014 out-of-range values here
+  // are accepted but silently ignored at dispatch time.
   maxRuntimeMs: z
     .number()
     .int()
@@ -82,8 +82,7 @@ const TaskInput = z.object({
   // Command-runner opt-in (Franck 2026-04-21 13:39). When true, the
   // runner attaches the command-runner MCP server, giving the agent
   // `run_command` (KDust-side, persisted in Command table, denylist
-  // enforced). Orthogonal to taskRunnerEnabled \u2014 a task can have
-  // either, both, or neither.
+  // enforced).
   commandRunnerEnabled: z.boolean().default(false),
   // Phase 1 (2026-04-19): branch fields are optional overrides.
   // NULL / omitted \u2192 inherit from the parent Project row. An
@@ -97,8 +96,9 @@ const TaskInput = z.object({
   protectedBranches: z.string().nullable().optional().transform((v) => (v ? v : null)),
   // Routing metadata (Franck 2026-04-29, ADR-0002). Optional fields
   // surfaced by the task-runner MCP server (list_tasks /
-  // describe_task) so an orchestrator agent can pick the right
-  // task without parsing the prompt. Validation:
+  // describe_task) so an agent picking its successor via
+  // enqueue_followup can choose the right task without parsing
+  // the prompt. Validation:
   //   - description : free text, trimmed; empty => null
   //   - tags        : array of strings on the wire OR JSON-encoded
   //                   string; stored as JSON-encoded string for
@@ -148,11 +148,10 @@ const TaskInput = z.object({
   }
 }).superRefine((v, ctx) => {
   // Generic-task invariants (Franck 2026-04-22).
-  // A task with projectPath=null is a reusable template dispatched
-  // by run_task(project=...). It cannot be auto-scheduled (the cron
-  // scheduler has no project context) and cannot push (no git pipeline
-  // without a project). The orchestrator flag is forbidden because
-  // generics are leaves in the invocation tree, not roots.
+  // A task with projectPath=null is a reusable template enqueued
+  // via enqueue_followup({ project: ... }). It cannot be auto-
+  // scheduled (the cron scheduler has no project context) and
+  // cannot push (no git pipeline without a project).
   if (v.projectPath === null) {
     if (v.schedule !== 'manual') {
       ctx.addIssue({
@@ -168,12 +167,8 @@ const TaskInput = z.object({
         message: 'generic tasks must have pushEnabled=false (no git pipeline without a project)',
       });
     }
-    // Generic orchestrators are allowed (Franck 2026-04-22 19:47).
-    // A generic task invoked with a project argument carries the
-    // override all the way down: nested run_task calls inherit the
-    // orchestrator's resolved project (see task-runner-server.ts).
-    // MAX_DEPTH still bounds the chain. The previous refusal
-    // blocked legitimate reusable orchestration templates.
+    // ADR-0008 (2026-05-02) collapsed the orchestrator role:
+    // every task can enqueue a successor, generic or not.
   }
 });
 
@@ -186,7 +181,12 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = TaskInput.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error.format());
-  const task = await db.task.create({ data: parsed.data });
+  // ADR-0008: strip the legacy `taskRunnerEnabled` field before
+  // hitting the DB \u2014 the column was dropped, but the validator
+  // still accepts the key for backward compat with old clients.
+  const { taskRunnerEnabled: _legacyTaskRunner, ...createData } = parsed.data;
+  void _legacyTaskRunner;
+  const task = await db.task.create({ data: createData });
   // Arm the scheduler so a newly-created cron-scheduled task starts
   // firing immediately without requiring a server restart.
   await reloadScheduler();

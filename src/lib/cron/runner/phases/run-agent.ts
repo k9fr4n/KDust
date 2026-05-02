@@ -73,7 +73,9 @@ export interface RunAgentArgs {
     protectedBranches: string | null;
     dryRun: boolean;
     maxDiffLines: number;
-    taskRunnerEnabled: boolean;
+    // Forwarded to resolveRunTimeoutMs (./runner/timeout.ts).
+    // Per-task wall-clock cap; null = inherit AppConfig default.
+    maxRuntimeMs: number | null;
     commandRunnerEnabled: boolean;
   };
   /** Effective prompt: opts.promptOverride ?? job.prompt. */

@@ -6,12 +6,12 @@
 export const BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/;
 
 /**
- * Wall-clock runtime caps (Franck 2026-04-23 09:56). Resolution
- * order at runtime: Task.maxRuntimeMs > AppConfig > these defaults.
+ * Wall-clock runtime cap (Franck 2026-04-23 09:56; unified by
+ * ADR-0008 on 2026-05-02). Resolution order: Task.maxRuntimeMs >
+ * AppConfig.leafRunTimeoutMs > DEFAULT_LEAF_TIMEOUT_MS.
  * The clamp range is applied at every level to defuse
  * misconfiguration footguns (negative / zero / absurdly large).
  */
 export const DEFAULT_LEAF_TIMEOUT_MS = 30 * 60 * 1000;       // 30 min
-export const DEFAULT_ORCHESTRATOR_TIMEOUT_MS = 60 * 60 * 1000; // 60 min
 export const TIMEOUT_CLAMP_MIN_MS = 30 * 1000;                // 30 s
 export const TIMEOUT_CLAMP_MAX_MS = 6 * 60 * 60 * 1000;       // 6 h

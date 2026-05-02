@@ -125,12 +125,12 @@ export function AutomationPushSection({
                 </label>
               </div>
 
-              {/* Wall-clock runtime cap. Empty input = null = inherit
-                  env defaults (30min leaf, 1h orchestrator). Users
-                  typically only need this on long orchestrators. */}
+              {/* Wall-clock runtime cap. Empty input = null =
+                  inherit the unified 30min default (ADR-0008
+                  collapsed the orchestrator/worker timeout split). */}
               <label className="block">
                 <span className="text-sm">
-                  Max runtime <span className="text-slate-400 text-xs">(minutes, override; empty = inherit default: {form.taskRunnerEnabled ? '60min orchestrator' : '30min leaf'})</span>
+                  Max runtime <span className="text-slate-400 text-xs">(minutes, override; empty = inherit default 30min)</span>
                 </span>
                 <input
                   type="number"
@@ -138,7 +138,7 @@ export function AutomationPushSection({
                   max={360}
                   className={field}
                   value={form.maxRuntimeMs == null ? '' : Math.round(form.maxRuntimeMs / 60000)}
-                  placeholder={form.taskRunnerEnabled ? '60' : '30'}
+                  placeholder="30"
                   onChange={(e) => {
                     const v = e.target.value.trim();
                     if (!v) {

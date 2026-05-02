@@ -195,33 +195,10 @@ export default function GlobalSettingsPage() {
                   }}
                 />
                 <span className="block mt-1 text-[11px] text-slate-500">
-                  Default: 30 min. Applied to tasks with
-                  <code className="mx-1 font-mono">taskRunnerEnabled=false</code>.
-                </span>
-              </label>
-              <label className="block">
-                <span className="text-sm">Orchestrator task timeout (minutes)</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={360}
-                  className={field}
-                  value={
-                    typeof cfg.orchestratorRunTimeoutMs === 'number'
-                      ? Math.round(cfg.orchestratorRunTimeoutMs / 60000)
-                      : ''
-                  }
-                  onChange={(e) => {
-                    const m = parseInt(e.target.value, 10);
-                    setCfg({
-                      ...cfg,
-                      orchestratorRunTimeoutMs: Number.isFinite(m) && m > 0 ? m * 60000 : cfg.orchestratorRunTimeoutMs,
-                    });
-                  }}
-                />
-                <span className="block mt-1 text-[11px] text-slate-500">
-                  Default: 60 min. Applied to tasks with
-                  <code className="mx-1 font-mono">taskRunnerEnabled=true</code>.
+                  Default: 30 min. Applied to every task run
+                  (ADR-0008 unified the timeout). Per-task override
+                  available via <code className="font-mono">maxRuntimeMs</code>{' '}
+                  on the task edit page.
                 </span>
               </label>
             </div>

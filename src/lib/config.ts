@@ -12,11 +12,6 @@ export interface AppConfigData {
   // Wall-clock runtime caps (Franck 2026-04-23 09:56). Stored in
   // ms; clamped [30s, 6h] by the runner and by the settings API.
   leafRunTimeoutMs: number;
-  orchestratorRunTimeoutMs: number;
-  // Task-runner MCP server config (Franck 2026-05-02). Caps
-  // nested orchestrator chain depth (runDepth). Surfaced in
-  // Settings → Task Runner. Clamped [1, 10] by the API.
-  taskRunnerMaxDepth: number;
   // Default IANA timezone (Franck 2026-04-24 17:07). Used by
   // the scheduler when Task.timezone is null and by the Dust
   // chat userContext so agents report local time correctly.
@@ -42,8 +37,6 @@ export async function getAppConfig(): Promise<AppConfigData> {
       defaultTeamsWebhook: existing.defaultTeamsWebhook,
       defaultTelegramChatId: existing.defaultTelegramChatId,
       leafRunTimeoutMs: existing.leafRunTimeoutMs,
-      orchestratorRunTimeoutMs: existing.orchestratorRunTimeoutMs,
-      taskRunnerMaxDepth: existing.taskRunnerMaxDepth,
       timezone: existing.timezone,
       telegramChatEnabled: existing.telegramChatEnabled,
       telegramAllowedChatIds: existing.telegramAllowedChatIds,
@@ -71,8 +64,6 @@ export async function getAppConfig(): Promise<AppConfigData> {
     defaultTeamsWebhook: created.defaultTeamsWebhook,
     defaultTelegramChatId: created.defaultTelegramChatId,
     leafRunTimeoutMs: created.leafRunTimeoutMs,
-    orchestratorRunTimeoutMs: created.orchestratorRunTimeoutMs,
-    taskRunnerMaxDepth: created.taskRunnerMaxDepth,
     timezone: created.timezone,
     telegramChatEnabled: created.telegramChatEnabled,
     telegramAllowedChatIds: created.telegramAllowedChatIds,
@@ -154,49 +145,11 @@ export function invalidateAppTimezoneCache(): void {
   tzCache = null;
 }
 
-// ---------------------------------------------------------------
-// Task-runner MAX_DEPTH accessor (Franck 2026-05-02).
-//
-// Replaces the previous module-level constant which was seeded
-// once from KDUST_MAX_RUN_DEPTH at process boot. The value now
-// lives on AppConfig so the operator can tune it from the UI
-// without restarting the container; dispatch-helpers.ts calls
-// this on every nested dispatch (cheap, sub-ms on SQLite).
-//
-// Cached briefly to keep dispatch overhead negligible even on
-// fan-out bursts; flushed by invalidateTaskRunnerMaxDepthCache()
-// when the settings PATCH endpoint commits a new value, so the
-// new cap takes effect immediately.
-// ---------------------------------------------------------------
-const TR_MAX_DEPTH_CACHE_TTL_MS = 60_000;
-let trMaxDepthCache: { value: number; expiresAt: number } | null = null;
-
-export async function getTaskRunnerMaxDepth(): Promise<number> {
-  const now = Date.now();
-  if (trMaxDepthCache && trMaxDepthCache.expiresAt > now) {
-    return trMaxDepthCache.value;
-  }
-  try {
-    const cfg = await getAppConfig();
-    // API enforces [1, 10] but defend against a hand-edited DB
-    // row by clamping again here. Out-of-range → schema default.
-    const v =
-      Number.isInteger(cfg.taskRunnerMaxDepth) &&
-      cfg.taskRunnerMaxDepth >= 1 &&
-      cfg.taskRunnerMaxDepth <= 10
-        ? cfg.taskRunnerMaxDepth
-        : 3;
-    trMaxDepthCache = { value: v, expiresAt: now + TR_MAX_DEPTH_CACHE_TTL_MS };
-    return v;
-  } catch {
-    if (trMaxDepthCache) return trMaxDepthCache.value;
-    return 3;
-  }
-}
-
-export function invalidateTaskRunnerMaxDepthCache(): void {
-  trMaxDepthCache = null;
-}
+// ADR-0008 (2026-05-02) removed `taskRunnerMaxDepth`. With the
+// decoupled-chain model every run is top-level (no parent-child
+// hierarchy), so there is no depth to cap. The
+// getTaskRunnerMaxDepth accessor + cache + invalidate helper that
+// used to live here are gone.
 
 /**
  * Validates an IANA timezone identifier. Returns true if Node's

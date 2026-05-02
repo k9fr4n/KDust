@@ -103,15 +103,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   // one of the relevant fields; we need the EFFECTIVE post-patch value).
   const current = await db.task.findUnique({
     where: { id },
-    select: { projectPath: true, schedule: true, pushEnabled: true, taskRunnerEnabled: true },
+    select: { projectPath: true, schedule: true, pushEnabled: true },
   });
   if (!current) return notFound('not_found');
   const effective = {
     projectPath: 'projectPath' in data ? data.projectPath : current.projectPath,
     schedule: 'schedule' in data ? data.schedule : current.schedule,
     pushEnabled: 'pushEnabled' in data ? data.pushEnabled : current.pushEnabled,
-    taskRunnerEnabled:
-      'taskRunnerEnabled' in data ? data.taskRunnerEnabled : current.taskRunnerEnabled,
   };
   if (effective.projectPath === null) {
     const issues: string[] = [];
@@ -119,9 +117,6 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       issues.push('schedule must be "manual" for a generic task');
     if (effective.pushEnabled)
       issues.push('pushEnabled must be false for a generic task');
-    // taskRunnerEnabled is allowed on generic tasks since Franck
-    // 2026-04-22 19:47 (reusable orchestration templates). See the
-    // matching comment in POST /api/task for the rationale.
     if (issues.length > 0) {
       return NextResponse.json(
         { error: `generic task invariants violated: ${issues.join('; ')}` },
@@ -129,6 +124,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       );
     }
   }
+  // ADR-0008: strip the legacy `taskRunnerEnabled` field (column
+  // dropped). The validator still accepts the key for backward
+  // compat with old clients, but it must never reach the DB.
+  const dataAny = data as { taskRunnerEnabled?: unknown };
+  delete dataAny.taskRunnerEnabled;
   const task = await db.task.update({ where: { id }, data });
   await reloadScheduler();
   return NextResponse.json({ task });

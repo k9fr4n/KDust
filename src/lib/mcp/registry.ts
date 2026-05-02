@@ -140,12 +140,13 @@ export async function invalidateFsServer(projectName: string): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  task-runner MCP server registry (Franck 2026-04-20 22:58)                 */
+/*  task-runner MCP server registry (Franck 2026-04-20 22:58;                 */
+/*  ADR-0008 unconditional 2026-05-02)                                        */
 /*                                                                            */
 /*  Unlike fs-cli which is keyed per-project (one server serves all runs of   */
-/*  that project), task-runner is keyed per **orchestrator run**. Each run    */
-/*  that has `taskRunnerEnabled=true` gets its own MCP server, bound to its   */
-/*  runId, so the run_task tool can unambiguously know its parent.            */
+/*  that project), task-runner is keyed per **run**. Every run gets its own   */
+/*  MCP server bound to its runId so the enqueue_followup tool can stamp the  */
+/*  source run's followupRunId pointer without trusting the agent.            */
 /*                                                                            */
 /*  Handles are released by releaseTaskRunnerServer() in runner.ts's finally  */
 /*  block \u2014 keeping them around would leak MCP registrations on Dust's side.*/

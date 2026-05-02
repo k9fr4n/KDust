@@ -15,10 +15,11 @@
 //      file-system tools so it can at least log a meaningful
 //      message instead of crashing the whole pipeline.
 //
-//   2. task-runner (Franck 2026-04-20 22:58). Bound to the
-//      orchestrator's run id so dispatched sibling runs carry an
-//      unambiguous parentRunId without trusting the agent to pass
-//      it. Opt-in per task via job.taskRunnerEnabled.
+//   2. task-runner (Franck 2026-04-20 22:58, decoupled-chain
+//      rewrite 2026-05-02 ADR-0008). Always attached now: every
+//      task can declare its successor via enqueue_followup. Bound
+//      to *this* run's id so the followupRunId pointer is set
+//      without trusting the agent to pass any run_id.
 //
 //   3. command-runner (Franck 2026-04-21 13:39). Provides
 //      `run_command`; invocations are persisted in the `Command`
@@ -50,7 +51,6 @@ export interface SetupMcpArgs {
   runId: string;
   /** Task fields read in this phase (kept minimal). */
   job: {
-    taskRunnerEnabled: boolean;
     commandRunnerEnabled: boolean;
   };
   /** Phase setter bound to this TaskRun. */
@@ -80,20 +80,17 @@ export async function runSetupMcp(
     console.warn(`[cron] MCP register failed: ${(e as Error).message} — running without fs tools`);
   }
 
-  // task-runner (Franck 2026-04-20 22:58). Only attached when the
-  // task opts in via taskRunnerEnabled=true (the "orchestrator"
-  // flag). Grants the agent access to the run_task tool, which can
-  // dispatch sibling tasks in the same project sequentially. Bound
-  // to *this* run's id so run_task calls carry an unambiguous
-  // parent link without trusting the agent to pass it.
-  if (job.taskRunnerEnabled) {
-    try {
-      const trId = await getTaskRunnerServerId(runId, projectFsPath);
-      mcpServerIds = [...(mcpServerIds ?? []), trId];
-      console.log(`[cron] task-runner serverId=${trId}`);
-    } catch (e) {
-      console.warn(`[cron] task-runner register failed: ${(e as Error).message}`);
-    }
+  // task-runner (Franck 2026-04-20 22:58; ADR-0008 2026-05-02
+  // unconditional). Attached for every task: any run can declare
+  // its successor via the enqueue_followup tool. Bound to *this*
+  // run's id so the followupRunId pointer is set without trusting
+  // the agent to pass any run_id.
+  try {
+    const trId = await getTaskRunnerServerId(runId, projectFsPath);
+    mcpServerIds = [...(mcpServerIds ?? []), trId];
+    console.log(`[cron] task-runner serverId=${trId}`);
+  } catch (e) {
+    console.warn(`[cron] task-runner register failed: ${(e as Error).message}`);
   }
 
   // command-runner (Franck 2026-04-21 13:39). Opt-in per task via

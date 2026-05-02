@@ -137,8 +137,9 @@ The runner registers the `fs-cli` MCP server chrooted to
 within the project but nowhere else. This is the ONLY writable
 filesystem surface for the agent during the run.
 
-If `taskRunnerEnabled=true`, the `task-runner` MCP server is also
-registered — see [`docs/task-runner.md`](task-runner.md).
+The `task-runner` MCP server is also registered (always since
+ADR-0008, 2026-05-02) so the agent can declare its successor via
+`enqueue_followup` — see [`docs/task-runner.md`](task-runner.md).
 
 If `commandRunnerEnabled=true`, the `command-runner` MCP server is
 registered with the project chroot and the task's secret bindings.

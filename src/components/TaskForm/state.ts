@@ -45,12 +45,6 @@ export type CronFormValues = {
    */
   pushEnabled: boolean;
   /**
-   * Task-runner opt-in. When true, the agent gets the
-   * `task-runner` MCP server (run_task tool). Only the orchestrator
-   * task should have this on.
-   */
-  taskRunnerEnabled: boolean;
-  /**
    * Command-runner opt-in. Provides `run_command` with a denylist,
    * a chroot to the project tree, and a full audit trail in DB.
    */
@@ -144,7 +138,6 @@ export function buildInitialFormState(
     telegramNotifyEnabled: initial?.telegramNotifyEnabled ?? true,
     enabled: initial?.enabled ?? true,
     pushEnabled: initial?.pushEnabled ?? true,
-    taskRunnerEnabled: initial?.taskRunnerEnabled ?? false,
     commandRunnerEnabled: initial?.commandRunnerEnabled ?? false,
     baseBranch: initial?.baseBranch ?? null,
     branchMode: initial?.branchMode ?? 'timestamped',

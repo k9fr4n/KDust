@@ -93,15 +93,15 @@ export function IdentitySection({
 
           {/* Generic / template task toggle (Franck 2026-04-22).
               When ON, projectPath becomes null and the task becomes
-              a reusable template dispatched by run_task(project=...).
-              Enforced invariants (also validated server-side):
+              a reusable template dispatched via enqueue_followup
+              (project=...). Enforced invariants (also validated
+              server-side):
                 - schedule = manual
                 - pushEnabled = false
-                - taskRunnerEnabled = false
               We force these values client-side on toggle so the user
-              can't save an invalid combination. Re-toggling back to a
-              project-bound task leaves those fields where the user set
-              them (minus pushEnabled which we restore to true — the
+              can't save an invalid combination. Re-toggling back to
+              a project-bound task leaves the other fields untouched
+              (minus pushEnabled which we restore to true — the
               common default). */}
           <label className="flex items-start gap-2 pt-1">
             <input
@@ -112,10 +112,7 @@ export function IdentitySection({
                 if (e.target.checked) {
                   // Generic task: force schedule=manual (no cron
                   // context) and pushEnabled=false (no git pipeline
-                  // without a project). taskRunnerEnabled is PRESERVED
-                  // since 2026-04-22 19:47 — a generic orchestrator
-                  // (reusable pipeline template) is now a legit use
-                  // case.
+                  // without a project).
                   setForm({
                     ...form,
                     projectPath: null,

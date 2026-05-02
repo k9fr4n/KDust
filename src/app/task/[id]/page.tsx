@@ -155,13 +155,7 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
             it pushes". */}
         <div className="col-span-full mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-3 gap-3">
           <div className="col-span-full text-xs uppercase tracking-wide text-slate-400">
-            Task orchestration
-          </div>
-          <div>
-            <span className="text-slate-500">Task runner:</span>{' '}
-            <span className={`font-mono ${task.taskRunnerEnabled ? 'text-green-600 dark:text-green-400' : 'text-slate-400'}`}>
-              {task.taskRunnerEnabled ? 'enabled' : 'disabled'}
-            </span>
+            Shell execution
           </div>
           <div>
             <span className="text-slate-500">Command runner:</span>{' '}
@@ -227,7 +221,7 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
                 <span className="font-mono">
                   {task.maxRuntimeMs != null
                     ? `${Math.round(task.maxRuntimeMs / 60000)} min`
-                    : `default (${task.taskRunnerEnabled ? '60' : '30'} min)`}
+                    : 'default (30 min)'}
                 </span>
                 {task.maxRuntimeMs == null && (
                   <span className="ml-1 text-[10px] text-slate-400" title="Inherited from env default">

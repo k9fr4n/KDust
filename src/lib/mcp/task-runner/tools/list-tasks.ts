@@ -27,11 +27,10 @@ export function registerListTasksTool(
     // `enabled=true` tasks (disabled ones can't be dispatched
     // anyway, exposing them would just confuse the agent). Each
     // entry includes:
-    //   - id + name        : either accepted by run_task / dispatch_task
+    //   - id + name        : accepted by enqueue_followup
     //   - scope            : 'bound' (carries projectPath) or 'generic'
     //   - projectPath      : null for generic, set for bound
     //   - agentName        : human-readable agent label
-    //   - is_orchestrator  : taskRunnerEnabled=true (can dispatch others)
     //   - push_enabled     : whether the run touches git
     //   - prompt_preview   : first ~200 chars of the stored prompt so
     //                        the agent has a hint of what the task does

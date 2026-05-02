@@ -728,6 +728,19 @@ Rollout, in three commits on branch `task-runner/decoupled-chain`:
    `docs/task-runner.md` accordingly; scrub stale references
    to `parentRunId` / `runDepth` / `B2` / `B3` / orchestrator
    vocabulary across docs and prompts.
+4. **Commit 4**: collapse the orchestrator/worker role.
+   `Task.taskRunnerEnabled`, `AppConfig.orchestratorRunTimeoutMs`,
+   `AppConfig.taskRunnerMaxDepth` are dropped (Prisma migration
+   `20260502160000_drop_orchestrator_role`); the task-runner
+   MCP server is now bound to **every** task; the run-time cap
+   is unified on `leafRunTimeoutMs` (30 min default); the
+   per-task UI fieldset becomes "Shell execution & secrets"
+   (just command-runner + secret bindings); the
+   `/settings/task-runner` page is removed; the role-based
+   amber/sky border on `/task` is unified to sky. The legacy
+   boolean is still accepted but ignored on the
+   POST/PATCH `/api/task` endpoints for backward compat with
+   pre-ADR clients.
 
 **Consequences**:
 
@@ -742,7 +755,8 @@ Rollout, in three commits on branch `task-runner/decoupled-chain`:
   away.
 - Orchestrator/worker distinction in tasks UI collapses:
   `taskRunnerEnabled` becomes a plain ACL ("may this task enqueue
-  successors?"), not a role.
+  successors?" turned out to be every task → no toggle needed),
+  not a role.
 
 *Negative*:
 

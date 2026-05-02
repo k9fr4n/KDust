@@ -368,15 +368,16 @@ export default async function TasksPage({ searchParams }: SearchProps) {
             const isRunning = runningIds.has(c.id);
             const last = c.runs[0];
             const isGeneric = c.projectPath === null;
-            const isOrchestrator = c.taskRunnerEnabled;
             const next =
               c.schedule && c.schedule !== 'manual'
                 ? nextRunAt(c.schedule, c.timezone)
                 : null;
             const isManual = c.schedule === 'manual' || !c.schedule;
-            const kindBorder = isOrchestrator
-              ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
-              : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
+            // ADR-0008 (2026-05-02) collapsed the orchestrator/worker
+            // distinction. All bound tasks share the same accent
+            // colour; generic templates are still surfaced via the
+            // violet pill in the name cell.
+            const kindBorder = 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
             const lastStatusCls =
               last?.status === 'success'
                 ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
@@ -510,15 +511,12 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               // EITHER orchestrators or workers, so mapping both
               // dimensions onto the single left-border colour was
               // ambiguous. Split:
-              //   - border colour  = role (amber orch, sky worker)
+              //   - border colour  = unified sky (post-ADR-0008)
               //   - violet pill    = scope (shown only on templates)
-              // Role is the more operationally important bit (can
-              // the task fan out into sub-runs?) so it gets the
-              // dominant visual channel.
-              const isOrchestrator = c.taskRunnerEnabled;
-              const kindBorder = isOrchestrator
-                ? 'border-l-4 border-l-amber-400 dark:border-l-amber-500'
-                : 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
+              // The legacy role channel (amber orch / sky worker)
+              // was removed when ADR-0008 collapsed the
+              // orchestrator/worker distinction.
+              const kindBorder = 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
               return (
                 <ClickableTaskRow key={c.id} taskId={c.id} className={kindBorder}>
                   {/* Name cell. 2026-04-24 19:58: a compact

@@ -17,7 +17,7 @@ backward compat). The management UI is at:
 
 | Flavour       | `projectPath`        | Can run how?                                            |
 |---------------|----------------------|---------------------------------------------------------|
-| **Bound**     | a project name       | cron, UI Run, or `run_task({task})` from an orchestrator |
+| **Bound**     | a project name       | cron, UI Run, or chained from a predecessor via `enqueue_followup` |
 | **Generic**   | `null` ("template")  | UI Run with project picker, or `run_task({task, project})` |
 
 A **bound** task carries its project context in its row. A
@@ -28,18 +28,17 @@ push pipeline (no repo to push to).
 
 ### Visual taxonomy on `/task`
 
-Task kind is **two-dimensional** and rendered with two independent
-channels on the list:
+Since ADR-0008 (2026-05-02) every task can chain a successor via
+`enqueue_followup`, so the orchestrator/worker role distinction is
+gone. Tasks are now characterized by a **single** axis:
 
 | Axis | Values | Visual |
 |------|--------|--------|
-| Role | orchestrator (`taskRunnerEnabled=true`) / worker | left-border colour (amber / sky) |
 | Scope | template (generic) / project-bound | violet `TEMPLATE` pill next to the name |
 
-Any of the four combinations is valid: a template orchestrator is
-shown with an amber border **and** a violet pill, a project worker
-has a sky border and no pill. The legend above the list documents
-both axes.
+The list left-border is now a uniform sky accent. Pre-ADR-0008 the
+border encoded the role (amber orchestrator / sky worker); that
+channel was retired with the toggle.
 
 ### Visibility across project contexts (Franck 2026-04-29)
 
@@ -65,7 +64,6 @@ When `projectPath = null`:
 - `schedule = 'manual'`             — no cron scheduling
 - `pushEnabled = false`             — no git automation
 - `mandatory = false`               — not auto-created with a project
-- `taskRunnerEnabled`               — allowed (reusable orchestrator)
 
 Violations return a structured 400 with the exact invariant that
 failed.
@@ -118,8 +116,8 @@ Scheduler tick frequency: 30s (see `src/lib/cron/scheduler.ts`).
 
 | Field                  | Type | Notes |
 |------------------------|------|-------|
-| `taskRunnerEnabled`    | bool | exposes `run_task` / `dispatch_task` / `wait_for_run` — see [`docs/task-runner.md`](task-runner.md) |
 | `commandRunnerEnabled` | bool | exposes `run_command` (chroot + denylist + Command audit log) |
+| _(task-runner MCP)_    | —    | bound to **every** task since ADR-0008 (2026-05-02). Exposes `enqueue_followup` so any task can declare its successor in a forward-only chain. See [`docs/task-runner.md`](task-runner.md). |
 | `secretBindings`       | TaskSecret[] | per-task env injection for `commandRunnerEnabled` children |
 | `maxRuntimeMs`         | int? | wall-clock cap in ms. Null = env default. See "Runtime cap" below |
 
@@ -136,7 +134,7 @@ routing layer needs a different view of the task.
 | `description`  | string?                                 | 1-3 sentences "what is this task for", written for the routing layer. Distinct from `prompt`. |
 | `tags`         | JSON array of strings (stored as text)  | Cheap keyword matching: `["lint", "ci", "audit"]`. Empty list = `null`. |
 | `inputsSchema` | JSON Schema (stored as text)            | Shape expected for the `input` override on dispatch. Server rejects malformed JSON. |
-| `sideEffects`  | `'readonly' \| 'writes' \| 'pushes'`    | Default `'writes'`. Drives the orchestrator's confirmation gate: `readonly` may be auto-dispatched, `pushes` is the highest gate. |
+| `sideEffects`  | `'readonly' \| 'writes' \| 'pushes'`    | Default `'writes'`. Drives the routing-layer confirmation gate: `readonly` may be auto-enqueued, `pushes` is the highest gate. |
 
 The full schema is exposed only via `describe_task`; `list_tasks`
 returns `has_inputs_schema: true|false` to keep its payload bounded
@@ -258,8 +256,6 @@ UI: `/task/new`. API: `POST /api/task`.
 
 - `pushEnabled`        → forced to `false`
 - `schedule`           → forced to `'manual'`
-- `taskRunnerEnabled`  → preserved (you can have a generic
-  orchestrator, e.g. "multi-project audit template")
 
 The form helper in `src/components/TaskForm.tsx` applies these
 coercions on toggle so the server-side invariants never trip.
@@ -320,7 +316,7 @@ See [`docs/task-runner.md`](task-runner.md). Three tools:
 
 Generic tasks (`projectPath=null`) must have `schedule='manual'`
 and `pushEnabled=false`. Check the TaskForm toggle or edit the
-post body. `taskRunnerEnabled` is allowed since 2026-04-22.
+post body.
 
 ### `diff too large: exceeds maxDiffLines`
 
@@ -350,5 +346,7 @@ Check in order:
 ## See also
 
 - [`docs/task-runner.md`](task-runner.md) — orchestration tools
+- [`docs/push-pipeline.md`](push-pipeline.md) — automation push
+  internals
 - [`docs/push-pipeline.md`](push-pipeline.md) — automation push
   internals

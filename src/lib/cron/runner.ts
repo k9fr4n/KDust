@@ -407,15 +407,15 @@ export async function runTask(
     const protectedList = branchSetup.protectedList;
 
     // [4] MCP fs \u2014 extracted to ./runner/phases/setup-mcp.ts
-    // (ADR-0006 Step E). Registers fs-cli (always), task-runner
-    // (when taskRunnerEnabled), command-runner (when
-    // commandRunnerEnabled). Each registration's failure mode is
-    // identical to the legacy code: warn-and-continue, never abort.
+    // (ADR-0006 Step E; ADR-0008 unconditional task-runner).
+    // Registers fs-cli (always), task-runner (always since
+    // ADR-0008), command-runner (when commandRunnerEnabled).
+    // Each registration's failure mode is identical: warn-and-
+    // continue, never abort.
     const mcpServerIds = await runSetupMcp({
       projectFsPath,
       runId: run.id,
       job: {
-        taskRunnerEnabled: job.taskRunnerEnabled,
         commandRunnerEnabled: job.commandRunnerEnabled,
       },
       setPhase,
@@ -518,122 +518,39 @@ export async function runTask(
     const mergeBackStatus = pushResult.mergeBackStatus;
     const mergeBackDetails = pushResult.mergeBackDetails;
 
-    // [9a] Orchestrator failure propagation (Franck 2026-04-24 22:10).
-    // If this task is an orchestrator (taskRunnerEnabled) and one
-    // or more of its DIRECT children ended in 'failed' / 'aborted',
-    // propagate that failure up the chain: the orchestrator is
-    // marked 'failed' even though its own agent returned cleanly.
-    //
-    // Rationale: without this, an orchestrator's status reflected
-    // only its own agent run. A chain like:
-    //
-    //    orch-A → orch-B → worker-C (failed)
-    //
-    // would show orch-A + orch-B as 'success' and only worker-C as
-    // 'failed', burying the real outcome three clicks deep in the
-    // run tree. Checking only DIRECT children is sufficient for
-    // transitive propagation: each intermediate level flips on its
-    // own children's failures, so a parent sees a failed direct
-    // child and flips in turn.
-    //
-    // Scope: limited to taskRunnerEnabled tasks because those are
-    // the only ones that meaningfully dispatch children via the
-    // MCP run_task. A plain worker that somehow ended up with a
-    // parentRunId pointing elsewhere would not be affected.
-    //
-    // Future escape hatch: if an orchestrator prompt explicitly
-    // treats a child failure as acceptable (retry+succeed, fallback
-    // path), it can expose the "handled" state via a future MCP
-    // tool — kept deliberately simple for now: ANY unhandled
-    // descendant failure = orchestrator failure.
-    let childFailureSummary: string | null = null;
-    if (job.taskRunnerEnabled) {
-      const failedChildren = await db.taskRun.findMany({
-        where: {
-          parentRunId: run.id,
-          status: { in: ['failed', 'aborted'] },
-        },
-        select: {
-          id: true,
-          status: true,
-          error: true,
-          task: { select: { name: true } },
-        },
-        orderBy: { startedAt: 'asc' },
-      });
-      if (failedChildren.length > 0) {
-        childFailureSummary = failedChildren
-          .map((c) => `${c.task.name}[${c.status}]`)
-          .join(', ');
-        console.warn(
-          `[cron] orchestrator "${job.name}" (run ${run.id}) has ` +
-            `${failedChildren.length} failed child run(s): ${childFailureSummary}. ` +
-            `Propagating failure up the chain.`,
-        );
-      }
-    }
+    // [9a] Orchestrator failure propagation removed by ADR-0008
+    // (2026-05-02). The decoupled-chain model has structural
+    // cascade-stop: a run that fails simply never reaches its
+    // enqueue_followup call, so no successor is created. There is
+    // nothing to "propagate up" — there is no parent run to flip.
+    // Each run's status reflects its own agent's outcome, period.
 
     const durationMs = Date.now() - startedAt;
-    if (childFailureSummary) {
-      // Failure path: keep all the computed metadata (diff, commit,
-      // branch, merge-back) so /run/:id remains informative, but
-      // flip status/phase/error/output so the chain reflects the
-      // real outcome. Also explicitly set Task.lastStatus='failed'
-      // so the task list doesn't lie at a glance.
-      await db.taskRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'failed',
-          phase: 'done' satisfies RunPhase,
-          phaseMessage: `Failed via child: ${childFailureSummary.slice(0, 100)}`,
-          error:
-            `Orchestrator's own agent completed, but one or more dispatched ` +
-            `children ended in failure/abort: ${childFailureSummary}. ` +
-            `Inspect the failed children's /run pages for the root cause.`,
-          branch,
-          commitSha,
-          filesChanged,
-          linesAdded,
-          linesRemoved,
-          output: agentText,
-          prUrl,
-          prNumber,
-          prState,
-          mergeBackStatus,
-          mergeBackDetails,
-          finishedAt: new Date(),
-        },
-      });
-      await db.task.update({
-        where: { id: job.id },
-        data: { lastRunAt: new Date(), lastStatus: 'failed' },
-      });
-    } else {
-      await db.taskRun.update({
-        where: { id: run.id },
-        data: {
-          status: 'success',
-          phase: 'done' satisfies RunPhase,
-          phaseMessage: job.dryRun ? 'Done (dry-run, no push)' : 'Completed successfully',
-          branch,
-          commitSha,
-          filesChanged,
-          linesAdded,
-          linesRemoved,
-          output: agentText,
-          prUrl,
-          prNumber,
-          prState,
-          mergeBackStatus,
-          mergeBackDetails,
-          finishedAt: new Date(),
-        },
-      });
-      await db.task.update({
-        where: { id: job.id },
-        data: { lastRunAt: new Date(), lastStatus: job.dryRun ? 'dry-run' : 'success' },
-      });
-    }
+    await db.taskRun.update({
+      where: { id: run.id },
+      data: {
+        status: 'success',
+        phase: 'done' satisfies RunPhase,
+        phaseMessage: job.dryRun ? 'Done (dry-run, no push)' : 'Completed successfully',
+        branch,
+        commitSha,
+        filesChanged,
+        linesAdded,
+        linesRemoved,
+        output: agentText,
+        prUrl,
+        prNumber,
+        prState,
+        mergeBackStatus,
+        mergeBackDetails,
+        finishedAt: new Date(),
+      },
+    });
+    await db.task.update({
+      where: { id: job.id },
+      data: { lastRunAt: new Date(), lastStatus: job.dryRun ? 'dry-run' : 'success' },
+    });
+    const childFailureSummary: string | null = null;
 
     // [10] Notification report (Teams + Telegram) \u2014 extracted to
     // ./runner/phases/notify-success.ts (ADR-0006 Step J). Composes

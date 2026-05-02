@@ -6,7 +6,9 @@ which task to execute next, with what input — enabling multi-step
 pipelines without a DAG engine, YAML, or nested orchestration.
 
 - Source: `src/lib/mcp/task-runner-server.ts`
-- Registered automatically for any task with `taskRunnerEnabled=true`.
+- Registered automatically for **every** task (ADR-0008,
+  2026-05-02). The legacy `taskRunnerEnabled` opt-in was retired
+  along with the orchestrator/worker role distinction.
 - Single server, **four tools**: `list_tasks`, `describe_task`,
   `update_task_routing`, `enqueue_followup`.
 - See [README.md ADR-0008](../README.md) for the design rationale and

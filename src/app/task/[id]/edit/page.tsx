@@ -24,7 +24,6 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
         teamsWebhook: task.teamsWebhook ?? '',
         enabled: task.enabled,
         pushEnabled: task.pushEnabled,
-        taskRunnerEnabled: task.taskRunnerEnabled,
         commandRunnerEnabled: task.commandRunnerEnabled,
         baseBranch: task.baseBranch,
         branchMode: (task.branchMode === 'stable' ? 'stable' : 'timestamped'),

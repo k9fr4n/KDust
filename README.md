@@ -650,3 +650,119 @@ are deleted: the orchestrator is now invoked directly with an
   on one branch — forbidden by current safety guard-rail).
 - No external scheduler / state-file model (the current Dust
   iteration cap is still livable with split + resume).
+
+### ADR-0008 — Decoupled chain model (2026-05-02)
+
+**Status**: Proposed (commit 1: additive primitive only — legacy
+hierarchy still functional alongside)
+**Date**: 2026-05-02
+**Context**: The orchestrator/worker model (`run_task` synchronous,
+`dispatch_task` fire-and-forget, `wait_for_run` re-await) had grown
+brittle on long workflows:
+
+- Synchronous `run_task` must complete within the 60s MCP client
+  timeout. Long pipelines (5+ steps, each minutes long) cascade
+  `pending` payloads that the orchestrator must re-await, doubling
+  the failure surface.
+- `parentRunId` / `runDepth` lineage couples a child's lifetime to
+  its parent's. A parent that times out produces orphan children in
+  `running` state and triggers cascade-abort logic.
+- B2 auto-inherit + B3 auto-merge-back propagate failures across
+  branches in non-obvious ways. Debugging a failure on a 3-level
+  nested chain requires replaying 3 distinct branch states.
+- The mental model ("orchestrator agent A calls worker B which
+  calls worker C") doesn't match how Dust agents actually behave:
+  they're stateless turn-by-turn, with no resumption guarantees
+  across MCP timeouts.
+
+**Decision**: Replace the hierarchical orchestrator/worker model
+with a **decoupled chain**: each run is a fresh top-level execution;
+a run announces its successor via a single MCP tool
+`enqueue_followup({task, input, project?, base_branch?})` called
+toward the END of its prompt. The successor runs as a brand-new
+root run (`parentRunId=NULL`, `runDepth=0`, no B2/B3 inheritance);
+the only inter-run linkage is a forward pointer
+`TaskRun.followupRunId` set on the source run.
+
+MCP surface contract:
+
+| Tool                  | Verdict      |
+|-----------------------|--------------|
+| `list_tasks`          | Kept         |
+| `describe_task`       | Kept         |
+| `update_task_routing` | Kept         |
+| `enqueue_followup`    | NEW          |
+| `run_task`            | REMOVED (commit 2) |
+| `wait_for_run`        | REMOVED (commit 2) |
+| `dispatch_task`       | REMOVED (commit 2) |
+
+Cascade-abort is replaced by a structural property: if a run fails
+or is aborted before reaching the prompt step that calls
+`enqueue_followup`, the successor is never created. No DB-level
+cascade is needed.
+
+Invariants:
+
+- AT MOST ONE successor per run (enforced at write time in the
+  tool: a second call returns an error, not a silent overwrite).
+- Branches are NEVER auto-inherited — `base_branch` must be passed
+  explicitly when the successor needs a non-default branch.
+- Chain depth is NOT capped at the runner level (acceptable v1
+  risk; revisit if cycles appear in production).
+- Pipelines pass data via `input` (string; JSON-encoded when
+  structured) — there is no synchronous return-value channel.
+
+Rollout, in three commits on branch `task-runner/decoupled-chain`:
+
+1. **Commit 1 (this change)**: ADR + additive Prisma migration
+   (`TaskRun.followupRunId`) + `enqueue_followup` registered
+   alongside the legacy trio. No behaviour change for existing
+   tasks.
+2. **Commit 2**: remove `run_task` / `wait_for_run` / `dispatch_task`
+   tool registrations + the `task-runner/tools/{run-task,wait-for-run,
+   dispatch-task}.ts` modules + the `b2b3.ts` / `dispatch-helpers.ts`
+   helpers + the `is_orchestrator` flag in `list_tasks`/
+   `describe_task` outputs. Update setup-mcp / preflight specs.
+3. **Commit 3**: refactor `/run` UI from arborescent tree to
+   linear chain (forward walk via `followupRunId`); rewrite
+   `docs/task-runner.md` accordingly; scrub stale references
+   to `parentRunId` / `runDepth` / `B2` / `B3` / orchestrator
+   vocabulary across docs and prompts.
+
+**Consequences**:
+
+*Positive*:
+
+- One MCP call per chain step. No 60s timeout cascade, no `pending`
+  resume dance, no nested depth budget to tune.
+- Each run is independently replayable: its `input` is a complete
+  payload, its branch is explicit, no parent state to reconstruct.
+- `/run` becomes a flat list with forward chain links; the
+  arborescent tree (and its 200-line BFS in `registry.ts`) goes
+  away.
+- Orchestrator/worker distinction in tasks UI collapses:
+  `taskRunnerEnabled` becomes a plain ACL ("may this task enqueue
+  successors?"), not a role.
+
+*Negative*:
+
+- Existing orchestrator-style task prompts must be REWRITTEN
+  manually — the `run_task` / `wait_for_run` patterns no longer
+  exist. Mitigated by the small number of orchestrator tasks in
+  practice and the docs rewrite.
+- No synchronous result channel: a successor cannot "answer back"
+  to the source run. The source run must encode all decisions in
+  the successor's `input` BEFORE enqueuing. Acceptable trade-off
+  because Dust agents can run their own checks (lint, tsc, tests)
+  inline via `command-runner`/`fs-cli` before deciding what to
+  enqueue.
+- B3 auto-merge-back disappears for chain-mode workflows. Each
+  step that needs a specific branch must pass it via `base_branch`
+  in the successor's `enqueue_followup` call. Long pipelines that
+  accumulate commits on a shared branch are easy (just thread the
+  branch through `input`); pipelines that needed FF-merging back
+  into a parent branch must be redesigned.
+- Cycle protection moves from runner-enforced (`runDepth` cap) to
+  prompt-enforced (the agent must not re-enqueue itself). v1
+  accepts this risk; v2 may add a chain-length cap walked via
+  `followupRunId`.

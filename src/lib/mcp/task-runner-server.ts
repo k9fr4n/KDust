@@ -73,6 +73,7 @@ import { registerUpdateTaskRoutingTool } from './task-runner/tools/update-task-r
 import { registerRunTaskTool } from './task-runner/tools/run-task';
 import { registerWaitForRunTool } from './task-runner/tools/wait-for-run';
 import { registerDispatchTaskTool } from './task-runner/tools/dispatch-task';
+import { registerEnqueueFollowupTool } from './task-runner/tools/enqueue-followup';
 import { MCP_REGISTRATION_TIMEOUT_MS } from '../constants';
 
 // resolveB2B3 is re-exported because src/lib/mcp/registry.ts
@@ -114,6 +115,11 @@ export async function startTaskRunnerServer(
   registerRunTaskTool(server, ctx);
   registerWaitForRunTool(server, ctx);
   registerDispatchTaskTool(server, ctx);
+  // ADR-0008 (2026-05-02): the new decoupled chain primitive. Kept
+  // alongside the legacy hierarchical trio in commit 1; commits 2/3
+  // remove run_task / dispatch_task / wait_for_run and the related
+  // parentRunId/runDepth plumbing.
+  registerEnqueueFollowupTool(server, ctx);
 
 
   const HEARTBEAT_MS = Math.max(

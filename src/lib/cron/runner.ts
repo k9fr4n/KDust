@@ -149,6 +149,24 @@ export interface RunTaskOptions {
   parentRunId?: string | null;
   runDepth?: number;
   promptOverride?: string;
+  /**
+   * Variable bindings appended to the resolved prompt under a
+   * clearly-separated `# Input` section. Use this \u2014 not
+   * promptOverride \u2014 when forwarding KEY/VALUE inputs from a
+   * predecessor (chain), the `/run` UI textarea, or curl. The
+   * stored prompt is preserved verbatim so the worker keeps its
+   * own logic and just receives parameters.
+   *
+   * Layout sent to the agent:
+   *
+   *   <stored prompt with {{PROJECT}} substituted>
+   *
+   *   # Input
+   *   <inputAppend lines>
+   *
+   *   <docker host context footer, if any>
+   */
+  inputAppend?: string;
   projectOverride?: string;
   /**
    * Provenance of this run (see TaskRun.trigger in schema.prisma).
@@ -310,8 +328,16 @@ export async function runTask(
   const basePrompt = rawPrompt
     .replace(/\{\{PROJECT\}\}/g, effectiveProjectPath)
     .replace(/\{\{PROJECT_PATH\}\}/g, `/projects/${effectiveProjectPath}`);
+  // ADR-0008 commit 5 (2026-05-02): inputAppend is the canonical
+  // way to pass KEY/VALUE bindings without clobbering the worker's
+  // own logic. Wrapped in a "# Input" section so the agent can
+  // tell where its instructions end and parameters begin.
+  // Trimmed to drop trailing whitespace; we add a single
+  // surrounding blank line on each side for readability.
+  const trimmedAppend = opts?.inputAppend?.trim();
+  const inputSection = trimmedAppend ? `\n\n# Input\n${trimmedAppend}\n` : '';
   const dockerContext = buildDockerHostContext(effectiveProjectPath);
-  const effectivePrompt = dockerContext ? `${basePrompt}${dockerContext}` : basePrompt;
+  const effectivePrompt = `${basePrompt}${inputSection}${dockerContext ?? ''}`;
   const startedAt = Date.now();
   console.log(`[cron] starting job="${job.name}" agent=${job.agentSId} project=${effectiveProjectPath}${opts?.projectOverride ? ' (via override, task is generic)' : ''} base=${policy.baseBranch} mode=${job.branchMode}`);
 

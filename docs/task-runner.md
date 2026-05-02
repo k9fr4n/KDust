@@ -9,6 +9,19 @@ pipelines without a DAG engine, YAML, or nested orchestration.
 - Registered automatically for **every** task (ADR-0008,
   2026-05-02). The legacy `taskRunnerEnabled` opt-in was retired
   along with the orchestrator/worker role distinction.
+
+### `enqueue_followup` input semantics (commit 5)
+
+The `input` parameter is **APPENDED** to the successor's stored
+prompt under a clearly-separated `# Input` section — it does NOT
+replace the stored prompt. This preserves the worker's own logic
+and lets predecessors forward only the parametric KEY/VALUE
+bindings (WORK_DIR, ATTEMPT, FEEDBACK_FILE, …).
+
+The `/api/task/<id>/run` POST endpoint accepts the same `input`
+field with the same semantics, surfaced on the `/run` page as an
+"Input variables" textarea (Shift-click the Play icon for
+project-bound tasks; always shown for generic tasks).
 - Single server, **four tools**: `list_tasks`, `describe_task`,
   `update_task_routing`, `enqueue_followup`.
 - See [README.md ADR-0008](../README.md) for the design rationale and

@@ -588,11 +588,20 @@ is the depth counter, incremented at every dispatch and walked via
 `parentRunId`. Configurable:
 
 ```
-env KDUST_MAX_RUN_DEPTH  (default 10)
+env KDUST_MAX_RUN_DEPTH  (default 3)
 ```
 
+`runDepth` counts runs in the chain (root = 1, its child = 2, …),
+so the default 3 allows up to **2 nested orchestrator levels**
+above a leaf worker — e.g.
+`provider-orchestrator (1) → provider-pipeline-build (2) →
+provider-coder (3)`. Tightened from 10 on 2026-05-02: real
+pipelines stay shallow and a low cap surfaces accidental
+recursion fast. Raise the env var if a legitimate pipeline ever
+needs deeper chains.
+
 When the limit is reached, the dispatch is refused with a clear
-error so runaway recursion (A → B → A) terminates after 10 runs.
+error so runaway recursion (A → B → A) terminates immediately.
 
 ### Cascade cancellation (parent-dies-children-die)
 

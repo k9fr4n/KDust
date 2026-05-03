@@ -653,7 +653,7 @@ are deleted: the orchestrator is now invoked directly with an
 
 ### ADR-0008 — Decoupled chain model (2026-05-02)
 
-**Status**: Accepted (commits 1+2+3 landed on
+**Status**: Accepted (commits 1+2+3+4+5+5b+5c+6 landed on
 `task-runner/decoupled-chain`)
 **Date**: 2026-05-02
 **Context**: The orchestrator/worker model (`run_task` synchronous,
@@ -792,3 +792,40 @@ Rollout, in three commits on branch `task-runner/decoupled-chain`:
   prompt-enforced (the agent must not re-enqueue itself). v1
   accepts this risk; v2 may add a chain-length cap walked via
   `followupRunId`.
+
+**Follow-up commits** (chain hardening, 2026-05-02 \u2192 2026-05-03):
+
+- **Commit 5b** \u2014 `predecessorRunId` channel on
+  `RunTaskOptions`, used only by `preflight.ts`'s concurrency-lock
+  bypass. The predecessor is still flagged `running` for the few
+  ms between its `enqueue_followup` tool call and its own
+  completion; without this bypass it was treated as a sibling
+  collision and skipped the successor on the per-project lock.
+  Distinct from `parentRunId` (which stays null in the decoupled
+  model so no lineage is reintroduced).
+- **Commit 5c** \u2014 `discardLocalBranch()` helper on `git.ts`,
+  invoked by `measure-diff.ts` no-op short-circuit. When a worker
+  writes only to gitignored paths (typical for chain workers in
+  the `terraform-provider-windows` pipeline) the run finishes
+  without commits and the local `kdust/<task>/<ts>` branch was
+  left dangling. Across long fix-loop chains this accumulated
+  dozens of dead local refs; cleanup is best-effort and never
+  touches origin.
+- **Commit 6** \u2014 **Shared chain branch**. A `CHAIN_BRANCH:`
+  directive parsed out of `inputAppend` in `runner.ts` is
+  forwarded to `branch-setup.ts` as `chainBranchOverride`. When
+  set, the run joins an existing remote branch via
+  `checkoutChainBranch()` (fetch + checkout `origin/<branch>`)
+  instead of composing a fresh `kdust/<task>/<timestamp>` ref. The
+  first worker creates the branch from base; subsequent workers
+  in the chain stack their commits on top. Result: ONE PR per
+  full chain run, with a commit per worker that produced code
+  (schema, impl, tests, fix attempts, docs). Auditable history,
+  reviewable diff, and fix-loop iterations stay visible as
+  individual commits. Prompts of the
+  `terraform-provider-windows` chain (5 tasks) were rewritten to
+  emit and forward `CHAIN_BRANCH`, write to tracked paths
+  (`internal/...`, `docs/resources/...`,
+  `examples/resources/...`, `CHANGELOG.md`), and drop the
+  former `provider-coder MODE=integrate` mass-copy step
+  (no longer needed).

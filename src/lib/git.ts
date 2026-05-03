@@ -358,6 +358,33 @@ export async function checkoutWorkingBranch(
   return toGitResult(r, (code) => `git checkout exited ${code}`);
 }
 
+/**
+ * Discard a local-only working branch (no commits, never pushed)
+ * and switch back to baseBranch. Used by measure-diff's no-op
+ * short-circuit (ADR-0008 commit 5c) so a chain of fix-loop
+ * iterations doesn't accumulate dead `kdust/<task>/<ts>` branches
+ * in the worker checkout.
+ *
+ * Best-effort: every step ignores its own error (the agent may
+ * have already left the worktree in a state where checkout fails;
+ * the next preSync will reset --hard anyway). We DO NOT touch
+ * origin \u2014 a local-only branch is invisible to the remote and
+ * `git push --delete` would error.
+ */
+export async function discardLocalBranch(
+  projectName: string,
+  branch: string,
+  baseBranch: string,
+): Promise<void> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  // Drop any uncommitted noise the agent may have produced; the
+  // next run's preSync would do the same, but doing it here lets
+  // checkout succeed without --force.
+  await runGit(['reset', '--hard', 'HEAD'], cwd);
+  await runGit(['checkout', baseBranch], cwd);
+  await runGit(['branch', '-D', branch], cwd);
+}
+
 /** Return summary of uncommitted changes in the working tree. */
 export async function diffStatFromHead(projectName: string): Promise<DiffStat> {
   const cwd = join(PROJECTS_ROOT, projectName);

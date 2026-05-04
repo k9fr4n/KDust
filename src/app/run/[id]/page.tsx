@@ -241,14 +241,6 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Stop / Rerun buttons (Franck 2026-05-04). Stop is only
-              enabled while the run is active; Rerun only when it
-              has finished AND the parent task still exists. */}
-          <RunDetailActions
-            runId={run.id}
-            taskId={run.taskId}
-            status={run.status}
-          />
           {/* Prominent link to the task config (Franck 2026-04-19
               13:23). The breadcrumb row above already has the task
               name, but users asked for an explicit button-style
@@ -273,6 +265,14 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               Open chat
             </OpenConversationLink>
           )}
+          {/* Run actions cluster (Franck 2026-05-04 reorder):
+              Rerun → Stop → Delete, rendered AFTER View task /
+              Open chat so the navigation buttons stay leftmost. */}
+          <RunDetailActions
+            runId={run.id}
+            taskId={run.taskId}
+            status={run.status}
+          />
         </div>
       </div>
 

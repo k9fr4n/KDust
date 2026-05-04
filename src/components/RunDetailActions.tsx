@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, type MouseEvent } from 'react';
-import { Square, RotateCw, Loader2 } from 'lucide-react';
+import { Square, RotateCw, Trash2, Loader2 } from 'lucide-react';
 import { apiSend, ApiError } from '@/lib/api/client';
 
 /**
@@ -11,14 +11,13 @@ import { apiSend, ApiError } from '@/lib/api/client';
  * Sibling of RunActions but rendered as text+icon buttons in the
  * detail page header instead of icon-only table-row buttons. Same
  * semantics:
- *   - Stop  : POST /api/taskrun/:id/cancel — only when the run is
- *             still running/pending.
- *   - Rerun : POST /api/run/:id/rerun       — only when the run
- *             has finished AND the parent task still exists.
- *
- * Delete is intentionally NOT exposed here: deleting from the
- * detail page would navigate to a 404 immediately. Use /run for
- * that.
+ *   - Rerun  : POST /api/run/:id/rerun       — only when the run
+ *              has finished AND the parent task still exists.
+ *   - Stop   : POST /api/taskrun/:id/cancel  — only when the run
+ *              is still running/pending.
+ *   - Delete : DELETE /api/run/:id — confirms first; on success
+ *              redirects back to /run since the current page would
+ *              otherwise 404 on refresh.
  */
 type Status = 'running' | 'pending' | 'success' | 'failed' | 'aborted' | string;
 
@@ -33,7 +32,7 @@ export function RunDetailActions({
   status: Status;
 }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<null | 'stop' | 'rerun'>(null);
+  const [busy, setBusy] = useState<null | 'stop' | 'rerun' | 'delete'>(null);
 
   const isActive = status === 'running' || status === 'pending';
 
@@ -67,6 +66,20 @@ export function RunDetailActions({
       });
   };
 
+  const del = (ev: MouseEvent) => {
+    ev.preventDefault();
+    if (busy) return;
+    if (!window.confirm('Delete this run? This cannot be undone.')) return;
+    setBusy('delete');
+    apiSend('DELETE', `/api/run/${runId}`)
+      .catch(() => null)
+      .finally(() => {
+        // Hard redirect — the current /run/[id] page would 404 on
+        // refresh once the row is gone.
+        window.location.assign('/run');
+      });
+  };
+
   const baseCls =
     'inline-flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none';
   const dangerCls =
@@ -75,9 +88,33 @@ export function RunDetailActions({
   const successCls =
     baseCls +
     ' border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-green-50 dark:bg-green-950/30 hover:bg-green-100 dark:hover:bg-green-950/50';
+  const neutralCls =
+    baseCls +
+    ' border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:!border-red-300 hover:!text-danger-strong';
 
   return (
     <>
+      <button
+        type="button"
+        onClick={rerun}
+        disabled={!!busy || isActive || !taskId}
+        className={successCls}
+        title={
+          !taskId
+            ? 'Cannot re-run: parent task was deleted'
+            : isActive
+              ? 'Cannot re-run: this run is still active'
+              : 'Re-run this run (inherits its project context)'
+        }
+        aria-label="Re-run this run"
+      >
+        {busy === 'rerun' ? (
+          <Loader2 size={14} className="animate-spin" />
+        ) : (
+          <RotateCw size={14} />
+        )}
+        Rerun
+      </button>
       <button
         type="button"
         onClick={stop}
@@ -99,24 +136,18 @@ export function RunDetailActions({
       </button>
       <button
         type="button"
-        onClick={rerun}
-        disabled={!!busy || isActive || !taskId}
-        className={successCls}
-        title={
-          !taskId
-            ? 'Cannot re-run: parent task was deleted'
-            : isActive
-              ? 'Cannot re-run: this run is still active'
-              : 'Re-run this run (inherits its project context)'
-        }
-        aria-label="Re-run this run"
+        onClick={del}
+        disabled={!!busy}
+        className={neutralCls}
+        title="Delete this run (history only, cannot be undone)"
+        aria-label="Delete run"
       >
-        {busy === 'rerun' ? (
+        {busy === 'delete' ? (
           <Loader2 size={14} className="animate-spin" />
         ) : (
-          <RotateCw size={14} />
+          <Trash2 size={14} />
         )}
-        Rerun
+        Delete
       </button>
     </>
   );

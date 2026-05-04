@@ -30,6 +30,7 @@ import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
+import { RunDetailActions } from '@/components/RunDetailActions';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
@@ -240,6 +241,14 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* Stop / Rerun buttons (Franck 2026-05-04). Stop is only
+              enabled while the run is active; Rerun only when it
+              has finished AND the parent task still exists. */}
+          <RunDetailActions
+            runId={run.id}
+            taskId={run.taskId}
+            status={run.status}
+          />
           {/* Prominent link to the task config (Franck 2026-04-19
               13:23). The breadcrumb row above already has the task
               name, but users asked for an explicit button-style

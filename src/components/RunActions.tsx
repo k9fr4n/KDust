@@ -8,12 +8,14 @@ import { apiSend, ApiError } from '@/lib/api/client';
 /**
  * Per-run action cluster (Franck 2026-04-23 23:46).
  *
- * Lives in the Actions column of the /run table. Renders a subset
- * of buttons depending on the run's status so we never show
- * "Stop" on a finished row or "Rerun" on a still-running one:
+ * Lives in the Actions column of the /run table. Renders Stop +
+ * Rerun + Delete side-by-side; only the relevant one is enabled
+ * for the current status (Franck 2026-05-04 — previously these
+ * alternated, but users wanted both visible at a glance):
  *
- *   running  / pending   → Stop   + Delete
- *   success  / failed  / aborted → Rerun  + Delete
+ *   running / pending           → Stop enabled, Rerun disabled
+ *   success / failed / aborted  → Stop disabled, Rerun enabled
+ *   Delete is always enabled.
  *
  * Wire-up:
  *   - Stop   : POST /api/taskrun/:id/cancel
@@ -129,33 +131,36 @@ export function RunActions({
 
   return (
     <div className="inline-flex items-center gap-1">
-      {isActive ? (
-        <button
-          type="button"
-          onClick={stop}
-          disabled={!!busy}
-          className={dangerCls}
-          title="Stop this run (abort agent stream)"
-          aria-label="Stop run"
-        >
-          {busy === 'stop' ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={rerun}
-          disabled={!!busy || !taskId}
-          className={successCls}
-          title={
-            taskId
-              ? 'Re-run this run (inherits its project context)'
-              : 'Cannot re-run: parent task was deleted'
-          }
-          aria-label="Re-run this run"
-        >
-          {busy === 'rerun' ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={stop}
+        disabled={!!busy || !isActive}
+        className={dangerCls}
+        title={
+          isActive
+            ? 'Stop this run (abort agent stream)'
+            : 'Cannot stop: run already finished'
+        }
+        aria-label="Stop run"
+      >
+        {busy === 'stop' ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
+      </button>
+      <button
+        type="button"
+        onClick={rerun}
+        disabled={!!busy || isActive || !taskId}
+        className={successCls}
+        title={
+          !taskId
+            ? 'Cannot re-run: parent task was deleted'
+            : isActive
+              ? 'Cannot re-run: this run is still active'
+              : 'Re-run this run (inherits its project context)'
+        }
+        aria-label="Re-run this run"
+      >
+        {busy === 'rerun' ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
+      </button>
       <button
         type="button"
         onClick={del}

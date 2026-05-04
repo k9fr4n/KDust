@@ -361,7 +361,7 @@ async function sendChatsPicker(chatId: string): Promise<void> {
 async function applyChatChoice(
   chatId: string,
   conversationId: string,
-): Promise<{ ok: boolean; message: string; title?: string }> {
+): Promise<{ ok: boolean; message: string; title?: string; preview?: string }> {
   const conv = await db.conversation.findUnique({
     where: { id: conversationId },
     select: {
@@ -396,19 +396,62 @@ async function applyChatChoice(
       projectName: conv.projectName,
     },
   });
-  // Drop any pending project / agent choice \u2014 we just rebound
+  // Drop any pending project / agent choice — we just rebound
   // to a concrete conv, that conv's own projectName + agentSId
   // win.
   pendingProject.delete(chatId);
   pendingAgent.delete(chatId);
+
+  // Fetch the most recent message so the user sees what the
+  // thread last said before they type. Returned as a separate
+  // `preview` field so callers can send it AFTER the
+  // confirmation, preserving conversational order. Best-effort:
+  // a DB hiccup here must not break the rebind itself.
+  let preview: string | undefined;
+  try {
+    const last = await db.message.findFirst({
+      where: { conversationId: conv.id },
+      orderBy: { createdAt: 'desc' },
+      select: { role: true, content: true, createdAt: true },
+    });
+    if (last) {
+      const who =
+        last.role === 'agent'
+          ? conv.agentName
+            ? `🤖 ${conv.agentName}`
+            : '🤖 agent'
+          : last.role === 'user'
+            ? '👤 you'
+            : `· ${last.role}`;
+      // Hard-cap the body so the header stays visible after the
+      // sendMessage 4096-byte truncation. 3500 leaves room for
+      // the header + ellipsis.
+      const MAX_BODY = 3500;
+      const body =
+        last.content.length > MAX_BODY
+          ? last.content.slice(0, MAX_BODY) + '…'
+          : last.content;
+      preview = `Last message — ${who} · ${fmtRelative(last.createdAt)}\n\n${body}`;
+    } else {
+      preview = '(no messages yet in this conversation)';
+    }
+  } catch (e) {
+    console.warn(
+      `[telegram] /chat last-message preview failed for conv=${conv.id}: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+
   return {
     ok: true,
     title: conv.title,
     message:
-      `\u2705 Entered conversation "${conv.title}"${
+      `✅ Entered conversation "${conv.title}"${
         conv.agentName ? ` (agent: ${conv.agentName})` : ''
       }${conv.projectName ? ` [project: ${conv.projectName}]` : ''}.\n` +
       `Your next message continues this thread.`,
+    preview,
   };
 }
 
@@ -1139,6 +1182,7 @@ export async function handleTelegramCallback(
           : 'Conversation not found',
       });
       await sendMessage(chatId, result.message);
+      if (result.preview) await sendMessage(chatId, result.preview);
       return;
     }
 
@@ -1316,6 +1360,7 @@ const COMMAND_SPECS: CommandSpec[] = [
       }
       const result = await applyChatChoice(chatId, id);
       await sendMessage(chatId, result.message);
+      if (result.preview) await sendMessage(chatId, result.preview);
     },
   },
   {

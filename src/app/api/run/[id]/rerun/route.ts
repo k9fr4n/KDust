@@ -54,6 +54,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       id: true,
       taskId: true,
       dustConversationSId: true,
+      // Replayed verbatim into runTask so the rerun sees the exact
+      // same `# Input` section as the original (Franck 2026-05-04).
+      // Legacy rows predating the column return null → no-op, the
+      // runner just skips the section as it did before.
+      inputAppend: true,
       task: { select: { id: true, name: true, projectPath: true } },
     },
   });
@@ -105,6 +110,11 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       projectOverride: project,
       trigger: 'manual',
       triggeredBy,
+      // Replay the original input verbatim. Without this the rerun
+      // would lose every KEY/VALUE binding the original run saw
+      // (FEEDBACK_FILE, ATTEMPT, …) and silently degrade to the
+      // bare stored prompt.
+      ...(run.inputAppend ? { inputAppend: run.inputAppend } : {}),
     });
     // We don't await the full promise (would hold the request open
     // for the entire run duration), but we do fish out the new

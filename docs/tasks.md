@@ -18,7 +18,7 @@ backward compat). The management UI is at:
 | Flavour       | `projectPath`        | Can run how?                                            |
 |---------------|----------------------|---------------------------------------------------------|
 | **Bound**     | a project name       | cron, UI Run, or chained from a predecessor via `enqueue_followup` |
-| **Generic**   | `null` ("template")  | UI Run with project picker, or `run_task({task, project})` |
+| **Generic**   | `null` ("template")  | UI Run with project picker, or `enqueue_followup({task, project})` from a predecessor |
 
 A **bound** task carries its project context in its row. A
 **generic** task is a reusable template ("audit-iam", "lint-and-
@@ -143,30 +143,38 @@ when an installation has dozens of tasks.
 ### Runtime cap (wall-clock timeout)
 
 Every run has a hard kill-timer. When it fires, the run is aborted
-with `{kind:'timeout', ms:N}` and any descendants are cascade-
-cancelled (see [`docs/task-runner.md`](task-runner.md#cascade-cancellation-parent-dies-children-die)).
+with `{kind:'timeout', ms:N}`. In the decoupled-chain model
+(ADR-0008) successors are independent top-level runs, so a parent
+timeout has no descendant to cascade-cancel — if the parent dies
+before reaching its `enqueue_followup` call, the successor is
+simply never created (fail-stop).
 
-Resolution order at dispatch:
+Resolution order at dispatch (unified by ADR-0008, see
+`src/lib/cron/runner/timeout.ts`):
 
 1. `Task.maxRuntimeMs` if set and in `[30s, 6h]`
-2. `AppConfig.orchestratorRunTimeoutMs` if `taskRunnerEnabled=true`
-3. `AppConfig.leafRunTimeoutMs` for leaf tasks
-4. hard default: **30 min** leaf, **60 min** orchestrator
+2. `AppConfig.leafRunTimeoutMs` (single tunable for every run)
+3. hard default: **30 min**
 
-The two AppConfig values are editable from
+The AppConfig value is editable from
 **`/settings/global` → Run timeouts** (entered in minutes, stored
 in ms, clamp 1-360). No restart required — the runner reads
 AppConfig on every dispatch. Out-of-range values silently fall
 back to the hard default at the runner level.
+
+> Pre-ADR-0008 there was a separate `orchestratorRunTimeoutMs`
+> (60 min default) for tasks with `taskRunnerEnabled=true`. Both
+> the column and the role distinction are gone: long pipelines are
+> now expressed as multiple chained runs, each independently capped.
 
 UI: the task form accepts the value in **minutes** (clamped 1-360)
 for ergonomics. Stored as ms in DB.
 
 Set it when:
 
-- An orchestrator fans out to many children whose aggregate time
-  exceeds 60 min (bump the task's cap, not the global env var).
-- A leaf task must finish in &lt; 30 min by policy (tighter
+- A single chain step legitimately needs more than 30 min (bump
+  the task's cap, not the global config).
+- A task must finish in &lt; 30 min by policy (tighter
   accountability, e.g. a cheap health-check).
 
 Don't disable the cap. It's the only protection against an agent
@@ -221,16 +229,19 @@ format.
 
 ### `{{PROJECT}}` substitution for generic tasks
 
-When a generic task is invoked via `run_task({task, project:"X"})`,
-every occurrence of `{{PROJECT}}` in `Task.prompt` is replaced by
-`X` before the agent runs. Lets a single template work across
-projects without hand-editing.
+When a generic task is invoked with a `project` argument (manual
+run, `enqueue_followup`, MCP), every occurrence of `{{PROJECT}}`
+(and `{{PROJECT_PATH}}`) in `Task.prompt` is replaced before the
+agent runs. Lets a single template work across projects without
+hand-editing.
 
-### Prompt overrides at dispatch time
+### Input append at dispatch time
 
-Both `run_task` and `dispatch_task` accept an `input` argument that
-REPLACES (not appends) the stored prompt for that call only. See
-[`docs/task-runner.md` — Passing data between tasks](task-runner.md#passing-data-between-tasks).
+`enqueue_followup` and `POST /api/task/:id/run` accept an `input`
+string that is **APPENDED** under a `# Input` section, *not*
+replacing the stored prompt. Persisted on `TaskRun.inputAppend`
+so `POST /api/run/:id/rerun` replays it verbatim. See
+[`docs/task-runner.md`](task-runner.md#enqueue_followup-input-semantics-commit-5).
 
 ---
 
@@ -280,18 +291,24 @@ expression, the scheduler fires it.
 
 ### From another task (orchestration)
 
-See [`docs/task-runner.md`](task-runner.md). Three tools:
-`run_task`, `dispatch_task`, `wait_for_run`.
+See [`docs/task-runner.md`](task-runner.md). Four tools on the
+single `task-runner` MCP server (registered for every task since
+ADR-0008): `list_tasks`, `describe_task`, `update_task_routing`,
+`enqueue_followup`. The first three are read-only introspection;
+`enqueue_followup` declares the run's successor as a brand-new
+top-level run (decoupled chain — no parent linkage).
 
 ---
 
 ## Concurrency model
 
 - Per-project mutex on every run: two writing tasks on the same
-  `projectPath` serialise. Child dispatches spawned via
-  `run_task` from the same orchestrator run BYPASS this lock (to
-  let orchestrators chain without deadlocking on their own
-  branch).
+  `projectPath` serialise. A successor enqueued via
+  `enqueue_followup` is allowed to acquire the lock while its
+  predecessor is still flagged `running` (the predecessor's id is
+  passed as `predecessorRunId` and excluded from the lock check).
+  Without this, every chain step would deadlock on its own
+  predecessor's lock.
 - A new run is refused (`status='skipped'`) if another run of the
   SAME task is still `running` — avoids pile-up when a task is
   slower than its cron period.

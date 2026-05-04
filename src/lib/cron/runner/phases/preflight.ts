@@ -315,6 +315,10 @@ export async function runPreflight(
       // upstream. Lets /run scope generic-task runs to the right
       // project view and tightens the per-project concurrency lock.
       projectPath: effectiveProjectPath,
+      // Replayable input (Franck 2026-05-04). Persist verbatim so
+      // /api/run/:id/rerun can re-feed the exact same KEY/VALUE
+      // lines on retry. NULL when no input was passed.
+      inputAppend: opts?.inputAppend ?? null,
     },
   });
   // Notify the caller that a run row now exists. Used by the

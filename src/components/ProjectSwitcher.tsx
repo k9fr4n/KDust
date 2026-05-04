@@ -125,6 +125,20 @@ export function ProjectSwitcher() {
     // (conversations list, runs filter, audit slots, dashboard
     // counters, MCP fs server handle, …) gets re-fetched against the
     // new scope.
+    //
+    // Special case (Franck 2026-05-04): when the user is currently
+    // viewing a specific conversation (`/chat/<id>`), reloading would
+    // keep them on a conversation that belongs to the PREVIOUS project,
+    // which contradicts the mental model "switch project = fresh
+    // start". Detect that path shape and navigate to `/chat` instead
+    // so the user lands on a blank composer ready to open a NEW
+    // conversation in the freshly-selected project. The bare `/chat`
+    // page (no `[id]`) is unaffected and reloads in place.
+    const path = window.location.pathname;
+    if (/^\/chat\/[^/]+/.test(path)) {
+      window.location.assign('/chat');
+      return;
+    }
     window.location.reload();
   };
 

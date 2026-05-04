@@ -358,6 +358,71 @@ export async function checkoutWorkingBranch(
   return toGitResult(r, (code) => `git checkout exited ${code}`);
 }
 
+/**
+ * Check out a SHARED chain branch (ADR-0008 commit 6, 2026-05-03):
+ *
+ *   - If `<branch>` already exists on origin, fetch it and check
+ *     out at the remote tip so this run's commits stack on top of
+ *     the predecessor's work in the same chain.
+ *   - If it does NOT exist on origin (first worker in the chain),
+ *     fall back to `checkoutWorkingBranch` semantics: create a
+ *     fresh local branch off the current HEAD (which is the base
+ *     branch after preSync's `reset --hard origin/<base>`).
+ *
+ * Returns the regular GitSyncResult; callers treat both paths the
+ * same way \u2014 the only observable difference is whether the
+ * branch already has predecessor commits when the agent starts.
+ */
+export async function checkoutChainBranch(
+  projectName: string,
+  branch: string,
+): Promise<GitSyncResult> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  // First, try to fetch the chain branch. If it doesn't exist on
+  // origin yet, this errors and we fall through to the fresh path.
+  // We deliberately ignore the fetch's stderr because "couldn't
+  // find remote ref" is an EXPECTED first-run signal, not a
+  // failure mode.
+  const fetched = await runGit(['fetch', 'origin', branch], cwd);
+  if (fetched.code === 0) {
+    // Drop any stale local copy, then re-create at the remote tip.
+    await runGit(['branch', '-D', branch], cwd); // ignore code
+    const r = await runGit(['checkout', '-B', branch, `origin/${branch}`], cwd);
+    return toGitResult(r, (code) => `git checkout exited ${code}`);
+  }
+  // No existing chain branch on origin \u2014 create from current HEAD
+  // (= base branch after preSync). Subsequent workers in the chain
+  // will hit the fast path above.
+  return checkoutWorkingBranch(projectName, branch);
+}
+
+/**
+ * Discard a local-only working branch (no commits, never pushed)
+ * and switch back to baseBranch. Used by measure-diff's no-op
+ * short-circuit (ADR-0008 commit 5c) so a chain of fix-loop
+ * iterations doesn't accumulate dead `kdust/<task>/<ts>` branches
+ * in the worker checkout.
+ *
+ * Best-effort: every step ignores its own error (the agent may
+ * have already left the worktree in a state where checkout fails;
+ * the next preSync will reset --hard anyway). We DO NOT touch
+ * origin \u2014 a local-only branch is invisible to the remote and
+ * `git push --delete` would error.
+ */
+export async function discardLocalBranch(
+  projectName: string,
+  branch: string,
+  baseBranch: string,
+): Promise<void> {
+  const cwd = join(PROJECTS_ROOT, projectName);
+  // Drop any uncommitted noise the agent may have produced; the
+  // next run's preSync would do the same, but doing it here lets
+  // checkout succeed without --force.
+  await runGit(['reset', '--hard', 'HEAD'], cwd);
+  await runGit(['checkout', baseBranch], cwd);
+  await runGit(['branch', '-D', branch], cwd);
+}
+
 /** Return summary of uncommitted changes in the working tree. */
 export async function diffStatFromHead(projectName: string): Promise<DiffStat> {
   const cwd = join(PROJECTS_ROOT, projectName);

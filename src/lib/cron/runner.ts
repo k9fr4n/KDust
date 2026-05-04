@@ -433,12 +433,27 @@ export async function runTask(
     // and, when pushEnabled=true, composes + checks out the work
     // branch and persists it on TaskRun IMMEDIATELY (B2 invariant,
     // see module header for the 2026-04-25 incident analysis).
+    // ADR-0008 commit 6 (2026-05-03): parse a CHAIN_BRANCH directive
+    // out of inputAppend so workers in a decoupled chain land on
+    // the same shared remote branch. Format is a single line
+    // `CHAIN_BRANCH: kdust/chain/<resource>-<ts>`. Anything else
+    // is left intact in the input section forwarded to the agent.
+    // Tolerant: accepts spaces around the colon, allows trailing
+    // whitespace, returns null on no-match (legacy path).
+    const chainBranchOverride = (() => {
+      const raw = opts?.inputAppend;
+      if (!raw) return null;
+      const m = raw.match(/^[ \t]*CHAIN_BRANCH[ \t]*:[ \t]*(\S+)[ \t]*$/m);
+      return m ? m[1] : null;
+    })();
+
     const branchSetup = await runBranchSetup({
       projectFsPath,
       policy,
       job: { name: job.name, pushEnabled: job.pushEnabled, branchMode: job.branchMode },
       runId: run.id,
       setPhase,
+      chainBranchOverride,
     });
     branch = branchSetup.branch;
     const protectedList = branchSetup.protectedList;

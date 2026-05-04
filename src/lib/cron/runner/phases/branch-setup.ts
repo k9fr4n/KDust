@@ -46,7 +46,11 @@
 //     the TaskRun row).
 
 import { db } from '../../../db';
-import { composeBranchName, checkoutWorkingBranch } from '../../../git';
+import {
+  composeBranchName,
+  checkoutWorkingBranch,
+  checkoutChainBranch,
+} from '../../../git';
 import type { RunPhase } from '../../phases';
 import type { ResolvedBranchPolicy } from '../../../branch-policy';
 
@@ -65,6 +69,19 @@ export interface BranchSetupArgs {
   runId: string;
   /** Phase setter bound to this TaskRun. */
   setPhase: (phase: RunPhase, message: string) => Promise<unknown>;
+  /**
+   * Shared chain branch override (ADR-0008 commit 6, 2026-05-03).
+   * When set, this run joins an existing chain: branch-setup uses
+   * this name verbatim instead of composing
+   * `<prefix>/<task>/<timestamp>`, and `checkoutChainBranch`
+   * fetches the remote tip if it already exists so commits from
+   * predecessor workers in the same chain stay reachable.
+   *
+   * Parsed from `inputAppend` upstream in runner.ts (a single
+   * `CHAIN_BRANCH: <ref>` line). Null/undefined for non-chain
+   * runs \u2014 the legacy timestamped path is preserved verbatim.
+   */
+  chainBranchOverride?: string | null;
 }
 
 export interface BranchSetupResult {
@@ -84,7 +101,7 @@ export interface BranchSetupResult {
 export async function runBranchSetup(
   args: BranchSetupArgs,
 ): Promise<BranchSetupResult> {
-  const { projectFsPath, policy, job, runId, setPhase } = args;
+  const { projectFsPath, policy, job, runId, setPhase, chainBranchOverride } = args;
 
   // Note: protectedList is built up-front because step [8] (push)
   // also consults it regardless of this branch creation.
@@ -98,19 +115,34 @@ export async function runBranchSetup(
     return { branch: null, protectedList };
   }
 
-  const branch = composeBranchName(
-    (job.branchMode === 'stable' ? 'stable' : 'timestamped') as 'stable' | 'timestamped',
-    policy.branchPrefix,
-    job.name,
-  );
+  // ADR-0008 commit 6: when the input declared a CHAIN_BRANCH,
+  // honour it verbatim and join the existing chain via
+  // checkoutChainBranch (which fetches origin/<branch> if it
+  // already has predecessor commits). Otherwise compose the
+  // legacy per-task timestamped branch and use the regular
+  // checkoutWorkingBranch path.
+  const branch = chainBranchOverride
+    ? chainBranchOverride
+    : composeBranchName(
+        (job.branchMode === 'stable' ? 'stable' : 'timestamped') as 'stable' | 'timestamped',
+        policy.branchPrefix,
+        job.name,
+      );
   if (
     protectedList.includes(branch) ||
     (protectedList.includes(policy.baseBranch) && branch === policy.baseBranch)
   ) {
     throw new Error(`refusing to work on protected branch "${branch}"`);
   }
-  await setPhase('branching', `Creating work branch ${branch}`);
-  const co = await checkoutWorkingBranch(projectFsPath, branch);
+  await setPhase(
+    'branching',
+    chainBranchOverride
+      ? `Joining chain branch ${branch}`
+      : `Creating work branch ${branch}`,
+  );
+  const co = chainBranchOverride
+    ? await checkoutChainBranch(projectFsPath, branch)
+    : await checkoutWorkingBranch(projectFsPath, branch);
   if (!co.ok) throw new Error(`branch checkout failed: ${co.error}\n${co.output}`);
   console.log(`[cron] branch=${branch}`);
   // Persist the working branch IMMEDIATELY (Franck 2026-04-25

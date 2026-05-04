@@ -32,6 +32,7 @@ import type { Project } from '@prisma/client';
 import { db } from '../../../db';
 import {
   diffStatFromHead,
+  discardLocalBranch,
   parseGitRepo,
   type DiffStat,
   type GitRepo,
@@ -106,6 +107,20 @@ export async function runMeasureDiff(
 
   // No-op short-circuit
   if (filesChanged === 0) {
+    // ADR-0008 commit 5c (2026-05-03): the agent only wrote to
+    // gitignored locations (typically `work/<r>/` for the
+    // terraform-provider-windows fix-loop pattern). The local
+    // working branch was created by phase [3] but holds zero
+    // commits and was never pushed. Discard it now so a chain of
+    // fix-loop iterations doesn't leave `kdust/<task>/<ts>`
+    // branches piling up in the worker checkout. Best-effort: any
+    // failure is silent (the next preSync would clean state
+    // anyway). Only meaningful when pushEnabled=true (a branch
+    // was created); pushEnabled=false runs left `branch=null`
+    // and skip this entirely.
+    if (branch) {
+      await discardLocalBranch(projectFsPath, branch, policy.baseBranch);
+    }
     const durationMs = Date.now() - startedAt;
     await db.taskRun.update({
       where: { id: runId },

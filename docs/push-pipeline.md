@@ -129,6 +129,31 @@ Two modes, selectable per task via `branchMode`:
 branch, trivial to revert. `stable` is useful for iterative
 tasks where you want a single long-lived PR that evolves.
 
+**Override: shared chain branch (ADR-0008 commit 6, 2026-05-03).**
+When `inputAppend` carries a single line `CHAIN_BRANCH: <ref>`,
+the runner extracts it before phase [3] and `branch-setup`
+honours it verbatim instead of composing
+`<branchPrefix>/<task>/...`. Two cases:
+
+- The branch already exists on origin → `git fetch origin <branch>`
+  succeeds and `branch-setup` checks out at the remote tip
+  (`checkout -B <branch> origin/<branch>`). This run's commits
+  stack on top of the predecessor's work in the same chain.
+- The branch does not yet exist on origin → fall back to creating
+  it locally from the just-reset base (`checkoutWorkingBranch`
+  semantics).
+
+Effect: a multi-step `enqueue_followup` chain that threads
+`CHAIN_BRANCH` through every successor's `input` produces
+**ONE remote branch with N commits** (one per worker that wrote
+to a tracked path), and **ONE PR** updated in place as the chain
+progresses — auditable, reviewable, fix-loop iterations preserved
+as individual commits. Used by the `terraform-provider-windows`
+five-task chain (`win-spec-analyst → schema-architect →
+provider-coder → test-engineer → quality-gate`).
+
+The protected-branch check still applies regardless of override.
+
 Before creating the branch, KDust refuses if the resolved name
 matches any entry in `protectedBranches`. This is a
 **belt-and-suspenders** check on top of the branch-name construction:

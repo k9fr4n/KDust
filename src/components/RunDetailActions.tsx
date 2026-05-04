@@ -80,8 +80,12 @@ export function RunDetailActions({
       });
   };
 
+  // Mobile (<sm): icon-only, square-ish (px-2) so 5 buttons fit
+  // alongside View task / Open chat without horizontal overflow.
+  // Tailwind sm: kicks in at 640px which is the typical phone-
+  // landscape / small-tablet boundary — labels reappear there.
   const baseCls =
-    'inline-flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none';
+    'inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none';
   const dangerCls =
     baseCls +
     ' border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50';
@@ -113,7 +117,7 @@ export function RunDetailActions({
         ) : (
           <RotateCw size={14} />
         )}
-        Rerun
+        <span className="hidden sm:inline">Rerun</span>
       </button>
       <button
         type="button"
@@ -132,7 +136,7 @@ export function RunDetailActions({
         ) : (
           <Square size={14} />
         )}
-        Stop
+        <span className="hidden sm:inline">Stop</span>
       </button>
       <button
         type="button"
@@ -147,7 +151,7 @@ export function RunDetailActions({
         ) : (
           <Trash2 size={14} />
         )}
-        Delete
+        <span className="hidden sm:inline">Delete</span>
       </button>
     </>
   );

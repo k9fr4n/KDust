@@ -8,10 +8,11 @@ import { apiSend, ApiError } from '@/lib/api/client';
 /**
  * Per-run action cluster (Franck 2026-04-23 23:46).
  *
- * Lives in the Actions column of the /run table. Renders Stop +
- * Rerun + Delete side-by-side; only the relevant one is enabled
- * for the current status (Franck 2026-05-04 — previously these
- * alternated, but users wanted both visible at a glance):
+ * Lives in the Actions column of the /run table. Renders
+ * Rerun + Stop + Delete side-by-side (Franck 2026-05-04 reorder:
+ * Rerun first because it's by far the most common action on
+ * finished rows). Only the relevant one is enabled for the
+ * current status:
  *
  *   running / pending           → Stop enabled, Rerun disabled
  *   success / failed / aborted  → Stop disabled, Rerun enabled
@@ -133,20 +134,6 @@ export function RunActions({
     <div className="inline-flex items-center gap-1">
       <button
         type="button"
-        onClick={stop}
-        disabled={!!busy || !isActive}
-        className={dangerCls}
-        title={
-          isActive
-            ? 'Stop this run (abort agent stream)'
-            : 'Cannot stop: run already finished'
-        }
-        aria-label="Stop run"
-      >
-        {busy === 'stop' ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
-      </button>
-      <button
-        type="button"
         onClick={rerun}
         disabled={!!busy || isActive || !taskId}
         className={successCls}
@@ -160,6 +147,20 @@ export function RunActions({
         aria-label="Re-run this run"
       >
         {busy === 'rerun' ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
+      </button>
+      <button
+        type="button"
+        onClick={stop}
+        disabled={!!busy || !isActive}
+        className={dangerCls}
+        title={
+          isActive
+            ? 'Stop this run (abort agent stream)'
+            : 'Cannot stop: run already finished'
+        }
+        aria-label="Stop run"
+      >
+        {busy === 'stop' ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
       </button>
       <button
         type="button"

@@ -213,8 +213,12 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
         )}
       </div>
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-4">
+      {/* Header. flex-wrap (Franck 2026-05-04 mobile fix) so the
+          5-button action cluster drops under the title on narrow
+          viewports instead of overflowing horizontally. The
+          buttons themselves also collapse to icon-only on <sm
+          (see RunDetailActions + label spans below). */}
+      <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold">
             Run <span className="font-mono text-lg">{run.id.slice(0, 8)}</span>
@@ -241,14 +245,6 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Stop / Rerun buttons (Franck 2026-05-04). Stop is only
-              enabled while the run is active; Rerun only when it
-              has finished AND the parent task still exists. */}
-          <RunDetailActions
-            runId={run.id}
-            taskId={run.taskId}
-            status={run.status}
-          />
           {/* Prominent link to the task config (Franck 2026-04-19
               13:23). The breadcrumb row above already has the task
               name, but users asked for an explicit button-style
@@ -258,21 +254,35 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {run.task && (
             <Link
               href={`/task/${run.task.id}`}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
+              className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
+              title="View task"
             >
               <Settings size={14} />
-              View task
+              <span className="hidden sm:inline">View task</span>
             </Link>
           )}
           {conv && (
-            <OpenConversationLink
-              conversationId={conv.id}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-sm font-medium"
-            >
-              <MessageCircle size={14} />
-              Open chat
-            </OpenConversationLink>
+            // OpenConversationLink doesn't surface a `title` prop;
+            // wrap in a tooltip-only span for the icon-only mobile
+            // mode so users get the affordance label on long-press.
+            <span title="Open chat" className="inline-flex">
+              <OpenConversationLink
+                conversationId={conv.id}
+                className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-sm font-medium"
+              >
+                <MessageCircle size={14} />
+                <span className="hidden sm:inline">Open chat</span>
+              </OpenConversationLink>
+            </span>
           )}
+          {/* Run actions cluster (Franck 2026-05-04 reorder):
+              Rerun → Stop → Delete, rendered AFTER View task /
+              Open chat so the navigation buttons stay leftmost. */}
+          <RunDetailActions
+            runId={run.id}
+            taskId={run.taskId}
+            status={run.status}
+          />
         </div>
       </div>
 

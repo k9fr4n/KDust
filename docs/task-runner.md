@@ -5,10 +5,15 @@ run inside a KDust task. It lets a run **declare its successor** —
 which task to execute next, with what input — enabling multi-step
 pipelines without a DAG engine, YAML, or nested orchestration.
 
-- Source: `src/lib/mcp/task-runner-server.ts`
+- Source: `src/lib/mcp/task-runner-server.ts` (tools split under
+  `src/lib/mcp/task-runner/tools/`).
 - Registered automatically for **every** task (ADR-0008,
   2026-05-02). The legacy `taskRunnerEnabled` opt-in was retired
   along with the orchestrator/worker role distinction.
+- Single server, **four tools**: `list_tasks`, `describe_task`,
+  `update_task_routing`, `enqueue_followup`.
+- See [README.md ADR-0008](../README.md) for the design rationale and
+  the migration from the legacy hierarchical model.
 
 ### `enqueue_followup` input semantics (commit 5)
 
@@ -22,10 +27,14 @@ The `/api/task/<id>/run` POST endpoint accepts the same `input`
 field with the same semantics, surfaced on the `/run` page as an
 "Input variables" textarea (Shift-click the Play icon for
 project-bound tasks; always shown for generic tasks).
-- Single server, **four tools**: `list_tasks`, `describe_task`,
-  `update_task_routing`, `enqueue_followup`.
-- See [README.md ADR-0008](../README.md) for the design rationale and
-  the migration from the legacy hierarchical model.
+
+The resolved `input` is **persisted on the TaskRun row**
+(`TaskRun.inputAppend`, added 2026-05-04) so
+`POST /api/run/:id/rerun` can replay it verbatim. Without this
+persistence, a rerun would lose every KEY/VALUE binding the
+original run received and silently degrade to the bare stored
+prompt. Legacy rows predating the column read as `null` and behave
+like a no-input rerun, matching pre-2026-05-04 behaviour.
 
 ---
 
@@ -183,9 +192,9 @@ The successor runs as a brand-new top-level run.
 | Arg          | Type    | Required | Description |
 |--------------|---------|:-:|-------------|
 | `task`       | string  | ✓ | Successor task id or exact name. |
-| `input`      | string  |   | Override of the successor's stored prompt. JSON-encoded for structured payloads. |
+| `input`      | string  |   | Variable bindings **APPENDED** to the successor's stored prompt under a `# Input` section (does NOT replace the prompt). Idiomatic format: newline-separated `KEY: VALUE` lines. Persisted on `TaskRun.inputAppend` for replay on rerun. |
 | `project`    | string  | ✓ for generic, forbidden for bound | Project context (full path or bare leaf if unique). |
-| `base_branch`| string  |   | Explicit base branch for the successor (must exist on `origin`). |
+| `base_branch`| string  |   | Explicit base branch for the successor (must exist on `origin`). No auto-inherit in the decoupled chain model — pass explicitly when needed. |
 
 Returns:
 

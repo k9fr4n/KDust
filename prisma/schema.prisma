@@ -581,6 +581,19 @@ model TaskRun {
   // serialisation guarantees as bound-task runs on the same dir.
   projectPath   String?
 
+  // --- Replayable input (Franck 2026-05-04) ---
+  // Verbatim copy of the `inputAppend` string passed to runTask for
+  // this invocation: KEY/VALUE lines forwarded by the /run UI, the
+  // /api/task/:id/run body, or a predecessor's enqueue_followup.
+  // Persisted so POST /api/run/:id/rerun can replay it identically
+  // — without it, a rerun loses every parameter the original run
+  // received (FEEDBACK_FILE, ATTEMPT, WORK_DIR, …) and degrades to
+  // the bare stored prompt.
+  // NULL when no input was provided OR for legacy rows predating
+  // this column. The runner already treats an absent inputAppend
+  // as "no # Input section", so legacy semantics are preserved.
+  inputAppend   String?
+
   @@index([taskId])
   @@index([dustConversationSId])
   @@index([parentRunId])

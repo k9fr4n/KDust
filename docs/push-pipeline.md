@@ -53,14 +53,13 @@ invariants.
   [8b] auto-open PR/MR
        ↓  if project.autoOpenPR and platform configured
        ↓  best-effort: failure doesn't fail the run
-  [8c] B3 auto-merge-back  ← NEW 2026-04-24
-       ↓  only when dispatched via run_task (sync) with a
-       ↓  postMergeTargetBranch (i.e. parent on a work branch)
-       ↓  git checkout <parent-branch>
-       ↓  git merge --ff-only <this-run-branch>
-       ↓  git push origin <parent-branch>
-       ↓  records mergeBackStatus on the TaskRun for the UI;
-       ↓  FF refusals are surfaced, NEVER silently 3-way merged
+  [8c] B3 auto-merge-back  ← legacy, retired by ADR-0008 (2026-05-02)
+       ↓  was triggered only for hierarchical run_task dispatches
+       ↓  with a postMergeTargetBranch. The decoupled-chain model
+       ↓  has no parent branch to merge back into — successors are
+       ↓  top-level runs. Code path remains for historical row
+       ↓  visibility (mergeBackStatus column) but never fires for
+       ↓  new runs.
   [9] persist TaskRun
        ↓  audit trail with branch, commit, PR link, diff stats
   [10] Teams notification
@@ -80,9 +79,11 @@ another run of the **same task** is already `running`, this run is
 refused with `status='skipped'` — prevents pile-up when a cron
 period is shorter than the run duration.
 
-Child runs spawned via `run_task` from the same orchestrator run
-**bypass** the lock, otherwise an orchestrator would deadlock on
-its own branch.
+A successor enqueued via `enqueue_followup` is allowed to acquire
+the lock while its predecessor is still flagged `running`: the
+predecessor's id is forwarded as `predecessorRunId` and excluded
+from the lock check. Without this, every chain step would deadlock
+on its own predecessor's lock.
 
 ### [2] Pre-run git sync
 
@@ -96,20 +97,24 @@ git clean -fd
 Guarantees every run starts from a clean, up-to-date base tree.
 The agent never sees stale state from a previous run.
 
-> **`<baseBranch>` resolution (B1/B2)**. Historically `<baseBranch>`
-> came from `resolveBranchPolicy(task, project)` and was usually
-> `main`. Since 2026-04-24 it can be overridden per-run by the
-> orchestrator dispatching this child via `run_task` / `dispatch_task`:
+> **`<baseBranch>` resolution**. By default `<baseBranch>` comes
+> from `resolveBranchPolicy(task, project)` (usually `main`). It
+> can be overridden per-run via the `base_branch` argument on
+> `enqueue_followup` (B1, "explicit") — this is the only override
+> path in the decoupled-chain model.
 >
-> - explicit `base_branch` argument (B1) takes precedence
-> - else auto-inherit from the parent orchestrator's current
->   branch (B2) — the MCP layer also auto-pushes the parent's
->   branch to origin so the reset resolves
-> - else falls through to the task/project default
+> Pre-ADR-0008 there was also a B2 "auto-inherit" path (the
+> child borrowed its orchestrator parent's current branch) and a
+> B3 fast-forward auto-merge-back. Both were retired with the
+> hierarchical orchestrator: a chain step is now a top-level run
+> with no parent, so there is nothing to inherit from. If the
+> successor must branch off the predecessor's working branch,
+> the predecessor MUST pass `base_branch` explicitly.
 >
 > The provenance is persisted on `TaskRun.baseBranchSource`
 > (`default | explicit | auto-inherit`) and shown as a pill on
-> `/run/:id`. Full specification: [`task-runner.md § Base branch & merge-back`](task-runner.md#base-branch--merge-back-b1b2b3).
+> `/run/:id`. The `auto-inherit` value remains for historical row
+> visibility but is no longer produced for new runs.
 
 ### [3] Branch setup
 

@@ -128,6 +128,29 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
     include: { task: { select: { name: true } } },
   });
 
+  // ADR-0009 abandoned-successor pill (Franck 2026-05-05 21:00). When
+  // the agent declared a successor via `enqueue_followup` (recorded
+  // as `pendingFollowupTaskId` on this row) but the deferred dispatch
+  // never happened (followupRunId still NULL), surface the declared
+  // task so the postmortem-reader knows which step was supposed to
+  // come next. Three sub-cases handled in the UI:
+  //   - run failed/cancelled/aborted -> expected cascade-stop, gray
+  //     "abandoned successor" pill
+  //   - run still running -> dispatch hasn't happened yet, blue
+  //     "scheduled" pill
+  //   - run success but followupRunId still NULL -> bug case
+  //     (dispatchPendingFollowup probably crashed silently), orange
+  //     "pending dispatch failed" pill
+  // Lookup is best-effort: the task may have been deleted since the
+  // run was recorded.
+  const pendingFollowupTask =
+    run.pendingFollowupTaskId && !run.followupRunId
+      ? await db.task.findUnique({
+          where: { id: run.pendingFollowupTaskId },
+          select: { id: true, name: true },
+        })
+      : null;
+
   // Commands executed through the command-runner MCP server
   // (Franck 2026-04-21 13:39). Ordered by start-time so the UI
   // renders them as an execution log. Empty for tasks that didn\u0027t
@@ -313,7 +336,8 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
         childRuns.length > 0 ||
         run.runDepth > 0 ||
         followupRun ||
-        predecessorRun) && (
+        predecessorRun ||
+        run.pendingFollowupTaskId) && (
         <section className="mb-6 rounded-md border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 p-3 text-sm">
           <h2 className="text-xs uppercase tracking-wide text-indigo-700 dark:text-indigo-300 mb-2">
             Run lineage
@@ -353,6 +377,64 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                 {followupRun.status}
               </span>
             </div>
+          )}
+          {/* ADR-0009 abandoned-successor pill. Shown when the agent
+              declared a successor (pendingFollowupTaskId set) but the
+              deferred dispatch never created the run row (followupRunId
+              is still NULL). Three flavours depending on how this run
+              ended; cf. comment near the data-fetch above. */}
+          {run.pendingFollowupTaskId && !run.followupRunId && (
+            (() => {
+              const status = run.status;
+              const taskLabel = pendingFollowupTask?.name
+                ?? `(deleted task ${run.pendingFollowupTaskId.slice(0, 8)})`;
+              const taskHref = pendingFollowupTask
+                ? `/task/${pendingFollowupTask.id}`
+                : null;
+              const isBug = status === 'success';
+              const isInFlight = status === 'running';
+              const klass = isBug
+                ? 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 border-orange-300 dark:border-orange-800'
+                : isInFlight
+                ? 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-800 animate-pulse'
+                : 'text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border-slate-300 dark:border-slate-700';
+              const icon = isBug ? '⚠' : isInFlight ? '⏳' : '🚫';
+              const label = isBug
+                ? 'Pending dispatch failed'
+                : isInFlight
+                ? 'Successor scheduled'
+                : 'Abandoned successor';
+              const tooltip = isBug
+                ? 'Run reached success but the deferred dispatch (ADR-0009) never created the successor run row. Likely a crash between runNotifySuccess and dispatchPendingFollowup; check server logs.'
+                : isInFlight
+                ? 'Agent declared a successor via enqueue_followup. It will be dispatched after this run reaches success (ADR-0009 deferred dispatch).'
+                : 'Agent declared a successor via enqueue_followup, but this run did not reach success — the deferred dispatch never ran. Cascade-stop preserved by ADR-0009.';
+              return (
+                <div className="mb-2" title={tooltip}>
+                  <span className="text-slate-500 text-xs">
+                    {icon} {label}:{' '}
+                  </span>
+                  {taskHref ? (
+                    <Link
+                      href={taskHref}
+                      className="underline font-mono text-xs hover:text-brand-500"
+                    >
+                      {taskLabel}
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-xs">{taskLabel}</span>
+                  )}{' '}
+                  <span className={`inline-block ml-1 px-1.5 rounded border text-[10px] uppercase ${klass}`}>
+                    {isBug ? 'pending' : isInFlight ? 'scheduled' : 'never ran'}
+                  </span>
+                  {run.pendingFollowupBaseBranch && (
+                    <span className="ml-2 text-[11px] text-slate-500">
+                      base: <span className="font-mono">{run.pendingFollowupBaseBranch}</span>
+                    </span>
+                  )}
+                </div>
+              );
+            })()
           )}
 
           {/* Legacy hierarchical tree (parentRunId / childRuns).

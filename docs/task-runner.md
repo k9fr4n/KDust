@@ -189,17 +189,16 @@ the routing fields on an existing task without going through the UI.
 Called at the END of a successful run to chain to the next task.
 The successor runs as a brand-new top-level run.
 
-**Dispatch timing (ADR-0009, 2026-05-05).** This tool does **not**
-start the successor immediately. It validates the parameters and
-records them on the parent's `TaskRun` row
-(`pendingFollowup{TaskId,Input,Project,BaseBranch}`); the runner
-dispatches the successor as the LAST step of the parent's success
-path, **after `commit-and-push` and the success notification**. This
-guarantees the parent's branch (in particular the shared
-`CHAIN_BRANCH`) has reached `origin` before the successor's
-pre-sync runs `git fetch`. Cascade-stop is preserved: if the parent
-fails before that step, `pendingFollowup*` is silently abandoned
-and the successor is never started.
+**Dispatch timing — two modes (ADR-0009 + chat-mode fix, 2026-05-05).**
+
+| Mode       | Trigger                                             | Behaviour |
+|------------|-----------------------------------------------------|-----------|
+| **chain**  | Called from inside a TaskRun (`orchestratorRunId` set, e.g. agent chains via `enqueue_followup`) | Tool **records** params on parent's `TaskRun` row; runner dispatches the successor **after `commit-and-push` and the success notification**. Race-free — parent's chain branch is on origin before successor's pre-sync runs `git fetch`. Cascade-stop preserved: parent fail before that step → `pendingFollowup*` is silently abandoned. |
+| **chat**   | Called from a Dust chat conversation (no parent run, `orchestratorRunId` is null, e.g. human types "run task X" in `/chat`) | Tool **dispatches immediately** via `runTask()` and returns the `run_id`. No parent commit-and-push to wait for, no race risk. This preserves the chat-mode UX. |
+
+The mode is auto-detected from the MCP context. The same `enqueue_followup`
+tool serves both. Invariants 1+2 below apply to chain mode only;
+chat-mode every call is independent.
 
 | Arg          | Type    | Required | Description |
 |--------------|---------|:-:|-------------|
@@ -208,38 +207,45 @@ and the successor is never started.
 | `project`    | string  | ✓ for generic, forbidden for bound | Project context (full path or bare leaf if unique). |
 | `base_branch`| string  |   | Explicit base branch for the successor (must exist on `origin` **at dispatch time**, i.e. after the parent's push). No auto-inherit in the decoupled chain model — pass explicitly when needed. |
 
-Returns:
+Returns (chain mode):
 
 ```json
 {
   "status": "scheduled",
   "task": { "id": "…", "name": "test" },
-  "hint": "Successor recorded on the current run. It will start as a fresh top-level run after this run's commit-and-push and success notification have completed. Follow the chain forward from the current run in /run once it's dispatched."
+  "hint": "Successor recorded on the current run. It will start as a fresh top-level run after this run's commit-and-push and success notification have completed."
 }
 ```
 
 The successor's `run_id` is **not** known at the moment of the
-tool call (the run row doesn't exist yet). Consumers that need the
-forward link should walk `TaskRun.followupRunId` from the parent
-run's `/run/[id]` page once the parent is `success`.
+tool call (the run row doesn't exist yet). Walk
+`TaskRun.followupRunId` from the parent run's `/run/[id]` page
+once the parent is `success`.
+
+Returns (chat mode):
+
+```json
+{
+  "status": "enqueued",
+  "run_id": "cmrXXXX",
+  "task": { "id": "…", "name": "test" },
+  "hint": "Chat-mode dispatch (no parent run). Watch the run at /run/cmrXXXX."
+}
+```
 
 Invariants enforced by the tool:
 
-1. **Tool requires a parent run row.** Calls outside a TaskRun
-   (chat mode, no `orchestratorRunId`) are refused — there is no
-   anchor row to record onto. Use `run_task` / the `/run` UI
-   instead.
-2. **At most one successor per run.** A second call returns an
-   error. Both `pendingFollowupTaskId` (pre-dispatch) and
-   `followupRunId` (post-dispatch) count as "already enqueued".
-   If you have branching logic, decide on the branch BEFORE
-   enqueuing.
-3. **Project contract.** Generic tasks require `project`; bound
-   tasks reject it.
-4. **Branch is never auto-inherited.** Pass `base_branch` explicitly
+1. **At most one successor per run** *(chain mode only)*. A second
+   call returns an error. Both `pendingFollowupTaskId`
+   (pre-dispatch) and `followupRunId` (post-dispatch) count as
+   "already enqueued". If you have branching logic, decide on the
+   branch BEFORE enqueuing.
+2. **Project contract.** Generic tasks require `project`; bound
+   tasks reject it. Applies in both modes.
+3. **Branch is never auto-inherited.** Pass `base_branch` explicitly
    when the successor must branch from somewhere other than the
-   project default.
-5. **No max-depth cap at the runner level.** Cycles
+   project default. Applies in both modes.
+4. **No max-depth cap at the runner level.** Cycles
    (`A → B → A → …`) are the prompt's responsibility.
 
 ## UI

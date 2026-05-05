@@ -911,11 +911,20 @@ dispatchers still pass it; preflight ignores absent rows) but
   (pre-dispatch) before writing.
 - Branches are NEVER auto-inherited. `base_branch` is recorded
   verbatim and replayed by the deferred dispatch.
-- Chain-mode `enqueue_followup` is now refused outside a TaskRun
-  (no `orchestratorRunId` → no anchor row to record onto).
-  Chat-mode dispatchers that previously used `enqueue_followup` as
-  a one-off run-launcher must use `run_task` / the `/run` UI
-  instead. None exist in the current code base.
+- The tool now operates in **two modes**, auto-detected from the
+  MCP context (chat-mode regression fix, 2026-05-05b — initial
+  ADR-0009 wording said chat-mode would be rejected; that broke
+  the human-driven "lance la task X" UX in `/chat`):
+  - **chain mode** (`orchestratorRunId` set): record-only,
+    deferred dispatch by the runner after notify-success — the
+    ADR-0009 fix described above.
+  - **chat mode** (`orchestratorRunId` null): immediate
+    fire-and-forget via `runTask()`, returns the `run_id`. No
+    parent commit-and-push exists to wait for, so the race
+    ADR-0009 protects against doesn't apply. This is the
+    original ADR-0008 path, kept for chat-mode only. The
+    at-most-one-successor invariant is enforced in chain mode
+    only; chat-mode each call is independent.
 
 **Migration**: `20260505160000_deferred_followup` — purely additive,
 4 nullable columns on `CronRun` (Prisma `TaskRun`). Applied via

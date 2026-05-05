@@ -48,9 +48,16 @@ import type { OrchestratorContext } from '../context';
  *   4. Chain depth is NOT capped at the runner level. Misbehaving
  *      agents could create a cycle (A → B → A → …). Acceptable risk
  *      for v1; revisit if it bites in production.
- *   5. Tool calls in chat mode (no `orchestratorRunId`) are rejected:
- *      without a parent run row to record onto, deferred dispatch
- *      has no anchor.
+ *   5. Two dispatch modes coexist (chat-mode regression fix
+ *      2026-05-05): when called with no `orchestratorRunId` (Dust
+ *      chat mode, no parent run) the tool falls back to the
+ *      original ADR-0008 fire-and-forget path — no parent commit-
+ *      and-push to wait for, no race risk, immediate dispatch via
+ *      `runTask()` with a returned `run_id`. The deferred-dispatch
+ *      pipeline (ADR-0009) only applies when a parent TaskRun
+ *      anchor exists. The at-most-one-successor invariant is
+ *      enforced in chain mode only; chat-mode each call is
+ *      independent.
  */
 export function registerEnqueueFollowupTool(
   server: McpServer,
@@ -136,34 +143,50 @@ export function registerEnqueueFollowupTool(
         isError: true as const,
       });
 
-      // Invariant 5: deferred dispatch needs an anchor row.
-      if (!ctx.orchestratorRunId) {
-        return err(
-          `refused: enqueue_followup is only available inside a TaskRun ` +
-            `(deferred dispatch needs a parent run row to record onto). ` +
-            `Use run_task / the /run UI for one-off invocations from chat.`,
-        );
-      }
+      // Two dispatch modes (ADR-0009 + chat-mode regression fix
+      // 2026-05-05):
+      //
+      //   chain mode  - ctx.orchestratorRunId IS set. Tool was
+      //                 called from inside a TaskRun's run-agent
+      //                 phase. Record the successor's parameters
+      //                 on the parent's row; the runner dispatches
+      //                 it after notify-success (race-free).
+      //
+      //   chat mode   - ctx.orchestratorRunId is NULL. Tool was
+      //                 called from a Dust chat conversation (human
+      //                 user typing in /chat) with no parent run.
+      //                 No commit-and-push to wait for, no race
+      //                 risk -> dispatch immediately via runTask().
+      //                 This is the original ADR-0008 fire-and-
+      //                 forget path, kept for chat-mode only.
+      //
+      // The at-most-one invariant only makes sense in chain mode
+      // (one parent run = one successor); chat-mode every call is
+      // independent.
+      const isChainMode = !!ctx.orchestratorRunId;
 
-      // Invariant 1: at most one followup per run. Both
-      // pendingFollowupTaskId (recorded by this very tool) and
-      // followupRunId (set after the deferred dispatch creates
-      // the successor's run row) count as "already enqueued".
-      const cur = await db.taskRun.findUnique({
-        where: { id: ctx.orchestratorRunId },
-        select: { followupRunId: true, pendingFollowupTaskId: true },
-      });
-      if (cur?.followupRunId) {
-        return err(
-          `refused: this run already dispatched a followup (run_id=${cur.followupRunId}). ` +
-            `Only ONE successor is allowed per run.`,
-        );
-      }
-      if (cur?.pendingFollowupTaskId) {
-        return err(
-          `refused: this run already recorded a pending followup (task_id=${cur.pendingFollowupTaskId}). ` +
-            `Only ONE successor is allowed per run.`,
-        );
+      if (isChainMode) {
+        // Invariant 1 (chain only): at most one followup per run.
+        // Both pendingFollowupTaskId (recorded by this very tool)
+        // and followupRunId (set after the deferred dispatch
+        // creates the successor's run row) count as "already
+        // enqueued".
+        const cur = await db.taskRun.findUnique({
+          where: { id: ctx.orchestratorRunId! },
+          select: { followupRunId: true, pendingFollowupTaskId: true },
+        });
+        if (cur?.followupRunId) {
+          return err(
+            `refused: this run already dispatched a followup (run_id=${cur.followupRunId}). ` +
+              `Only ONE successor is allowed per run.`,
+          );
+        }
+        if (cur?.pendingFollowupTaskId) {
+          return err(
+            `refused: this run already recorded a pending followup (task_id=${cur.pendingFollowupTaskId}). ` +
+              `Only ONE successor is allowed per run.`,
+          );
+        }
       }
 
       // Resolve target task (same scope rules as the legacy tools).
@@ -211,26 +234,98 @@ export function registerEnqueueFollowupTool(
         );
       }
 
-      // ADR-0009: record the successor's parameters on the parent
-      // run row instead of starting it now. The runner picks them
-      // up at the end of the parent's pipeline (after
-      // runNotifySuccess, in runner.ts) and dispatches the
-      // successor as a fresh top-level run. By then commit-and-push
-      // has fully completed, so the successor's pre-sync can safely
-      // fetch the chain branch from origin.
-      try {
-        await db.taskRun.update({
-          where: { id: ctx.orchestratorRunId },
-          data: {
-            pendingFollowupTaskId: child.id,
-            pendingFollowupInput: inputAppend ?? null,
-            pendingFollowupProject: projectOverride ?? null,
-            pendingFollowupBaseBranch: explicitBaseBranch ?? null,
-          },
-        });
-      } catch (e) {
+      // -------- CHAIN MODE: record-only, deferred dispatch -------
+      if (isChainMode) {
+        // ADR-0009: record the successor's parameters on the parent
+        // run row instead of starting it now. The runner picks them
+        // up at the end of the parent's pipeline (after
+        // runNotifySuccess, in runner.ts) and dispatches the
+        // successor as a fresh top-level run. By then commit-and-
+        // push has fully completed, so the successor's pre-sync
+        // can safely fetch the chain branch from origin.
+        try {
+          await db.taskRun.update({
+            where: { id: ctx.orchestratorRunId! },
+            data: {
+              pendingFollowupTaskId: child.id,
+              pendingFollowupInput: inputAppend ?? null,
+              pendingFollowupProject: projectOverride ?? null,
+              pendingFollowupBaseBranch: explicitBaseBranch ?? null,
+            },
+          });
+        } catch (e) {
+          return err(
+            `failed to record pending followup on parent run: ${(e as Error)?.message ?? e}`,
+          );
+        }
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  status: 'scheduled',
+                  task: { id: child.id, name: child.name },
+                  hint:
+                    `Successor recorded on the current run. It will start as ` +
+                    `a fresh top-level run after this run's commit-and-push and ` +
+                    `success notification have completed. Follow the chain ` +
+                    `forward from the current run in /run once it's dispatched.`,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      // -------- CHAT MODE: immediate fire-and-forget dispatch ----
+      // No parent TaskRun exists, no commit-and-push is in flight,
+      // so race conditions ADR-0009 was protecting against don't
+      // apply. Dispatch right away and return run_id to the caller
+      // for /run watching. This preserves the chat-mode UX where
+      // a human says "lance la task X" and expects an immediate
+      // run id back.
+      const { runTask } = await import('../../../cron/runner');
+
+      let capturedRunId: string | null = null;
+      let rowReady: () => void = () => {};
+      const rowCreated = new Promise<void>((resolve) => {
+        rowReady = resolve;
+      });
+
+      const childFinished = runTask(child.id, {
+        parentRunId: null,
+        runDepth: 0,
+        inputAppend,
+        projectOverride,
+        baseBranchOverride: explicitBaseBranch,
+        baseBranchOverrideSource: explicitBaseBranch ? 'explicit' : undefined,
+        trigger: 'mcp',
+        triggeredBy: 'chat',
+        onRunCreated: (id) => {
+          capturedRunId = id;
+          rowReady();
+        },
+      });
+      childFinished.catch((e) => {
+        console.warn(
+          `[mcp/task-runner] enqueue_followup chat-mode run rejected: ${(e as Error)?.message ?? e}`,
+        );
+      });
+
+      const raceTimeout = new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), 5_000),
+      );
+      const outcome = await Promise.race([
+        rowCreated.then(() => 'ready' as const),
+        raceTimeout,
+      ]);
+      if (outcome === 'timeout') {
         return err(
-          `failed to record pending followup on parent run: ${(e as Error)?.message ?? e}`,
+          'run row not created within 5s (likely waiting on a per-project concurrency lock). The dispatch may still be in flight; retry or check /run.',
         );
       }
 
@@ -240,13 +335,12 @@ export function registerEnqueueFollowupTool(
             type: 'text' as const,
             text: JSON.stringify(
               {
-                status: 'scheduled',
+                status: 'enqueued',
+                run_id: capturedRunId,
                 task: { id: child.id, name: child.name },
                 hint:
-                  `Successor recorded on the current run. It will start as ` +
-                  `a fresh top-level run after this run's commit-and-push and ` +
-                  `success notification have completed. Follow the chain ` +
-                  `forward from the current run in /run once it's dispatched.`,
+                  `Chat-mode dispatch (no parent run). Watch the run at ` +
+                  `/run/${capturedRunId}.`,
               },
               null,
               2,

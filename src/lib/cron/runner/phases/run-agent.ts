@@ -359,6 +359,27 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
       agentText.slice(0, 4000),
     );
     console.log(`[cron] success (prompt-only) job="${job.name}" duration=${durationMs}ms`);
+
+    // [5b.1] Deferred chain successor dispatch for prompt-only runs
+    // (ADR-0009 amendment, 2026-05-05c). The prompt-only branch
+    // short-circuits the full pipeline (no diff/commit/push/
+    // notify-success), so it never reached the dispatch site in
+    // runner.ts. Many chain orchestrators (windows-resource etc.)
+    // run pushEnabled=false and rely on enqueue_followup to chain
+    // forward; without this call their successor stays stuck in
+    // pendingFollowupTaskId forever.
+    //
+    // Dynamic import to avoid an import cycle
+    // run-agent.ts -> runner.ts -> run-agent.ts.
+    try {
+      const { dispatchPendingFollowup } = await import('../../runner');
+      await dispatchPendingFollowup(runId, job.name);
+    } catch (e) {
+      console.error(
+        `[cron] prompt-only followup dispatch failed for run=${runId}: ${(e as Error)?.message ?? e}`,
+      );
+    }
+
     return { ok: false, runId };
   }
 

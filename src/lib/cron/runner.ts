@@ -745,7 +745,7 @@ export async function runTask(
  *     unread. The /run UI surfaces it as an "abandoned followup"
  *     pill (read-only) for postmortem.
  */
-async function dispatchPendingFollowup(
+export async function dispatchPendingFollowup(
   parentRunId: string,
   parentTaskName: string,
 ): Promise<void> {

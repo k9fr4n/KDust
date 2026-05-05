@@ -602,6 +602,33 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             </section>
           )}
 
+          {/* Input variables (Franck 2026-05-04). The KEY/VALUE
+              bindings appended under the `# Input` section of the
+              effective prompt — sourced from the /run textarea,
+              the API body, or a predecessor's enqueue_followup,
+              and persisted on TaskRun.inputAppend so that
+              POST /api/run/:id/rerun replays them verbatim.
+              Hidden when null (legacy rows + runs without input).
+              Displayed raw: KDust convention is "secrets via
+              TaskSecret, never via input"; this section is
+              admin-only behind APP_PASSWORD. */}
+          {run.inputAppend && (
+            <section className="mb-6">
+              <details>
+                <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600">
+                  Input variables ({run.inputAppend.length.toLocaleString('fr-FR')} chars)
+                </summary>
+                <pre className="mt-2 whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-xs max-h-80 overflow-auto">
+                  {run.inputAppend}
+                </pre>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Replayed verbatim on rerun. Pass secrets via
+                  TaskSecret, not here.
+                </p>
+              </details>
+            </section>
+          )}
+
           {/* Agent output */}
           {/* Commands executed via command-runner MCP (Franck 2026-04-21 13:39).
               Collapsed by default to avoid bloat; each command expandable

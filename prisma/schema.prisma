@@ -568,6 +568,34 @@ model TaskRun {
   // enqueue_followup call, the successor is never created.
   followupRunId String?
 
+  // --- Deferred chain successor (ADR-0009, 2026-05-05) ---
+  // Stores the parameters of the successor declared by the agent
+  // via the `enqueue_followup` MCP tool, so the runner can start
+  // the successor AFTER the parent's commit-and-push (phase 8 of
+  // the pipeline) has completed and pushed the chain branch to
+  // origin. The original ADR-0008 implementation kicked the
+  // successor off synchronously inside the tool call (in the
+  // parent's run-agent phase), which raced with the parent's
+  // still-pending commit-and-push: when the successor's pre-sync
+  // ran `git fetch origin <chain>`, the chain branch had not yet
+  // reached origin, surfacing as a hard "couldn't find remote ref"
+  // failure (Franck 2026-05-05 race-condition postmortem).
+  //
+  // Cascade-stop is preserved by construction: if the parent
+  // fails at any phase before the post-notify dispatch step
+  // (handle-failure runs instead of dispatchPendingFollowup),
+  // the successor is never started. `followupRunId` above is
+  // populated only once the dispatch actually creates the
+  // successor's run row.
+  //
+  // NULL on:
+  //   - rows whose run did not call enqueue_followup
+  //   - legacy rows predating this column (no backfill)
+  pendingFollowupTaskId      String?
+  pendingFollowupInput       String?
+  pendingFollowupProject     String?
+  pendingFollowupBaseBranch  String?
+
   // --- Effective project (Franck 2026-04-29) ---
   // Project context this run actually executed against. Mirrors
   // task.projectPath for bound tasks, and captures the runtime

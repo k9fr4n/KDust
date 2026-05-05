@@ -3,38 +3,54 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { db } from '../../../db';
 import { resolveProjectByPathOrName } from '../../../folder-path';
 import { resolveTaskForProject } from '../resolve-task';
-import { getParentTaskName } from '../helpers';
 import type { OrchestratorContext } from '../context';
 
 /**
- * `enqueue_followup` — decoupled chain successor (ADR-0008, 2026-05-02).
+ * `enqueue_followup` — deferred chain successor (ADR-0008 + ADR-0009, 2026-05-05).
  *
  * Single primitive replacing the legacy orchestrator/worker trio
  * (`run_task` / `dispatch_task` / `wait_for_run`). The current run
  * declares its SUCCESSOR: which task to run next, with what input.
- * The successor runs as a fresh top-level run — `parentRunId=NULL`,
- * `runDepth=0`, no B2 branch inheritance, no B3 merge-back. The
- * current run's `followupRunId` column is updated so the chain can
- * be walked forward in /run for visibility.
  *
- * Cascade-abort (ADR-0008, option B): if the current run fails or
- * is aborted before reaching the prompt step that calls
- * `enqueue_followup`, the successor is never enqueued. This
- * replaces the old hierarchical cascade-abort logic with zero
- * machinery — the failure is fail-stop by construction.
+ * ADR-0009 race fix (2026-05-05):
+ *   The original ADR-0008 implementation kicked off the successor
+ *   synchronously inside this tool call (parent's run-agent phase,
+ *   phase 5/10). That raced with the parent's still-pending
+ *   commit-and-push (phase 8/10): the successor's `pre-sync`
+ *   could fire `git fetch origin <chain_branch>` before the
+ *   parent had pushed it, surfacing as a hard "couldn't find
+ *   remote ref" failure.
+ *
+ *   The tool now ONLY validates the successor's parameters and
+ *   RECORDS them on the parent's TaskRun row
+ *   (`pendingFollowup{TaskId,Input,Project,BaseBranch}`). The
+ *   runner reads those columns AT THE END of the parent's
+ *   pipeline (after `runNotifySuccess`, see runner.ts) and
+ *   actually starts the successor as a fresh top-level run —
+ *   `parentRunId=NULL`, `runDepth=0`, no B2/B3. The parent's
+ *   `followupRunId` is then set to the successor's run id, so
+ *   the chain can be walked forward in /run for visibility.
+ *
+ * Cascade-stop is preserved by construction: if the parent fails
+ * at any phase before the post-notify dispatch step,
+ * `runHandleFailure` runs instead and `pendingFollowup*` is
+ * silently ignored. No hierarchical cascade-abort needed.
  *
  * Invariants:
  *   1. AT MOST ONE successor per run. Calling twice in the same run
- *      → the second call is rejected.
+ *      → the second call is rejected. Enforced by checking
+ *      `pendingFollowupTaskId` on the parent run.
  *   2. The successor's `input` is a string. Pass JSON-stringified
- *      payloads when passing structured data (branch, report,
- *      artifacts).
+ *      payloads when passing structured data.
  *   3. Branch is NEVER auto-inherited. Pass `base_branch` explicitly
  *      when the successor needs to branch from somewhere other than
  *      the project default.
  *   4. Chain depth is NOT capped at the runner level. Misbehaving
  *      agents could create a cycle (A → B → A → …). Acceptable risk
  *      for v1; revisit if it bites in production.
+ *   5. Tool calls in chat mode (no `orchestratorRunId`) are rejected:
+ *      without a parent run row to record onto, deferred dispatch
+ *      has no anchor.
  */
 export function registerEnqueueFollowupTool(
   server: McpServer,
@@ -120,18 +136,34 @@ export function registerEnqueueFollowupTool(
         isError: true as const,
       });
 
-      // Invariant 1: at most one followup per run.
-      if (ctx.orchestratorRunId) {
-        const cur = await db.taskRun.findUnique({
-          where: { id: ctx.orchestratorRunId },
-          select: { followupRunId: true },
-        });
-        if (cur?.followupRunId) {
-          return err(
-            `refused: this run already enqueued a followup (run_id=${cur.followupRunId}). ` +
-              `Only ONE successor is allowed per run.`,
-          );
-        }
+      // Invariant 5: deferred dispatch needs an anchor row.
+      if (!ctx.orchestratorRunId) {
+        return err(
+          `refused: enqueue_followup is only available inside a TaskRun ` +
+            `(deferred dispatch needs a parent run row to record onto). ` +
+            `Use run_task / the /run UI for one-off invocations from chat.`,
+        );
+      }
+
+      // Invariant 1: at most one followup per run. Both
+      // pendingFollowupTaskId (recorded by this very tool) and
+      // followupRunId (set after the deferred dispatch creates
+      // the successor's run row) count as "already enqueued".
+      const cur = await db.taskRun.findUnique({
+        where: { id: ctx.orchestratorRunId },
+        select: { followupRunId: true, pendingFollowupTaskId: true },
+      });
+      if (cur?.followupRunId) {
+        return err(
+          `refused: this run already dispatched a followup (run_id=${cur.followupRunId}). ` +
+            `Only ONE successor is allowed per run.`,
+        );
+      }
+      if (cur?.pendingFollowupTaskId) {
+        return err(
+          `refused: this run already recorded a pending followup (task_id=${cur.pendingFollowupTaskId}). ` +
+            `Only ONE successor is allowed per run.`,
+        );
       }
 
       // Resolve target task (same scope rules as the legacy tools).
@@ -179,75 +211,27 @@ export function registerEnqueueFollowupTool(
         );
       }
 
-      const { runTask } = await import('../../../cron/runner');
-      const parentTaskName = await getParentTaskName(ctx);
-
-      let capturedRunId: string | null = null;
-      let rowReady: () => void = () => {};
-      const rowCreated = new Promise<void>((resolve) => {
-        rowReady = resolve;
-      });
-
-      // Detached run: NO parentRunId, NO runDepth, NO B2/B3. The
-      // successor is a brand-new top-level run; its only link to
-      // the current run is the followupRunId pointer we set below.
-      const childFinished = runTask(child.id, {
-        parentRunId: null,
-        // Concurrency-lock bypass only (NOT a lineage link): the
-        // current run is still flagged 'running' until its
-        // tool-call returns, and would block the successor on the
-        // per-project lock. Forwarded to preflight's excludeIds.
-        // null when the chat-mode dispatcher calls this tool with
-        // no orchestratorRunId \u2014 in that case there's no
-        // predecessor to skip.
-        predecessorRunId: ctx.orchestratorRunId ?? null,
-        runDepth: 0,
-        inputAppend,
-        projectOverride,
-        baseBranchOverride: explicitBaseBranch,
-        baseBranchOverrideSource: explicitBaseBranch ? 'explicit' : undefined,
-        trigger: 'mcp',
-        triggeredBy: parentTaskName,
-        onRunCreated: (id) => {
-          capturedRunId = id;
-          rowReady();
-        },
-      });
-      childFinished.catch((e) => {
-        console.warn(
-          `[mcp/task-runner] enqueue_followup detached run rejected: ${(e as Error)?.message ?? e}`,
-        );
-      });
-
-      const raceTimeout = new Promise<'timeout'>((resolve) =>
-        setTimeout(() => resolve('timeout'), 5_000),
-      );
-      const outcome = await Promise.race([
-        rowCreated.then(() => 'ready' as const),
-        raceTimeout,
-      ]);
-      if (outcome === 'timeout') {
+      // ADR-0009: record the successor's parameters on the parent
+      // run row instead of starting it now. The runner picks them
+      // up at the end of the parent's pipeline (after
+      // runNotifySuccess, in runner.ts) and dispatches the
+      // successor as a fresh top-level run. By then commit-and-push
+      // has fully completed, so the successor's pre-sync can safely
+      // fetch the chain branch from origin.
+      try {
+        await db.taskRun.update({
+          where: { id: ctx.orchestratorRunId },
+          data: {
+            pendingFollowupTaskId: child.id,
+            pendingFollowupInput: inputAppend ?? null,
+            pendingFollowupProject: projectOverride ?? null,
+            pendingFollowupBaseBranch: explicitBaseBranch ?? null,
+          },
+        });
+      } catch (e) {
         return err(
-          'successor run row not created within 5s (likely waiting on a per-project concurrency lock). The dispatch may still be in flight; retry or check /run.',
+          `failed to record pending followup on parent run: ${(e as Error)?.message ?? e}`,
         );
-      }
-
-      // Wire up the chain pointer on the CURRENT run so the UI and
-      // any future reverse-walk can follow the chain.
-      if (ctx.orchestratorRunId && capturedRunId) {
-        try {
-          await db.taskRun.update({
-            where: { id: ctx.orchestratorRunId },
-            data: { followupRunId: capturedRunId },
-          });
-        } catch (e) {
-          // Non-fatal: the successor is already running. We just
-          // lose the forward pointer, which degrades /run UX but
-          // doesn't break execution.
-          console.warn(
-            `[mcp/task-runner] failed to set followupRunId on ${ctx.orchestratorRunId}: ${(e as Error)?.message ?? e}`,
-          );
-        }
       }
 
       return {
@@ -256,13 +240,13 @@ export function registerEnqueueFollowupTool(
             type: 'text' as const,
             text: JSON.stringify(
               {
-                status: 'enqueued',
-                run_id: capturedRunId,
+                status: 'scheduled',
                 task: { id: child.id, name: child.name },
                 hint:
-                  `Successor will run independently as a fresh top-level run. ` +
-                  `Watch it at /run/${capturedRunId} or follow the chain ` +
-                  `forward from the current run in /run.`,
+                  `Successor recorded on the current run. It will start as ` +
+                  `a fresh top-level run after this run's commit-and-push and ` +
+                  `success notification have completed. Follow the chain ` +
+                  `forward from the current run in /run once it's dispatched.`,
               },
               null,
               2,

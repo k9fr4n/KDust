@@ -189,35 +189,57 @@ the routing fields on an existing task without going through the UI.
 Called at the END of a successful run to chain to the next task.
 The successor runs as a brand-new top-level run.
 
+**Dispatch timing (ADR-0009, 2026-05-05).** This tool does **not**
+start the successor immediately. It validates the parameters and
+records them on the parent's `TaskRun` row
+(`pendingFollowup{TaskId,Input,Project,BaseBranch}`); the runner
+dispatches the successor as the LAST step of the parent's success
+path, **after `commit-and-push` and the success notification**. This
+guarantees the parent's branch (in particular the shared
+`CHAIN_BRANCH`) has reached `origin` before the successor's
+pre-sync runs `git fetch`. Cascade-stop is preserved: if the parent
+fails before that step, `pendingFollowup*` is silently abandoned
+and the successor is never started.
+
 | Arg          | Type    | Required | Description |
 |--------------|---------|:-:|-------------|
 | `task`       | string  | ✓ | Successor task id or exact name. |
 | `input`      | string  |   | Variable bindings **APPENDED** to the successor's stored prompt under a `# Input` section (does NOT replace the prompt). Idiomatic format: newline-separated `KEY: VALUE` lines. Persisted on `TaskRun.inputAppend` for replay on rerun. |
 | `project`    | string  | ✓ for generic, forbidden for bound | Project context (full path or bare leaf if unique). |
-| `base_branch`| string  |   | Explicit base branch for the successor (must exist on `origin`). No auto-inherit in the decoupled chain model — pass explicitly when needed. |
+| `base_branch`| string  |   | Explicit base branch for the successor (must exist on `origin` **at dispatch time**, i.e. after the parent's push). No auto-inherit in the decoupled chain model — pass explicitly when needed. |
 
 Returns:
 
 ```json
 {
-  "status": "enqueued",
-  "run_id": "cmrXXXX",
+  "status": "scheduled",
   "task": { "id": "…", "name": "test" },
-  "hint": "Successor will run independently. Watch it at /run/cmrXXXX or follow the chain forward."
+  "hint": "Successor recorded on the current run. It will start as a fresh top-level run after this run's commit-and-push and success notification have completed. Follow the chain forward from the current run in /run once it's dispatched."
 }
 ```
 
+The successor's `run_id` is **not** known at the moment of the
+tool call (the run row doesn't exist yet). Consumers that need the
+forward link should walk `TaskRun.followupRunId` from the parent
+run's `/run/[id]` page once the parent is `success`.
+
 Invariants enforced by the tool:
 
-1. **At most one successor per run.** A second call returns an
-   error (`refused: this run already enqueued a followup…`). If
-   you have branching logic, decide on the branch BEFORE enqueuing.
-2. **Project contract.** Generic tasks require `project`; bound
+1. **Tool requires a parent run row.** Calls outside a TaskRun
+   (chat mode, no `orchestratorRunId`) are refused — there is no
+   anchor row to record onto. Use `run_task` / the `/run` UI
+   instead.
+2. **At most one successor per run.** A second call returns an
+   error. Both `pendingFollowupTaskId` (pre-dispatch) and
+   `followupRunId` (post-dispatch) count as "already enqueued".
+   If you have branching logic, decide on the branch BEFORE
+   enqueuing.
+3. **Project contract.** Generic tasks require `project`; bound
    tasks reject it.
-3. **Branch is never auto-inherited.** Pass `base_branch` explicitly
+4. **Branch is never auto-inherited.** Pass `base_branch` explicitly
    when the successor must branch from somewhere other than the
    project default.
-4. **No max-depth cap at the runner level.** Cycles
+5. **No max-depth cap at the runner level.** Cycles
    (`A → B → A → …`) are the prompt's responsibility.
 
 ## UI
@@ -236,9 +258,10 @@ the **Run lineage** section surfaces:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `enqueue_followup` returns `refused: this run already enqueued a followup` | Prompt called the tool twice. | Branch the decision earlier, call the tool once. |
+| `enqueue_followup` returns `refused: this run already enqueued a followup` (or `recorded a pending followup`). | Prompt called the tool twice. | Branch the decision earlier, call the tool once. |
 | Successor runs but has no relation back to the source in `/run`. | The pointer-write step failed (DB error logged on server). | Check server logs; the chain still executed. |
-| Successor is stuck in `running` after parent completed. | Per-project concurrency lock held by another run. | Check `/run` for any running task on the same project. |
+| Parent succeeded but successor never started (no `▶ Successor enqueued` link). | Deferred dispatch failed (logs `[cron] post-success followup dispatch failed`). | Check `pendingFollowupTaskId` on the parent run; rerun the successor manually with the same `base_branch` and `input`. |
+| Successor failed pre-sync with `couldn't find remote ref <chain_branch>`. | Pre-ADR-0009 race (parent hadn't pushed yet). | Should no longer happen. If it does: confirm the parent's `commit-and-push` actually ran (look for `chore(kdust): <task>` commit on `origin/<chain>`). |
 | Successor branches from `main` instead of the parent's branch. | `base_branch` not passed in `enqueue_followup`. | Thread the branch explicitly. |
 | Want to broadcast to N successors. | Not supported in v1 (one followup per run). | Have the agent enqueue a fan-out task that itself enqueues N siblings sequentially. |
 

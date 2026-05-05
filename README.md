@@ -829,3 +829,130 @@ Rollout, in three commits on branch `task-runner/decoupled-chain`:
   `examples/resources/...`, `CHANGELOG.md`), and drop the
   former `provider-coder MODE=integrate` mass-copy step
   (no longer needed).
+
+### ADR-0009 — Deferred chain successor dispatch (2026-05-05)
+
+**Status**: Accepted (postmortem fix on top of ADR-0008)
+**Date**: 2026-05-05
+**Context**: Race condition postmortem on the
+`terraform-provider-windows` chain (`windows-resource → win-spec-analyst
+→ schema-architect → …`). Symptoms: every successor failed pre-sync
+with `fatal: couldn't find remote ref kdust/chain/<resource>-<ts>` a
+few seconds before the predecessor's own success. Timeline (UTC,
+2026-05-05):
+
+| 14:03:19 | `win-spec-analyst` starts |
+| 14:06:14 | `win-spec-analyst` agent calls `enqueue_followup(schema-architect)` |
+| 14:06:18 | **`schema-architect` starts** ← pre-sync fetches chain branch |
+| 14:06:20 | `schema-architect` FAILS (branch absent on origin) |
+| 14:06:23 | `win-spec-analyst` `commit-and-push` finishes (chain branch reaches origin) |
+| 14:06:26 | `win-spec-analyst` marked `success` |
+
+The original ADR-0008 implementation of `enqueue_followup` kicked off
+the successor synchronously inside the agent's tool call (parent's
+phase 5/10, `run-agent`). The parent's `commit-and-push` is phase
+8/10. So the successor's pre-sync (its own phase 2) raced with the
+parent's still-pending push of the chain branch — a 5-second window
+where `git fetch origin <chain>` fails hard.
+
+The original tool's docstring stated *"the current run finishes
+normally; the successor runs as a fresh top-level run"* — the
+**intent** was always deferred dispatch, but the **implementation**
+fired the successor immediately and even bypassed the per-project
+concurrency lock via `predecessorRunId` (commit 5b). The hack that
+made successors not skip on the lock is exactly what made the race
+visible. ADR-0008 worked for chains where successors didn't need the
+parent's branch (most pre-shared-chain-branch chains); commit 6's
+shared chain branch made every step depend on the predecessor's
+push.
+
+**Decision**: Genuinely defer the successor dispatch to **after**
+the parent's success notification.
+
+The `enqueue_followup` MCP tool no longer calls `runTask`. It
+validates the successor's parameters and **records** them on the
+parent's `TaskRun` row in four new nullable columns:
+
+```
+TaskRun.pendingFollowupTaskId       String?
+TaskRun.pendingFollowupInput        String?
+TaskRun.pendingFollowupProject      String?
+TaskRun.pendingFollowupBaseBranch   String?
+```
+
+The runner's success path (in `src/lib/cron/runner.ts`, after
+`runNotifySuccess`) reads those columns and dispatches the
+successor as a fresh top-level run via a new helper
+`dispatchPendingFollowup(parentRunId, parentTaskName)`. The parent's
+`followupRunId` is set when the successor's run row is created,
+keeping the existing `/run` forward-walk semantics.
+
+Cascade-stop is preserved by construction: if the parent fails at
+any phase before the post-notify dispatch step, control jumps to the
+`catch{}` and `runHandleFailure` runs instead — the
+`pendingFollowup*` columns stay set on the row but are never
+consumed. Surfaced in `/run` as a postmortem signal ("agent declared
+a successor that was never dispatched") rather than as a phantom
+successor in `running` state.
+
+The `predecessorRunId` lock-bypass channel (commit 5b) becomes
+moot: by the time `dispatchPendingFollowup` runs, the parent's
+`TaskRun.status` is already `success`, so preflight's per-project
+concurrency check (which filters on `status='running'`) doesn't
+treat the parent as a sibling. We keep the `predecessorRunId`
+parameter on `RunTaskOptions` for compat (legacy chat-mode
+dispatchers still pass it; preflight ignores absent rows) but
+`enqueue_followup` no longer sets it.
+
+**Invariants preserved**:
+
+- AT MOST ONE successor per run. The tool checks both
+  `followupRunId` (post-dispatch) and `pendingFollowupTaskId`
+  (pre-dispatch) before writing.
+- Branches are NEVER auto-inherited. `base_branch` is recorded
+  verbatim and replayed by the deferred dispatch.
+- Chain-mode `enqueue_followup` is now refused outside a TaskRun
+  (no `orchestratorRunId` → no anchor row to record onto).
+  Chat-mode dispatchers that previously used `enqueue_followup` as
+  a one-off run-launcher must use `run_task` / the `/run` UI
+  instead. None exist in the current code base.
+
+**Migration**: `20260505160000_deferred_followup` — purely additive,
+4 nullable columns on `CronRun` (Prisma `TaskRun`). Applied via
+`prisma db push` (project convention); SQL recorded under
+`prisma/migrations/` for trace.
+
+**Consequences**:
+
+*Positive*:
+
+- Race is structurally impossible: the chain branch is on origin
+  before the successor's pre-sync runs.
+- Implementation matches the documented intent ("current run
+  finishes normally; successor runs as a fresh top-level run").
+- One less concurrency-lock special case (`predecessorRunId`
+  bypass), although the channel is kept for safety.
+- Failed parent → unconsumed `pendingFollowup*` is a useful
+  postmortem signal in `/run`.
+
+*Negative*:
+
+- Successor's `run_id` is no longer available at the moment the
+  agent calls the tool. The tool now returns
+  `{status: 'scheduled', task: {id, name}}` instead of
+  `{status: 'enqueued', run_id}`. No prompt currently consumes
+  `run_id` so this is a transparent change for agents.
+- A successor that depends on the parent's notification side
+  effects (Teams card posted, etc.) was already racing under the
+  old model; under ADR-0009 it now runs strictly after, which is
+  also the only reasonable order.
+- Adds one DB write per `enqueue_followup` call (recording the
+  pending columns) and one DB read at end-of-run. Trivial cost.
+
+**Follow-ups**:
+
+- `/run` UI: surface `pendingFollowupTaskId` as an "abandoned
+  successor" pill on failed runs. Read-only, postmortem aid.
+- Remove the `predecessorRunId` channel entirely once we confirm
+  no chat-mode caller depends on it (grep-clean as of this ADR;
+  defer one release for safety).

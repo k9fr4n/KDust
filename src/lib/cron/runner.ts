@@ -635,6 +635,35 @@ export async function runTask(
     } else {
       console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
     }
+
+    // [11] Deferred chain successor dispatch (ADR-0009, 2026-05-05).
+    //
+    // Reads the `pendingFollowup*` columns recorded by the agent's
+    // `enqueue_followup` MCP tool call (during run-agent, phase 5)
+    // and starts the successor NOW — after commit-and-push (phase 8)
+    // and the success notification (phase 10) have completed. This
+    // guarantees the chain branch is reachable on origin before the
+    // successor's own pre-sync tries to fetch it (race fix vs. the
+    // original ADR-0008 fire-and-forget implementation).
+    //
+    // Cascade-stop is preserved by construction: if any earlier
+    // phase throws, control jumps to the catch{} below and this
+    // line is never reached -> the recorded pendingFollowup* is
+    // silently abandoned. Failure handling owns the abandoned-
+    // followup case via TaskRun's pendingFollowupTaskId column,
+    // which the /run UI surfaces for visibility.
+    //
+    // Errors here must NOT mark the parent run failed: it has
+    // already been persisted as 'success' above. They are logged
+    // and (best-effort) recorded on the parent's row so /run can
+    // show a "successor dispatch failed" indicator.
+    try {
+      await dispatchPendingFollowup(run.id, job.name);
+    } catch (e) {
+      console.error(
+        `[cron] post-success followup dispatch failed for run=${run.id}: ${(e as Error)?.message ?? e}`,
+      );
+    }
   } catch (err) {
     // Failure path \u2014 extracted to ./runner/phases/handle-failure.ts
     // (ADR-0006 Step K). Persists the terminal TaskRun row, emits the
@@ -679,4 +708,128 @@ export async function runTask(
   // Always returning the runId lets callers (task-runner MCP, API
   // endpoints, tests) fetch the final TaskRun row.
   return run.id;
+}
+
+/**
+ * Deferred chain successor dispatch (ADR-0009, 2026-05-05).
+ *
+ * Called as the LAST step of `runTask`'s success path, after
+ * `runNotifySuccess`. Reads the `pendingFollowup*` columns
+ * recorded by the agent's `enqueue_followup` MCP tool call and
+ * dispatches the successor as a fresh top-level run.
+ *
+ * Why this is safe (vs. the original synchronous implementation):
+ *   - At call time the parent's `commit-and-push` has already
+ *     completed and the chain branch is reachable on origin, so
+ *     the successor's pre-sync (`git fetch origin <chain>`) won't
+ *     race with a still-pending push.
+ *   - The parent's TaskRun row is already marked 'success' before
+ *     `runNotifySuccess`, so the per-project concurrency lock in
+ *     preflight no longer treats the parent as an in-flight
+ *     sibling and we don't need the `predecessorRunId` bypass.
+ *
+ * Why we fire-and-forget (`void runTask(...)`):
+ *   - The successor is by design a NEW top-level run, decoupled
+ *     from the parent's lifecycle. We do NOT want to keep the
+ *     parent's runJob frame open for minutes while the successor
+ *     executes (would block the per-task lock release in finally{}
+ *     and the cron scheduler's next tick).
+ *   - We DO wait briefly (5s) for the successor's run row to be
+ *     created so we can persist `followupRunId` on the parent for
+ *     /run forward-walk visibility.
+ *
+ * Cascade-stop:
+ *   - If the parent fails before reaching this function, control
+ *     jumps to the catch{} in runJob and `runHandleFailure` runs;
+ *     this function is never called and `pendingFollowup*` stays
+ *     unread. The /run UI surfaces it as an "abandoned followup"
+ *     pill (read-only) for postmortem.
+ */
+async function dispatchPendingFollowup(
+  parentRunId: string,
+  parentTaskName: string,
+): Promise<void> {
+  const parent = await db.taskRun.findUnique({
+    where: { id: parentRunId },
+    select: {
+      pendingFollowupTaskId: true,
+      pendingFollowupInput: true,
+      pendingFollowupProject: true,
+      pendingFollowupBaseBranch: true,
+      followupRunId: true,
+    },
+  });
+  if (!parent?.pendingFollowupTaskId) return;
+  if (parent.followupRunId) {
+    // Belt-and-braces: the at-most-one invariant is enforced in
+    // the tool, but if a future code path writes followupRunId
+    // out-of-band we'd double-dispatch. Refuse loudly.
+    console.warn(
+      `[cron] dispatchPendingFollowup: run=${parentRunId} already has ` +
+        `followupRunId=${parent.followupRunId}; skipping pending dispatch.`,
+    );
+    return;
+  }
+
+  const childTaskId = parent.pendingFollowupTaskId;
+  let capturedRunId: string | null = null;
+  let rowReady: () => void = () => {};
+  const rowCreated = new Promise<void>((resolve) => {
+    rowReady = resolve;
+  });
+
+  // Fire-and-forget: we do NOT await the successor's full
+  // execution. Errors from the dispatch itself (preflight refusal,
+  // task missing) are logged. The successor's own runtime errors
+  // surface on its own TaskRun row.
+  const childFinished = runTask(childTaskId, {
+    parentRunId: null,
+    runDepth: 0,
+    inputAppend: parent.pendingFollowupInput ?? undefined,
+    projectOverride: parent.pendingFollowupProject ?? undefined,
+    baseBranchOverride: parent.pendingFollowupBaseBranch ?? undefined,
+    baseBranchOverrideSource: parent.pendingFollowupBaseBranch
+      ? 'explicit'
+      : undefined,
+    trigger: 'mcp',
+    triggeredBy: parentTaskName,
+    onRunCreated: (id) => {
+      capturedRunId = id;
+      rowReady();
+    },
+  });
+  childFinished.catch((e) => {
+    console.warn(
+      `[cron] deferred followup run rejected (parent=${parentRunId}, child_task=${childTaskId}): ${(e as Error)?.message ?? e}`,
+    );
+  });
+
+  const raceTimeout = new Promise<'timeout'>((resolve) =>
+    setTimeout(() => resolve('timeout'), 5_000),
+  );
+  const outcome = await Promise.race([
+    rowCreated.then(() => 'ready' as const),
+    raceTimeout,
+  ]);
+  if (outcome === 'timeout') {
+    console.warn(
+      `[cron] deferred followup row not created within 5s ` +
+        `(parent=${parentRunId}, child_task=${childTaskId}); ` +
+        `dispatch may still be in flight.`,
+    );
+    return;
+  }
+
+  if (capturedRunId) {
+    try {
+      await db.taskRun.update({
+        where: { id: parentRunId },
+        data: { followupRunId: capturedRunId },
+      });
+    } catch (e) {
+      console.warn(
+        `[cron] failed to set followupRunId on ${parentRunId}: ${(e as Error)?.message ?? e}`,
+      );
+    }
+  }
 }

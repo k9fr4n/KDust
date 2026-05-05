@@ -79,11 +79,14 @@ another run of the **same task** is already `running`, this run is
 refused with `status='skipped'` — prevents pile-up when a cron
 period is shorter than the run duration.
 
-A successor enqueued via `enqueue_followup` is allowed to acquire
-the lock while its predecessor is still flagged `running`: the
-predecessor's id is forwarded as `predecessorRunId` and excluded
-from the lock check. Without this, every chain step would deadlock
-on its own predecessor's lock.
+Successor dispatch (ADR-0009, 2026-05-05) is **deferred** to the end
+of the predecessor's success path: by the time the successor's
+preflight runs, the predecessor's `TaskRun.status` is already
+`success`, so the per-project lock check (which filters on
+`status='running'`) doesn't see the predecessor as a sibling. The
+legacy `predecessorRunId` lock-bypass channel is kept on
+`RunTaskOptions` for safety but `enqueue_followup` no longer sets
+it. See ADR-0009 in [`README.md`](../README.md#adr-0009--deferred-chain-successor-dispatch-2026-05-05) for the postmortem and rationale.
 
 ### [2] Pre-run git sync
 
@@ -153,6 +156,70 @@ five-task chain (`win-spec-analyst → schema-architect →
 provider-coder → test-engineer → quality-gate`).
 
 The protected-branch check still applies regardless of override.
+
+> **Three contractual constraints** (ADR-0008 fix, 2026-05-05) you MUST
+> respect when designing a chain prompt:
+>
+> 1. **`CHAIN_BRANCH` is caller-precomputed, not worker-computed.** The
+>    runner needs to resolve the branch BEFORE the agent runs (phase
+>    `branch-setup` happens before the agent's first message). Format:
+>    `kdust/chain/<RESOURCE>-<YYMMDDHHMM_UTC>`. The launcher (UI,
+>    orchestrator task, manual CLI) MUST compute it and pass it BOTH:
+>    - inside `input` as a `CHAIN_BRANCH: <ref>` line (the runner's
+>      pre-parse extracts it as `chainBranchOverride`),
+>    - AND as top-level `base_branch` on the dispatch call.
+>
+>    A worker that computes `CHAIN_BRANCH` on its own can write the
+>    string in its YAML output, but its OWN run will already be checked
+>    out on a different branch (the regular `kdust/<task>/<ts>`),
+>    sending its commits to the wrong place.
+>
+> 2. **The first worker must produce a tracked diff on `CHAIN_BRANCH`.**
+>    `enqueue_followup` requires `base_branch` to exist on origin, but
+>    origin only learns about `CHAIN_BRANCH` once a commit is pushed
+>    (phase [9]). A first run that writes only to gitignored paths
+>    short-circuits as no-op in `measure-diff` → branch never created
+>    on origin → all successors rejected. Convention used by the
+>    `terraform-provider-windows` chain: write a tracked manifest at
+>    `.kdust/chains/<RESOURCE>-<ts>.yaml` so the very first commit is
+>    `chain: init <RESOURCE>` and the branch reaches origin.
+>
+> 3. **`CHAIN_BRANCH:` in `input` is sufficient — `base_branch` top-level
+>    is OPTIONAL for chain workers.** The runner extracts the
+>    `CHAIN_BRANCH:` line from the successor's appended input
+>    (`runner.ts:443`) into `chainBranchOverride`, and
+>    `branch-setup` honours it via `checkoutChainBranch()` which
+>    fetches origin/<chain> if it exists, otherwise falls back to
+>    creating the branch from current HEAD (= base after pre-sync).
+>
+>    **Special case — the FIRST worker of a chain:** at that point
+>    `CHAIN_BRANCH` does NOT yet exist on origin. Passing it as
+>    `base_branch` top-level makes `pre-sync` run `git fetch origin
+>    <CHAIN_BRANCH>` which fails with `does the branch exist
+>    upstream?`. The launcher MUST pass `CHAIN_BRANCH:` in input
+>    ONLY:
+>
+>    ```jsonc
+>    // first worker dispatch (e.g. windows-resource → win-spec-analyst)
+>    {
+>      "task": "win-spec-analyst",
+>      // NO base_branch top-level — chain branch doesn't exist on origin yet
+>      "input": "...\nCHAIN_BRANCH: <CHAIN_BRANCH>\n..."
+>    }
+>    ```
+>
+>    **Successor workers** (chain branch already on origin after the
+>    first push) MAY pass `base_branch=<CHAIN_BRANCH>` top-level to
+>    make pre-sync reset directly to the chain tip. Both forms work:
+>
+>    ```jsonc
+>    // successor dispatch (e.g. win-spec-analyst → schema-architect)
+>    {
+>      "task": "<next>",
+>      "base_branch": "<CHAIN_BRANCH>",   // optional, branch is on origin
+>      "input": "...\nCHAIN_BRANCH: <CHAIN_BRANCH>\n..."
+>    }
+>    ```
 
 Before creating the branch, KDust refuses if the resolved name
 matches any entry in `protectedBranches`. This is a

@@ -31,10 +31,8 @@ import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { RunDetailActions } from '@/components/RunDetailActions';
-import {
-  ToolInvocationsPanel,
-  parseToolInvocations,
-} from '@/components/ChatMessageBubble';
+import { ToolInvocationsPanel } from '@/components/ChatMessageBubble';
+import { parseToolInvocations } from '@/lib/tool-invocations';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';

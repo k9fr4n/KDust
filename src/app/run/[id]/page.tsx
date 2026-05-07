@@ -31,6 +31,10 @@ import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { RunDetailActions } from '@/components/RunDetailActions';
+import {
+  ToolInvocationsPanel,
+  parseToolInvocations,
+} from '@/components/ChatMessageBubble';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
@@ -199,6 +203,14 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
   const toolFreq = new Map<string, number>();
   for (const n of toolNamesAll) toolFreq.set(n, (toolFreq.get(n) ?? 0) + 1);
   const toolFreqSorted = [...toolFreq.entries()].sort((a, b) => b[1] - a[1]);
+  // Per-message tool invocation log (Franck 2026-05-07). One
+  // ordered list of {tool, params} per agent message; concatenated
+  // across messages so the section reads like a chronological
+  // command log of what the agent actually did. Empty until rows
+  // produced after the schema bump get persisted.
+  const toolInvocationsAll = agentMessages.flatMap((m) =>
+    parseToolInvocations(m.toolInvocations),
+  );
   // stream event-type -> count
   const streamEvents = new Map<string, number>();
   for (const m of agentMessages) {
@@ -804,6 +816,19 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                   </tbody>
                 </table>
               </div>
+            </section>
+          )}
+
+          {/* Tool invocations log (Franck 2026-05-07). Reuses the
+              same ToolInvocationsPanel as /chat so the per-call
+              `{tool, params}` rendering stays consistent. Open by
+              default on /run because this is the post-mortem view
+              — the user landed here specifically to see what
+              happened. Empty for legacy runs without the column. */}
+          {toolInvocationsAll.length > 0 && (
+            <section className="mb-6">
+              <h2 className="font-semibold mb-2 text-sm">Tool invocations</h2>
+              <ToolInvocationsPanel invocations={toolInvocationsAll} defaultOpen />
             </section>
           )}
 

@@ -344,8 +344,65 @@ export interface StreamStats {
   eventCounts: Record<string, number>;
   toolCalls: number;
   toolNames: string[];
+  /**
+   * Per-call invocation log (Franck 2026-05-07). Captured in
+   * arrival order from `tool_approve_execution` events so /chat
+   * and /run can show exactly WHICH commands the agent ran, not
+   * just the distinct names. `params` is the raw input payload
+   * (already truncated, see toolInvocationsToJson()) — JSON-safe.
+   */
+  toolInvocations: Array<{ tool: string; params: unknown }>;
   genEvents: number; // alias of eventCounts.generation_tokens for convenience
   durationMs: number;
+}
+
+/**
+ * Serialise a StreamStats.toolInvocations list for SQLite storage.
+ * - Each `params` payload is capped at ~2 KB JSON (oversize values
+ *   are replaced with `{ "_truncated": "<NkB>" }`) so a single
+ *   `cat /etc/hosts` doesn't bloat the row.
+ * - The whole array is then re-stringified with a hard 50 KB cap;
+ *   if exceeded, we tail-truncate the array and append a
+ *   `{ tool: '_truncated', params: { remaining: N } }` sentinel.
+ * Returns null when the list is empty so DB rows stay null.
+ */
+export function toolInvocationsToJson(
+  invocations: StreamStats['toolInvocations'],
+): string | null {
+  if (!invocations || invocations.length === 0) return null;
+  const PER_PARAM_CAP = 2_000;
+  const TOTAL_CAP = 50_000;
+  const compact = invocations.map((inv) => {
+    let params: unknown = inv.params;
+    try {
+      const raw = JSON.stringify(params ?? null);
+      if (raw && raw.length > PER_PARAM_CAP) {
+        params = { _truncated: `${Math.round(raw.length / 1024)}kB` };
+      }
+    } catch {
+      params = { _unserialisable: true };
+    }
+    return { tool: inv.tool, params };
+  });
+  let out = JSON.stringify(compact);
+  if (out.length <= TOTAL_CAP) return out;
+  // Tail-truncate to fit the cap.
+  let lo = 0;
+  let hi = compact.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const candidate = JSON.stringify([
+      ...compact.slice(0, mid),
+      { tool: '_truncated', params: { remaining: compact.length - mid } },
+    ]);
+    if (candidate.length <= TOTAL_CAP) lo = mid;
+    else hi = mid - 1;
+  }
+  out = JSON.stringify([
+    ...compact.slice(0, lo),
+    { tool: '_truncated', params: { remaining: compact.length - lo } },
+  ]);
+  return out;
 }
 
 /**
@@ -385,11 +442,18 @@ export async function streamAgentReply(
   const seenTypes = new Map<string, number>();
   // Distinct MCP tool names (preserves first-seen order for the UI).
   const toolNamesSet = new Set<string>();
+  // Per-call invocation log (Franck 2026-05-07). Recorded in arrival
+  // order on every `tool_approve_execution` event — same payload we
+  // forward to the client via the `tool_call` SSE event, just kept
+  // here too so callers (stream route, cron runner, telegram bridge)
+  // can persist it on Message.toolInvocations.
+  const toolInvocations: Array<{ tool: string; params: unknown }> = [];
   const startedAt = Date.now();
   const buildStats = (): StreamStats => ({
     eventCounts: Object.fromEntries(seenTypes.entries()),
     toolCalls: seenTypes.get('tool_call_started') ?? 0,
     toolNames: Array.from(toolNamesSet),
+    toolInvocations: toolInvocations.slice(),
     genEvents: seenTypes.get('generation_tokens') ?? 0,
     durationMs: Date.now() - startedAt,
   });
@@ -453,13 +517,15 @@ export async function streamAgentReply(
         // Auto-approve MCP tool calls so the agent can actually use the fs tools.
         // Without this, the agent waits for approval forever and aborts.
         const ev = handled as ToolApproveExecutionEvent;
-        onEvent(
-          'tool_call',
-          JSON.stringify({
-            tool: ev.metadata?.toolName ?? 'tool',
-            params: ev.inputs ?? null,
-          }),
-        );
+        const toolName = ev.metadata?.toolName ?? 'tool';
+        const params = ev.inputs ?? null;
+        // Record both: (a) distinct names for /settings/usage
+        // aggregations [previously NEVER populated — silent bug
+        // shipping ever since toolNamesSet was introduced], and
+        // (b) per-call invocation log for /chat & /run replay.
+        toolNamesSet.add(toolName);
+        toolInvocations.push({ tool: toolName, params });
+        onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
         // Dust's frontend (Google LB) occasionally returns transient
         // 502/503/504 HTML error pages on this endpoint, which the
         // SDK surfaces as { dustError.type: 'unexpected_response_format',

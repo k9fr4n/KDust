@@ -25,86 +25,79 @@ import {
 } from '@/lib/tool-invocations';
 
 /**
- * Tool invocations panel — one foldable `<details>` per agent
- * message that ran MCP tools. Header summarises the call count
- * + distinct tool list; expanded body shows each call with its
- * params pretty-printed. Empty array renders nothing.
+ * Tool invocations panel — one independent foldable `<details>`
+ * **per call** (Franck 2026-05-08 feedback). No outer wrapper /
+ * summary anymore: each call is its own top-level section, so the
+ * user can open/close them individually and scan a long run as a
+ * vertical list of self-contained rows.
  *
  * Rendered both inside ChatMessageBubble (persisted history) and
  * inside the live-stream pane in _ChatClient (running reply),
- * with the same visual contract.
+ * with the same visual contract. Empty array renders nothing.
  */
 export function ToolInvocationsPanel({
   invocations,
   defaultOpen = false,
 }: {
   invocations: ToolInvocation[];
+  /**
+   * If true, every per-call section starts open. Used on
+   * /run/[id] (post-mortem view, user already wants to see what
+   * ran). /chat keeps the default `false` to stay scannable.
+   */
   defaultOpen?: boolean;
 }) {
-  const distinctNames = useMemo(() => {
-    const s = new Set<string>();
-    for (const i of invocations) s.add(i.tool);
-    return Array.from(s);
-  }, [invocations]);
   if (invocations.length === 0) return null;
   return (
-    <details
-      open={defaultOpen}
-      className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-full"
-    >
-      <summary className="cursor-pointer select-none flex items-center gap-1.5">
-        <Wrench size={12} className="text-amber-500 flex-none" />
-        <span>
-          {invocations.length} tool call{invocations.length > 1 ? 's' : ''}
-        </span>
-        <span className="text-slate-400 dark:text-slate-500 truncate font-mono">
-          · {distinctNames.join(', ')}
-        </span>
-      </summary>
-      {/* One foldable row per tool call (Franck 2026-05-07
-          feedback): the outer <details> just opens the *list*; each
-          call has its own nested <details> so params stay collapsed
-          until you click that specific row. Keeps long runs (20+
-          calls) scannable instead of dumping every JSON blob at
-          once. */}
-      <ol className="mt-1.5 flex flex-col gap-0.5 list-decimal list-inside marker:text-slate-400">
-        {invocations.map((inv, i) => {
-          let pretty: string;
-          try {
-            pretty = JSON.stringify(inv.params ?? null, null, 2);
-          } catch {
-            pretty = String(inv.params);
-          }
-          const hasParams = pretty && pretty !== 'null';
-          return (
-            <li key={i} className="pl-1">
-              {hasParams ? (
-                <details className="inline align-top group">
-                  <summary className="cursor-pointer select-none inline-flex items-baseline gap-1 marker:hidden [&::-webkit-details-marker]:hidden">
-                    <span className="font-mono text-amber-700 dark:text-amber-400">
-                      {inv.tool}
-                    </span>
-                    <span className="text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden">
-                      ▸
-                    </span>
-                    <span className="text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline">
-                      ▾
-                    </span>
-                  </summary>
-                  <pre className="mt-0.5 ml-4 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
-                    {pretty}
-                  </pre>
-                </details>
-              ) : (
-                <span className="font-mono text-amber-700 dark:text-amber-400">
+    <ol className="flex flex-col gap-1 max-w-full list-none">
+      {invocations.map((inv, i) => {
+        let pretty: string;
+        try {
+          pretty = JSON.stringify(inv.params ?? null, null, 2);
+        } catch {
+          pretty = String(inv.params);
+        }
+        const hasParams = Boolean(pretty) && pretty !== 'null';
+        return (
+          <li key={i} className="max-w-full">
+            <details
+              open={defaultOpen && hasParams}
+              className="group text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-full"
+            >
+              <summary
+                className={
+                  'select-none flex items-center gap-1.5 marker:hidden [&::-webkit-details-marker]:hidden ' +
+                  (hasParams ? 'cursor-pointer' : 'cursor-default')
+                }
+              >
+                <Wrench size={12} className="text-amber-500 flex-none" />
+                <span className="text-slate-400 dark:text-slate-500 text-[10px] tabular-nums">
+                  {i + 1}.
+                </span>
+                <span className="font-mono text-amber-700 dark:text-amber-400 truncate">
                   {inv.tool}
                 </span>
+                {hasParams && (
+                  <>
+                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden">
+                      ▸
+                    </span>
+                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline">
+                      ▾
+                    </span>
+                  </>
+                )}
+              </summary>
+              {hasParams && (
+                <pre className="mt-1 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
+                  {pretty}
+                </pre>
               )}
-            </li>
-          );
-        })}
-      </ol>
-    </details>
+            </details>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 

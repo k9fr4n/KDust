@@ -24,3 +24,9 @@ prisma/prisma/
 prisma/kdust.db*
 prisma/tmp-migrate.db*
 prisma/dev-migrate.db
+
+# Local debug artifacts (Franck 2026-05-07): freebox CLI session cache
+# and any core dump landing at the repo root.
+.freebox-token.json
+core
+core.*

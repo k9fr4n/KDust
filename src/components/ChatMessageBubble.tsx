@@ -88,7 +88,13 @@ export function ToolInvocationsPanel({
           · {distinctNames.join(', ')}
         </span>
       </summary>
-      <ol className="mt-1.5 flex flex-col gap-1.5 list-decimal list-inside marker:text-slate-400">
+      {/* One foldable row per tool call (Franck 2026-05-07
+          feedback): the outer <details> just opens the *list*; each
+          call has its own nested <details> so params stay collapsed
+          until you click that specific row. Keeps long runs (20+
+          calls) scannable instead of dumping every JSON blob at
+          once. */}
+      <ol className="mt-1.5 flex flex-col gap-0.5 list-decimal list-inside marker:text-slate-400">
         {invocations.map((inv, i) => {
           let pretty: string;
           try {
@@ -96,15 +102,30 @@ export function ToolInvocationsPanel({
           } catch {
             pretty = String(inv.params);
           }
+          const hasParams = pretty && pretty !== 'null';
           return (
             <li key={i} className="pl-1">
-              <span className="font-mono text-amber-700 dark:text-amber-400">
-                {inv.tool}
-              </span>
-              {pretty && pretty !== 'null' && (
-                <pre className="mt-0.5 ml-1 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
-                  {pretty}
-                </pre>
+              {hasParams ? (
+                <details className="inline align-top group">
+                  <summary className="cursor-pointer select-none inline-flex items-baseline gap-1 marker:hidden [&::-webkit-details-marker]:hidden">
+                    <span className="font-mono text-amber-700 dark:text-amber-400">
+                      {inv.tool}
+                    </span>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden">
+                      ▸
+                    </span>
+                    <span className="text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline">
+                      ▾
+                    </span>
+                  </summary>
+                  <pre className="mt-0.5 ml-4 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
+                    {pretty}
+                  </pre>
+                </details>
+              ) : (
+                <span className="font-mono text-amber-700 dark:text-amber-400">
+                  {inv.tool}
+                </span>
               )}
             </li>
           );

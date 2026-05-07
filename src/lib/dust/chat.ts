@@ -37,9 +37,27 @@ type ToolApproveExecutionEvent = Extract<
   AgentActionSpecificEvent,
   { type: 'tool_approve_execution' }
 >;
+// Minimal shape we need from `agent_action_success`. We don't import
+// AgentActionSuccessEvent from the SDK because the type name is not
+// re-exported; the runtime payload comes from AgentActionTypeSchema
+// (toolName / functionCallName / params / sId). See chat.ts diff
+// 2026-05-08 for context — this event is the only signal we get when
+// the agent runs with auto-approval (Dust workspace setting), in
+// which case `tool_approve_execution` is NEVER emitted.
+type AgentActionSuccessShape = {
+  type: 'agent_action_success';
+  messageId: string;
+  action: {
+    sId: string;
+    toolName: string;
+    functionCallName?: string | null;
+    params: Record<string, unknown>;
+  };
+};
 type HandledStreamEvent =
   | GenerationTokensEvent
   | ToolApproveExecutionEvent
+  | AgentActionSuccessShape
   | AgentMessageSuccessEvent
   | AgentErrorEvent
   | UserMessageErrorEvent;
@@ -448,6 +466,13 @@ export async function streamAgentReply(
   // here too so callers (stream route, cron runner, telegram bridge)
   // can persist it on Message.toolInvocations.
   const toolInvocations: Array<{ tool: string; params: unknown }> = [];
+  // Dedupe across the two capture sources (Franck 2026-05-08): when a
+  // workspace requires manual approval we get `tool_approve_execution`
+  // (carries `actionId`); when auto-approval is on, only
+  // `agent_action_success` fires (carries `action.sId`). Both ids
+  // refer to the same MCP action sId, so a single Set keyed on it
+  // prevents double-counting if both events arrive (manual flow).
+  const seenActionIds = new Set<string>();
   const startedAt = Date.now();
   const buildStats = (): StreamStats => ({
     eventCounts: Object.fromEntries(seenTypes.entries()),
@@ -523,9 +548,12 @@ export async function streamAgentReply(
         // aggregations [previously NEVER populated — silent bug
         // shipping ever since toolNamesSet was introduced], and
         // (b) per-call invocation log for /chat & /run replay.
-        toolNamesSet.add(toolName);
-        toolInvocations.push({ tool: toolName, params });
-        onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
+        if (!seenActionIds.has(ev.actionId)) {
+          seenActionIds.add(ev.actionId);
+          toolNamesSet.add(toolName);
+          toolInvocations.push({ tool: toolName, params });
+          onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
+        }
         // Dust's frontend (Google LB) occasionally returns transient
         // 502/503/504 HTML error pages on this endpoint, which the
         // SDK surfaces as { dustError.type: 'unexpected_response_format',
@@ -547,6 +575,30 @@ export async function streamAgentReply(
             'error',
             `Failed to approve tool action after retries: ${errMessage(err)}`,
           );
+        }
+        break;
+      }
+      case 'agent_action_success': {
+        // Fallback capture path (Franck 2026-05-08): when auto-approval
+        // is enabled on the Dust workspace/agent, the
+        // `tool_approve_execution` event is bypassed entirely — we
+        // only ever see `agent_action_success`, which still carries
+        // the full {toolName, params} payload. Dedupe on action.sId
+        // so the manual-approval flow (which emits BOTH events) does
+        // not double-count.
+        const ev = handled as AgentActionSuccessShape;
+        const aid = ev.action?.sId;
+        if (aid && !seenActionIds.has(aid)) {
+          seenActionIds.add(aid);
+          // Prefer functionCallName when present (matches what the
+          // Dust web UI displays — e.g. "Fs Cli Run Command"); fall
+          // back to the raw MCP toolName.
+          const toolName =
+            ev.action.functionCallName || ev.action.toolName || 'tool';
+          const params = ev.action.params ?? null;
+          toolNamesSet.add(toolName);
+          toolInvocations.push({ tool: toolName, params });
+          onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
         }
         break;
       }

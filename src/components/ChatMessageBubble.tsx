@@ -19,37 +19,10 @@ import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import { Copy, Check, Wrench } from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
 import { UI_FLASH_MS } from '@/lib/constants';
-
-/**
- * One tool invocation as captured by streamAgentReply (Franck
- * 2026-05-07). Mirrors `StreamStats.toolInvocations[i]` in
- * src/lib/dust/chat.ts. `params` is whatever the agent sent —
- * already truncated (see toolInvocationsToJson) — so the renderer
- * just needs to display it safely.
- */
-type ToolInvocation = { tool: string; params: unknown };
-
-/**
- * Parse the JSON blob persisted on Message.toolInvocations.
- * Returns [] for null / invalid JSON / non-array — never throws.
- * The invocation list is best-effort: a malformed row should not
- * crash the bubble.
- */
-function parseToolInvocations(raw: string | null | undefined): ToolInvocation[] {
-  if (!raw) return [];
-  try {
-    const v = JSON.parse(raw);
-    if (!Array.isArray(v)) return [];
-    return v
-      .filter(
-        (x): x is ToolInvocation =>
-          x && typeof x === 'object' && typeof (x as ToolInvocation).tool === 'string',
-      )
-      .map((x) => ({ tool: x.tool, params: x.params }));
-  } catch {
-    return [];
-  }
-}
+import {
+  parseToolInvocations,
+  type ToolInvocation,
+} from '@/lib/tool-invocations';
 
 /**
  * Tool invocations panel — one foldable `<details>` per agent
@@ -137,7 +110,6 @@ export function ToolInvocationsPanel({
 
 // Re-export the parser so non-bubble surfaces (e.g. /run/[id])
 // can reuse it without duplicating the JSON guard.
-export { parseToolInvocations };
 export type { ToolInvocation };
 
 /**

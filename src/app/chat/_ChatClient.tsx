@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
-import { ChatMessageBubble } from '@/components/ChatMessageBubble';
+import { ChatMessageBubble, ToolInvocationsPanel } from '@/components/ChatMessageBubble';
 import {
   publishConvEvent,
   subscribeConvEvents,
@@ -15,7 +15,6 @@ import {
   Send,
   Square,
   Trash2,
-  Wrench,
   FolderTree,
   ListChecks,
   Clock,
@@ -52,7 +51,19 @@ type ConvSummary = {
   /** Optional — count of messages for the sidebar badge. */
   messageCount?: number;
 };
-type Msg = { id: string; role: 'user' | 'agent' | 'system'; content: string; createdAt?: string };
+type Msg = {
+  id: string;
+  role: 'user' | 'agent' | 'system';
+  content: string;
+  createdAt?: string;
+  /**
+   * Raw JSON blob from Message.toolInvocations, surfaced from the
+   * /api/conversation/:id payload (Franck 2026-05-07). Pass through
+   * to ChatMessageBubble; it stays a string here so React.memo's
+   * shallow compare still skips re-renders cleanly.
+   */
+  toolInvocations?: string | null;
+};
 
 /**
  * Short relative-time label ("just now", "3m", "2h", "yesterday",
@@ -219,23 +230,25 @@ function ChatPageInner({
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState('');
   const [cotText, setCotText] = useState('');
-  // Format a raw 'tool_call' SSE payload into the pill text shown
-  // in the running-reply UI. Extracted as a const-defined helper
-  // (Franck 2026-04-25 19:45) so the live SSE path AND the
-  // passive replay path (loadConv + polling) produce byte-identical
-  // strings \u2014 otherwise reattaching to a stream would visually
-  // \"snap\" the tool list as the consumer changed.
-  const formatToolCallPayload = (data: string): string => {
+  // Parse a raw 'tool_call' SSE payload — sent by the server as
+  // JSON.stringify({tool, params}) — into the structured form the
+  // ToolInvocationsPanel consumes. Pre-2026-05-07 this returned a
+  // pre-formatted single string truncated at 140 chars; we now
+  // keep the full structured params so the live pane and the
+  // post-`done` persisted view share the same renderer.
+  // (Franck 2026-05-07)
+  const parseToolCallPayload = (data: string): { tool: string; params: unknown } | null => {
     try {
       const p = JSON.parse(data);
-      return `${p.tool}(${
-        p.params ? JSON.stringify(p.params).slice(0, 140) : ''
-      })`;
+      if (p && typeof p === 'object' && typeof p.tool === 'string') {
+        return { tool: p.tool, params: p.params ?? null };
+      }
     } catch {
-      return data;
+      /* malformed frame — drop silently, the count is still in StreamStats */
     }
+    return null;
   };
-  const [toolCalls, setToolCalls] = useState<string[]>([]);
+  const [toolCalls, setToolCalls] = useState<Array<{ tool: string; params: unknown }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<string | null>(null);
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
@@ -399,7 +412,9 @@ function ChatPageInner({
       setCotText(j.streamCot ?? '');
       setToolCalls(
         Array.isArray(j.streamToolCalls)
-          ? j.streamToolCalls.map(formatToolCallPayload)
+          ? j.streamToolCalls
+              .map(parseToolCallPayload)
+              .filter((x: { tool: string; params: unknown } | null): x is { tool: string; params: unknown } => x !== null)
           : [],
       );
     } else {
@@ -668,11 +683,14 @@ function ChatPageInner({
           // so a plain assignment is correct (no diff math needed).
           setStreamedText(j.streamContent ?? '');
           setCotText(j.streamCot ?? '');
-          // Tool-call pills (Franck 2026-04-25 19:45) \u2014 same
-          // formatter as the live SSE path, see formatToolCallPayload.
+          // Tool-call pills (Franck 2026-04-25 19:45, refactored
+          // 2026-05-07 to keep structured payloads instead of
+          // truncated strings — same parser as the live SSE path).
           setToolCalls(
             Array.isArray(j.streamToolCalls)
-              ? j.streamToolCalls.map(formatToolCallPayload)
+              ? j.streamToolCalls
+                  .map(parseToolCallPayload)
+                  .filter((x: { tool: string; params: unknown } | null): x is { tool: string; params: unknown } => x !== null)
               : [],
           );
         }
@@ -724,7 +742,15 @@ function ChatPageInner({
         buf = frames.pop() ?? '';
         for (const frame of frames) {
           const ev = /^event:\s*(\w+)/.exec(frame)?.[1];
-          const dataLine = /\ndata:\s*(.*)$/s.exec(frame)?.[1] ?? '';
+          // SSE spec: strip EXACTLY ONE leading space after `data:`.
+          // The previous `\s*` was greedy and ate legitimate leading
+          // spaces inside the payload itself, producing concatenated
+          // words in the live "thinking…" pane (e.g. "Ineed",
+          // "TerraformPlugin", "v1.13.0might"). The server always
+          // emits `data: ${payload}` with a single delimiter space,
+          // so `: ?` is the correct, lossless strip.
+          // (Franck 2026-05-07)
+          const dataLine = /\ndata: ?(.*)$/s.exec(frame)?.[1] ?? '';
           const data = dataLine.replace(/\\n/g, '\n');
           if (ev === 'token') setStreamedText((t) => t + data);
           else if (ev === 'cot') setCotText((t) => t + data);
@@ -733,7 +759,8 @@ function ChatPageInner({
             // We receive it purely for forward-compat / debugging.
           }
           else if (ev === 'tool_call') {
-            setToolCalls((arr) => [...arr, formatToolCallPayload(data)]);
+            const parsed = parseToolCallPayload(data);
+            if (parsed) setToolCalls((arr) => [...arr, parsed]);
           } else if (ev === 'error') setError(data);
           else if (ev === 'done') {
             setStreamedText('');
@@ -1509,22 +1536,23 @@ function ChatPageInner({
                   createdAt={m.createdAt ?? null}
                   roleLabel={roleLabel}
                   showDay={showDay}
+                  toolInvocationsJson={m.toolInvocations ?? null}
                 />
               );
             });
           })()}
 
+          {/* Live tool invocations during streaming. Same panel
+              component as the persisted history (ChatMessageBubble)
+              so visuals don't snap when the stream completes —
+              opens by default during the run for live visibility,
+              collapses to a one-line summary in history.
+              (Franck 2026-05-07) */}
           {toolCalls.length > 0 && (
-            <div className="flex flex-col gap-1">
-              {toolCalls.map((t, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-2 text-xs text-slate-500 font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-fit"
-                >
-                  <Wrench size={12} className="text-amber-500" />
-                  {t}
-                </div>
-              ))}
+            <div className="flex justify-start">
+              <div className="max-w-[85%] w-full">
+                <ToolInvocationsPanel invocations={toolCalls} defaultOpen />
+              </div>
             </div>
           )}
 

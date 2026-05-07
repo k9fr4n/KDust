@@ -153,6 +153,13 @@ model Message {
   // Distinct tool names invoked during this turn, JSON array of strings
   // (e.g. ["fs.read","bash","fsWrite"]). Empty array when no tools.
   toolNames      String       @default("[]")
+  // Per-call invocation log (Franck 2026-05-07). Ordered JSON array
+  // of `{tool, params}` captured from tool_approve_execution events,
+  // so /chat (and /run) can replay WHAT each tool was called with —
+  // not just the distinct names. Null for legacy rows. Each `params`
+  // is JSON.stringify-truncated to ~2 KB and the whole blob is
+  // capped at 50 KB to bound SQLite row size on cat-heavy turns.
+  toolInvocations String?
   // Wall-clock duration of the stream loop, milliseconds. Null for
   // legacy rows and when the stream was aborted.
   durationMs     Int?

@@ -15,10 +15,109 @@
  * the parent or any sibling bubbles.
  */
 'use client';
-import React, { Fragment, useEffect, useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import React, { Fragment, useEffect, useMemo, useState } from 'react';
+import { Copy, Check, Wrench } from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
 import { UI_FLASH_MS } from '@/lib/constants';
+
+/**
+ * One tool invocation as captured by streamAgentReply (Franck
+ * 2026-05-07). Mirrors `StreamStats.toolInvocations[i]` in
+ * src/lib/dust/chat.ts. `params` is whatever the agent sent —
+ * already truncated (see toolInvocationsToJson) — so the renderer
+ * just needs to display it safely.
+ */
+type ToolInvocation = { tool: string; params: unknown };
+
+/**
+ * Parse the JSON blob persisted on Message.toolInvocations.
+ * Returns [] for null / invalid JSON / non-array — never throws.
+ * The invocation list is best-effort: a malformed row should not
+ * crash the bubble.
+ */
+function parseToolInvocations(raw: string | null | undefined): ToolInvocation[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter(
+        (x): x is ToolInvocation =>
+          x && typeof x === 'object' && typeof (x as ToolInvocation).tool === 'string',
+      )
+      .map((x) => ({ tool: x.tool, params: x.params }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Tool invocations panel — one foldable `<details>` per agent
+ * message that ran MCP tools. Header summarises the call count
+ * + distinct tool list; expanded body shows each call with its
+ * params pretty-printed. Empty array renders nothing.
+ *
+ * Rendered both inside ChatMessageBubble (persisted history) and
+ * inside the live-stream pane in _ChatClient (running reply),
+ * with the same visual contract.
+ */
+export function ToolInvocationsPanel({
+  invocations,
+  defaultOpen = false,
+}: {
+  invocations: ToolInvocation[];
+  defaultOpen?: boolean;
+}) {
+  const distinctNames = useMemo(() => {
+    const s = new Set<string>();
+    for (const i of invocations) s.add(i.tool);
+    return Array.from(s);
+  }, [invocations]);
+  if (invocations.length === 0) return null;
+  return (
+    <details
+      open={defaultOpen}
+      className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-full"
+    >
+      <summary className="cursor-pointer select-none flex items-center gap-1.5">
+        <Wrench size={12} className="text-amber-500 flex-none" />
+        <span>
+          {invocations.length} tool call{invocations.length > 1 ? 's' : ''}
+        </span>
+        <span className="text-slate-400 dark:text-slate-500 truncate font-mono">
+          · {distinctNames.join(', ')}
+        </span>
+      </summary>
+      <ol className="mt-1.5 flex flex-col gap-1.5 list-decimal list-inside marker:text-slate-400">
+        {invocations.map((inv, i) => {
+          let pretty: string;
+          try {
+            pretty = JSON.stringify(inv.params ?? null, null, 2);
+          } catch {
+            pretty = String(inv.params);
+          }
+          return (
+            <li key={i} className="pl-1">
+              <span className="font-mono text-amber-700 dark:text-amber-400">
+                {inv.tool}
+              </span>
+              {pretty && pretty !== 'null' && (
+                <pre className="mt-0.5 ml-1 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
+                  {pretty}
+                </pre>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
+}
+
+// Re-export the parser so non-bubble surfaces (e.g. /run/[id])
+// can reuse it without duplicating the JSON guard.
+export { parseToolInvocations };
+export type { ToolInvocation };
 
 /**
  * Local copy-to-clipboard button (Franck 2026-04-23 15:31). Kept
@@ -105,11 +204,23 @@ export type ChatBubbleProps = {
   roleLabel: string;
   /** Whether to render a day separator ABOVE this bubble. */
   showDay: boolean;
+  /**
+   * Raw JSON blob from Message.toolInvocations (agent rows only).
+   * Kept as a string prop so React's shallow compare still works:
+   * we parse inside ChatMessageBubble to render the foldable
+   * `<details>` panel. null / undefined / empty string => no panel.
+   * (Franck 2026-05-07)
+   */
+  toolInvocationsJson?: string | null;
 };
 
 function ChatMessageBubbleImpl(props: ChatBubbleProps) {
-  const { role, content, createdAt, roleLabel, showDay } = props;
+  const { role, content, createdAt, roleLabel, showDay, toolInvocationsJson } = props;
   const isUser = role === 'user';
+  const invocations = useMemo(
+    () => (role === 'agent' ? parseToolInvocations(toolInvocationsJson) : []),
+    [role, toolInvocationsJson],
+  );
   return (
     <Fragment>
       {showDay && createdAt && (
@@ -148,6 +259,15 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
               </MessageMarkdown>
             )}
           </div>
+          {/* MCP tool invocations panel (Franck 2026-05-07).
+              Below the bubble, same alignment as the metadata
+              row so the user can scan «what did the agent
+              actually do?» without expanding by default. */}
+          {invocations.length > 0 && (
+            <div className="w-full max-w-full mt-0.5">
+              <ToolInvocationsPanel invocations={invocations} />
+            </div>
+          )}
           {/* Metadata row (Franck 2026-04-23 15:31):
               - timestamp bumped 10px \u2192 11px (old was hard to read),
               - copy button on the opposite side of the role label so

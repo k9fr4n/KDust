@@ -67,6 +67,34 @@ Grep filter:
 
 to get a rough "top tools by bytes_out" view in a pinch.
 
+## Layer 1.5 — Per-message tool invocation log (Franck 2026-05-07)
+
+File: `Message.toolInvocations` (Prisma, nullable `String?`).
+
+Captured in `streamAgentReply` on every `tool_approve_execution`
+event as an ordered JSON array of `{tool, params}`, then persisted
+on the agent message at end of stream by all three callers:
+
+  - `src/app/api/conversation/[id]/stream/route.ts` (chat)
+  - `src/lib/cron/runner/phases/run-agent.ts` (cron / push pipeline)
+  - `src/lib/telegram/bridge.ts` (Telegram bridge)
+
+Storage is bounded — see `toolInvocationsToJson()` in
+`src/lib/dust/chat.ts`: each `params` payload is capped at ~2 KB
+(replaced by `{ "_truncated": "<NkB>" }` if larger), and the whole
+array at 50 KB (tail-truncated with a `_truncated` sentinel).
+
+Surfacing: `<ToolInvocationsPanel>` in
+`src/components/ChatMessageBubble.tsx` renders a foldable
+`<details>` per agent message in `/chat`. Reused for the live
+streaming pane so visuals don't snap when the stream completes.
+
+Side-effect of the same fix: `StreamStats.toolNames` is now
+correctly populated (the `Set.add` was missing pre-2026-05-07,
+so `/settings/usage`'s "top tools" leaderboard was silently
+counting nothing). New chat / cron / Telegram turns will start
+filling it; legacy rows stay at `[]`.
+
 ## Layer 2+ (not shipped)
 
 Persistence in a `McpToolCall` Prisma model + `/run/<id>/observability`

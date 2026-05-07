@@ -1,5 +1,5 @@
 import { db } from '@/lib/db';
-import { streamAgentReply } from '@/lib/dust/chat';
+import { streamAgentReply, toolInvocationsToJson } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
 import {
   markStreamStart,
@@ -132,6 +132,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             streamStats: JSON.stringify(result.stats.eventCounts),
             toolCalls: result.stats.toolCalls,
             toolNames: JSON.stringify(result.stats.toolNames),
+            toolInvocations: toolInvocationsToJson(result.stats.toolInvocations),
             durationMs: result.stats.durationMs,
           },
         });

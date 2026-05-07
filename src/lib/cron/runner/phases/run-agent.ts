@@ -44,6 +44,7 @@ import { db } from '../../../db';
 import {
   createDustConversation,
   streamAgentReply,
+  toolInvocationsToJson,
   type StreamStats,
 } from '../../../dust/chat';
 import type { ResolvedBranchPolicy } from '../../../branch-policy';
@@ -293,6 +294,9 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
                 : null,
               toolCalls: agentStats?.toolCalls ?? 0,
               toolNames: JSON.stringify(agentStats?.toolNames ?? []),
+              toolInvocations: agentStats
+                ? toolInvocationsToJson(agentStats.toolInvocations)
+                : null,
               durationMs: agentStats?.durationMs ?? null,
             },
           ],
@@ -313,6 +317,9 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
                 : null,
               toolCalls: agentStats?.toolCalls ?? 0,
               toolNames: JSON.stringify(agentStats?.toolNames ?? []),
+              toolInvocations: agentStats
+                ? toolInvocationsToJson(agentStats.toolInvocations)
+                : null,
               durationMs: agentStats?.durationMs ?? null,
             },
           ],

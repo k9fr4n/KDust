@@ -263,26 +263,36 @@ export default function LogsView({ tz }: { tz: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap mb-4">
-        <ScrollText size={20} className="text-slate-400 shrink-0" />
-        <h1 className="text-2xl font-bold">Container logs</h1>
-        <span className="text-sm text-slate-500">
-          {filtered.length} / {entries.length} lines
-        </span>
+      {/* Mobile-first header (Franck 2026-05-08): on phones we
+          stack the title row above the toolbar instead of relying
+          on `flex-wrap` + `ml-auto`, which produced an unreadable
+          mosaic of half-wrapped buttons under ~640px. The toolbar
+          itself uses `flex-wrap` with a filter input that fills
+          the row width on mobile, and button labels collapse to
+          icon-only via `hidden sm:inline` (the `title` attribute
+          stays for screen readers). */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+        <div className="flex items-center gap-2 min-w-0">
+          <ScrollText size={20} className="text-slate-400 shrink-0" />
+          <h1 className="text-xl sm:text-2xl font-bold truncate">Container logs</h1>
+          <span className="text-xs sm:text-sm text-slate-500 shrink-0">
+            {filtered.length} / {entries.length} lines
+          </span>
+        </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <div className="relative">
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-none min-w-0">
             <Filter size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter…"
-              className="pl-7 pr-2 py-1.5 text-sm rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 w-48"
+              className="pl-7 pr-2 py-1.5 text-sm rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 w-full sm:w-48"
             />
           </div>
 
           <label
-            className="text-xs flex items-center gap-1"
+            className="text-xs flex items-center gap-1 shrink-0"
             title={
               autoscroll
                 ? 'Following bottom — scroll up to pause'
@@ -309,34 +319,38 @@ export default function LogsView({ tz }: { tz: string }) {
 
           <button
             onClick={() => setPaused((p) => !p)}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+            title={paused ? 'Resume log stream' : 'Pause log stream'}
+            className="flex items-center gap-1 text-sm px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             {paused ? <Play size={14} /> : <Pause size={14} />}
-            {paused ? 'Resume' : 'Pause'}
+            <span className="hidden sm:inline">{paused ? 'Resume' : 'Pause'}</span>
           </button>
 
           <button
             onClick={copy}
             title={`Copy ${filtered.length} line(s) to clipboard`}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="flex items-center gap-1 text-sm px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
-            {copied ? 'Copied!' : 'Copy'}
+            <span className="hidden sm:inline">{copied ? 'Copied!' : 'Copy'}</span>
           </button>
 
           <button
             onClick={download}
             title={`Download ${filtered.length} line(s) as kdust_log_<timestamp>.txt`}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="flex items-center gap-1 text-sm px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
-            <Download size={14} /> Download
+            <Download size={14} />
+            <span className="hidden sm:inline">Download</span>
           </button>
 
           <button
             onClick={clear}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+            title="Clear log buffer"
+            className="flex items-center gap-1 text-sm px-2 sm:px-3 py-1.5 rounded border border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
           >
-            <Trash2 size={14} /> Clear
+            <Trash2 size={14} />
+            <span className="hidden sm:inline">Clear</span>
           </button>
         </div>
       </div>
@@ -394,7 +408,7 @@ export default function LogsView({ tz }: { tz: string }) {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="rounded-lg border border-slate-800 bg-slate-950 text-slate-100 font-mono text-xs leading-relaxed overflow-auto h-[calc(100vh-13rem)]"
+        className="rounded-lg border border-slate-800 bg-slate-950 text-slate-100 font-mono text-xs leading-relaxed overflow-auto min-h-[50vh] h-[calc(100vh-20rem)] sm:h-[calc(100vh-13rem)]"
       >
         <div className="p-3 whitespace-pre-wrap">
           {filtered.length === 0 && (

@@ -25,11 +25,55 @@ import {
 } from '@/lib/tool-invocations';
 
 /**
+ * Compact one-line hint extracted from a tool call's params,
+ * shown inline next to the tool name when the section is folded
+ * (Franck 2026-05-08 feedback). Goal: the user can scan a long
+ * tool-call list and tell what each call targets without
+ * expanding it.
+ *
+ * Heuristic: if `params` is an object, surface the first
+ * "interesting" scalar field — `path` / `url` / `command` /
+ * `query` / `pattern` / `file` / `name` / `id` in that order —
+ * else stringify shortly. Strings are returned as-is. Truncated
+ * to 60 chars to stay on one line.
+ */
+const HINT_KEYS = ['path', 'url', 'command', 'query', 'pattern', 'file', 'name', 'id'] as const;
+function summarizeParams(params: unknown): string {
+  if (params == null) return '';
+  if (typeof params === 'string') return params.slice(0, 60);
+  if (typeof params === 'number' || typeof params === 'boolean') return String(params);
+  if (Array.isArray(params)) {
+    if (params.length === 0) return '';
+    return summarizeParams(params[0]);
+  }
+  if (typeof params === 'object') {
+    const obj = params as Record<string, unknown>;
+    for (const k of HINT_KEYS) {
+      const v = obj[k];
+      if (typeof v === 'string' && v.length > 0) {
+        return v.length > 60 ? v.slice(0, 57) + '…' : v;
+      }
+      if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    }
+    // Fallback: first string-valued field, whatever its key.
+    for (const [, v] of Object.entries(obj)) {
+      if (typeof v === 'string' && v.length > 0) {
+        return v.length > 60 ? v.slice(0, 57) + '…' : v;
+      }
+    }
+  }
+  return '';
+}
+
+/**
  * Tool invocations panel — one independent foldable `<details>`
  * **per call** (Franck 2026-05-08 feedback). No outer wrapper /
  * summary anymore: each call is its own top-level section, so the
  * user can open/close them individually and scan a long run as a
  * vertical list of self-contained rows.
+ *
+ * Each summary surfaces the tool name plus a one-line hint
+ * (`summarizeParams`) so a folded list is informative on its own.
  *
  * Rendered both inside ChatMessageBubble (persisted history) and
  * inside the live-stream pane in _ChatClient (running reply),
@@ -43,7 +87,8 @@ export function ToolInvocationsPanel({
   /**
    * If true, every per-call section starts open. Used on
    * /run/[id] (post-mortem view, user already wants to see what
-   * ran). /chat keeps the default `false` to stay scannable.
+   * ran). /chat keeps the default `false` so calls stay folded
+   * and the user can open the ones that matter.
    */
   defaultOpen?: boolean;
 }) {
@@ -58,6 +103,7 @@ export function ToolInvocationsPanel({
           pretty = String(inv.params);
         }
         const hasParams = Boolean(pretty) && pretty !== 'null';
+        const hint = summarizeParams(inv.params);
         return (
           <li key={i} className="max-w-full">
             <details
@@ -71,18 +117,26 @@ export function ToolInvocationsPanel({
                 }
               >
                 <Wrench size={12} className="text-amber-500 flex-none" />
-                <span className="text-slate-400 dark:text-slate-500 text-[10px] tabular-nums">
+                <span className="text-slate-400 dark:text-slate-500 text-[10px] tabular-nums flex-none">
                   {i + 1}.
                 </span>
-                <span className="font-mono text-amber-700 dark:text-amber-400 truncate">
+                <span className="font-mono text-amber-700 dark:text-amber-400 flex-none">
                   {inv.tool}
                 </span>
+                {hint && (
+                  <span
+                    className="text-slate-500 dark:text-slate-400 truncate font-mono text-[11px] min-w-0"
+                    title={hint}
+                  >
+                    {hint}
+                  </span>
+                )}
                 {hasParams && (
                   <>
-                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden">
+                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden flex-none">
                       ▸
                     </span>
-                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline">
+                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline flex-none">
                       ▾
                     </span>
                   </>
@@ -220,6 +274,18 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
       )}
       <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
         <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
+          {/* MCP tool invocations panel (Franck 2026-05-08).
+              Rendered ABOVE the agent bubble: chronologically
+              tools run before the textual answer, and keeping
+              them on top lets the user scan "what was queried"
+              first. Folded by default — each row carries an
+              inline hint (path / url / command / …) so a
+              collapsed list is still informative. */}
+          {invocations.length > 0 && (
+            <div className="w-full max-w-full mb-0.5">
+              <ToolInvocationsPanel invocations={invocations} />
+            </div>
+          )}
           <div
             className={
               (isUser
@@ -245,15 +311,6 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
               </MessageMarkdown>
             )}
           </div>
-          {/* MCP tool invocations panel (Franck 2026-05-07).
-              Below the bubble, same alignment as the metadata
-              row so the user can scan «what did the agent
-              actually do?» without expanding by default. */}
-          {invocations.length > 0 && (
-            <div className="w-full max-w-full mt-0.5">
-              <ToolInvocationsPanel invocations={invocations} />
-            </div>
-          )}
           {/* Metadata row (Franck 2026-04-23 15:31):
               - timestamp bumped 10px \u2192 11px (old was hard to read),
               - copy button on the opposite side of the role label so

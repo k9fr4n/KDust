@@ -1542,16 +1542,18 @@ function ChatPageInner({
             });
           })()}
 
-          {/* Live tool invocations during streaming. Same panel
-              component as the persisted history (ChatMessageBubble)
-              so visuals don't snap when the stream completes —
-              opens by default during the run for live visibility,
-              collapses to a one-line summary in history.
-              (Franck 2026-05-07) */}
+          {/* Live tool invocations during streaming. Rendered
+              ABOVE the streaming response bubble (cotText /
+              streamedText below) and folded by default — each
+              row carries an inline param hint so the user sees
+              "what's being queried" without expanding. Visuals
+              match the persisted history rows in
+              ChatMessageBubble so nothing snaps when the stream
+              completes. (Franck 2026-05-08) */}
           {toolCalls.length > 0 && (
             <div className="flex justify-start">
               <div className="max-w-[85%] w-full">
-                <ToolInvocationsPanel invocations={toolCalls} defaultOpen />
+                <ToolInvocationsPanel invocations={toolCalls} />
               </div>
             </div>
           )}

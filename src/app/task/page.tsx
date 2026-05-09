@@ -269,9 +269,6 @@ export default async function TasksPage({ searchParams }: SearchProps) {
         scope={cookieProject}
         right={
           <>
-            <span className="text-sm text-slate-500">
-              {paged.length} shown · {total.toLocaleString('fr-FR')} total
-            </span>
             <Link
               href="/task/new"
               className="inline-flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 transition-colors"

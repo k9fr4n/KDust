@@ -1,6 +1,6 @@
 'use client';
 import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
 
 /**
@@ -29,7 +29,6 @@ async function readErrorMessage(res: Response): Promise<string> {
 }
 
 function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -62,10 +61,21 @@ function LoginForm() {
       // Resolve target before navigation; fall back to / on anything fishy.
       const from = params.get('from');
       const target = from && from.startsWith('/') && !from.startsWith('//') ? from : '/';
-      router.replace(target);
-      // router.replace returns immediately; keep the spinner up so the
-      // user does not get a chance to re-click while the navigation
-      // is in flight.
+      // Hard navigation, NOT router.replace(). Rationale: the root
+      // layout decides chrome visibility (Nav / DustAuthBanner /
+      // padded <main>) from the request `x-pathname` header, and
+      // Next.js App Router does NOT re-render the root layout on a
+      // soft client-side navigation between segments under the same
+      // tree. So a router.replace from /login to / would leave the
+      // chromeless decision cached and the user would land on / with
+      // no menu until a manual reload (Franck 2026-05-09 23:54).
+      // window.location.replace forces a full document load that
+      // re-evaluates the root layout with x-pathname = "/".
+      window.location.replace(target);
+      // Keep the spinner up: location.replace tears down the page
+      // shortly after, but flipping `loading` back off would briefly
+      // re-enable the button and let the user re-click.
+      return;
     } catch (e) {
       // Network error, CSP block, aborted request, etc. Surface it
       // instead of leaving the user staring at "Connexion...".

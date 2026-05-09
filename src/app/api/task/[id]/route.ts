@@ -99,17 +99,30 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       data.projectPath = null;
     }
   }
+  // jitterSec validation (Franck 2026-05-09). Range guard mirrors
+  // the POST validator; effective-state invariants below also
+  // enforce jitterSec=0 for generic / manual tasks.
+  if ('jitterSec' in data && data.jitterSec != null) {
+    const j = data.jitterSec;
+    if (typeof j !== 'number' || !Number.isInteger(j) || j < 0 || j > 3600) {
+      return NextResponse.json(
+        { error: 'jitterSec must be an integer in [0, 3600]' },
+        { status: 400 },
+      );
+    }
+  }
   // Load current row to merge-check invariants (PATCH may only flip
   // one of the relevant fields; we need the EFFECTIVE post-patch value).
   const current = await db.task.findUnique({
     where: { id },
-    select: { projectPath: true, schedule: true, pushEnabled: true },
+    select: { projectPath: true, schedule: true, pushEnabled: true, jitterSec: true },
   });
   if (!current) return notFound('not_found');
   const effective = {
     projectPath: 'projectPath' in data ? data.projectPath : current.projectPath,
     schedule: 'schedule' in data ? data.schedule : current.schedule,
     pushEnabled: 'pushEnabled' in data ? data.pushEnabled : current.pushEnabled,
+    jitterSec: 'jitterSec' in data ? data.jitterSec : current.jitterSec,
   };
   if (effective.projectPath === null) {
     const issues: string[] = [];
@@ -117,12 +130,20 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       issues.push('schedule must be "manual" for a generic task');
     if (effective.pushEnabled)
       issues.push('pushEnabled must be false for a generic task');
+    if (effective.jitterSec && effective.jitterSec > 0)
+      issues.push('jitterSec must be 0 for a generic task');
     if (issues.length > 0) {
       return NextResponse.json(
         { error: `generic task invariants violated: ${issues.join('; ')}` },
         { status: 400 },
       );
     }
+  }
+  if (effective.schedule === 'manual' && effective.jitterSec && effective.jitterSec > 0) {
+    return NextResponse.json(
+      { error: 'jitterSec must be 0 when schedule="manual" (no cron => no jitter)' },
+      { status: 400 },
+    );
   }
   // ADR-0008: strip the legacy `taskRunnerEnabled` field (column
   // dropped). The validator still accepts the key for backward

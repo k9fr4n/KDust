@@ -120,6 +120,12 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
         <div><span className="text-slate-500">Schedule:</span> <span className="font-mono">{task.schedule}</span></div>
         <div><span className="text-slate-500">Timezone:</span> <span className="font-mono">{task.timezone}</span></div>
         <div>
+          <span className="text-slate-500">Jitter:</span>{' '}
+          <span className="font-mono">
+            {task.jitterSec > 0 ? `+0…${task.jitterSec}s` : 'off'}
+          </span>
+        </div>
+        <div>
           <span className="text-slate-500">Last status:</span>{' '}
           <span className="font-mono">{task.lastStatus ?? '\u2014'}</span>
         </div>

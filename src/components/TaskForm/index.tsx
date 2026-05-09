@@ -94,6 +94,15 @@ export function TaskForm({
         // edit state — persist the historical default so the API,
         // which still requires a positive integer, never sees null.
         maxDiffLines: form.maxDiffLines ?? 2000,
+        // Coerce jitter to 0 when schedule='manual' or projectPath
+        // is null (generic). Server enforces the same invariant —
+        // doing it here too avoids a round-trip rejection when the
+        // user flips the schedule without manually zero-ing the
+        // jitter field (which is also disabled in the UI).
+        jitterSec:
+          form.schedule === 'manual' || form.projectPath === null
+            ? 0
+            : form.jitterSec,
         agentName,
         teamsWebhook: form.teamsWebhook || null,
         telegramChatId: form.telegramChatId || null,

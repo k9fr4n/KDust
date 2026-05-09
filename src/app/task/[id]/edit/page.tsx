@@ -16,6 +16,7 @@ export default async function EditTaskPage({ params }: { params: Promise<{ id: s
         name: task.name,
         schedule: task.schedule,
         timezone: task.timezone,
+        jitterSec: task.jitterSec,
         agentSId: task.agentSId,
         prompt: task.prompt,
         // Preserve NULL so the form opens in "generic" mode when editing

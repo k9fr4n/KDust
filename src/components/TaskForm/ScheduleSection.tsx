@@ -35,6 +35,32 @@ export function ScheduleSection({ form, setForm }: SectionProps) {
               required
             />
           </label>
+          <label className="block">
+            <span className="text-sm">Jitter (seconds)</span>
+            <input
+              type="number"
+              min={0}
+              max={3600}
+              step={1}
+              className={`${field} font-mono`}
+              value={form.jitterSec}
+              disabled={form.schedule === 'manual'}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setForm({
+                  ...form,
+                  jitterSec: Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 3600) : 0,
+                });
+              }}
+              placeholder="0"
+            />
+            <span className="text-xs text-slate-500">
+              Random delay added on top of every cron fire, drawn uniformly in
+              [0, jitterSec]. 0 disables jitter, max 3600 (1h). Useful to spread
+              simultaneous fires across tasks (rate-limit / push pile-up).
+              Forced to 0 when schedule is <code>manual</code>.
+            </span>
+          </label>
         </fieldset>
   );
 }

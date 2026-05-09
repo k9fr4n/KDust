@@ -86,12 +86,23 @@ failed.
 
 ### Schedule
 
-| Field      | Type   | Default | Notes |
-|------------|--------|---------|-------|
-| `schedule` | string | `manual`| `manual` — no cron; OR a 5-field cron expr (`0 2 * * *`) |
-| `timezone` | string | `Europe/Paris` | IANA TZ; evaluated by the internal scheduler |
+| Field       | Type   | Default        | Notes |
+|-------------|--------|----------------|-------|
+| `schedule`  | string | `manual`       | `manual` — no cron; OR a 5-field cron expr (`0 2 * * *`) |
+| `timezone`  | string | `Europe/Paris` | IANA TZ; evaluated by the internal scheduler |
+| `jitterSec` | int    | `0`            | random delay in seconds added on top of every cron fire, drawn uniformly in `[0, jitterSec]`. `0` disables jitter, capped at `3600` (1h). Must be `0` when `schedule='manual'` or `projectPath=null`. |
 
 Scheduler tick frequency: 30s (see `src/lib/cron/scheduler.ts`).
+
+#### Cron jitter
+
+Set `jitterSec` to spread simultaneous cron fires across tasks — useful
+to avoid Dust API rate-limit pile-ups, concurrent git-push contention,
+or to mask a fixed-time pattern from external observers. The delay is
+drawn with `crypto.randomInt` (unbiased) and the deferred run inherits
+the regular concurrency contract: if a previous run is still active
+when the timer expires, the jittered fire is skipped (no overlap, no
+queue).
 
 ### Project & notification
 

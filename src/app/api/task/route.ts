@@ -39,6 +39,13 @@ const TaskInput = z.object({
   name: z.string().min(1),
   schedule: cronSchedule,
   timezone: z.string().default('Europe/Paris'),
+  // Cron jitter (Franck 2026-05-09). Random delay in seconds added
+  // to every cron fire, drawn uniformly in [0, jitterSec]. 0 = off.
+  // Capped at 3600 in the validator AND defensively re-clamped in
+  // the scheduler (drawJitterMs in src/lib/cron/scheduler.ts).
+  // Generic-task / manual-schedule invariants enforced in the
+  // superRefine block below.
+  jitterSec: z.number().int().min(0).max(3600).default(0),
   agentSId: z.string().min(1),
   agentName: z.string().optional().nullable(),
   prompt: z.string().min(1),
@@ -169,6 +176,24 @@ const TaskInput = z.object({
     }
     // ADR-0008 (2026-05-02) collapsed the orchestrator role:
     // every task can enqueue a successor, generic or not.
+    if (v.jitterSec && v.jitterSec > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['jitterSec'],
+        message: 'generic tasks must have jitterSec=0 (no cron => no jitter)',
+      });
+    }
+  }
+  // Jitter only makes sense when an actual cron expression is
+  // configured. A 'manual' schedule never auto-fires, so a
+  // non-zero jitter would be silently ignored — reject it
+  // explicitly to surface the misconfiguration.
+  if (v.schedule === 'manual' && v.jitterSec && v.jitterSec > 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['jitterSec'],
+      message: 'jitterSec must be 0 when schedule="manual" (no cron => no jitter)',
+    });
   }
 });
 

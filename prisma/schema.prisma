@@ -303,6 +303,23 @@ model Task {
   // Legacy columns — kept in DB, ignored by the runner.
   schedule       String    @default("manual")
   timezone       String    @default("Europe/Paris")
+  // --- Cron jitter (Franck 2026-05-09) ---
+  // Random delay in seconds added on top of each cron fire, drawn
+  // uniformly in [0, jitterSec] with crypto.randomInt (unbiased).
+  // Use cases:
+  //   - smear simultaneous fires across tasks to avoid Dust API
+  //     rate-limits and concurrent git-push pile-ups
+  //   - hide a fixed-time pattern from external observers
+  // Constraints (enforced in /api/task validator):
+  //   - 0 disables jitter (back-compat with all existing rows)
+  //   - capped at 3600s (1h) to prevent overlap with the next tick
+  //     for sub-hour cron expressions
+  //   - must be 0 when schedule='manual' (no cron => no jitter)
+  //   - must be 0 when projectPath=null (generic invariants)
+  // Implemented in src/lib/cron/scheduler.ts via a per-task
+  // setTimeout tracked in a parallel Map so reloadScheduler() and
+  // stopScheduler() clear pending delays cleanly.
+  jitterSec      Int       @default(0)
   agentSId       String
   agentName      String?
   prompt         String

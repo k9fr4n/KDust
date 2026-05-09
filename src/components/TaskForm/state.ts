@@ -14,6 +14,13 @@ export type CronFormValues = {
   name: string;
   schedule: string;
   timezone: string;
+  /**
+   * Cron jitter in seconds (Franck 2026-05-09). Random delay drawn
+   * uniformly in [0, jitterSec] and added on top of every cron
+   * fire. 0 disables jitter. Capped at 3600s. Must stay 0 when
+   * schedule='manual' or projectPath=null (server-enforced).
+   */
+  jitterSec: number;
   agentSId: string;
   prompt: string;
   /**
@@ -128,6 +135,7 @@ export function buildInitialFormState(
     // back-compat).
     schedule: initial?.schedule ?? 'manual',
     timezone: initial?.timezone ?? 'Europe/Paris',
+    jitterSec: initial?.jitterSec ?? 0,
     agentSId: initial?.agentSId ?? '',
     prompt: initial?.prompt ?? '',
     projectPath:

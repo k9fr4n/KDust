@@ -47,6 +47,8 @@ import {
   toolInvocationsToJson,
   type StreamStats,
 } from '../../../dust/chat';
+import { getDustClient } from '../../../dust/client';
+import { readAttachmentBytes } from '../../../task-attachments';
 import type { ResolvedBranchPolicy } from '../../../branch-policy';
 import type { RunPhase } from '../../phases';
 import type { AbortReason } from '../abort';
@@ -128,7 +130,68 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
   // so we shadow job.prompt with effectivePrompt for the footer to
   // wrap the overridden prompt when invoked via task-runner.
   const agentPrompt = buildAutomationPrompt({ ...job, prompt: effectivePrompt }, policy);
-  const conv = await createDustConversation(job.agentSId, agentPrompt, convTitle, mcpServerIds, 'cli');
+
+  // Task attachments (Franck 2026-05-09). Fetch the persistent file
+  // list and re-upload each blob to Dust so the agent receives them
+  // as content fragments on the first user message. Dust file ids
+  // are short-lived (per-conversation), so persisting bytes locally
+  // and re-uploading at run-time is the only way to keep them alive
+  // across cron ticks. Failures here are FATAL for the run: the
+  // user attached the file expecting it to be there.
+  const attachmentRows = await db.taskAttachment.findMany({
+    where: { taskId: job.id },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      filename: true,
+      contentType: true,
+      sizeBytes: true,
+      storagePath: true,
+    },
+  });
+  let attachmentFileIds: string[] | undefined;
+  let attachmentFileMetas: Array<{ sId: string; name: string }> | undefined;
+  if (attachmentRows.length > 0) {
+    const dust = await getDustClient();
+    if (!dust) throw new Error('Dust not connected (task has attachments)');
+    attachmentFileIds = [];
+    attachmentFileMetas = [];
+    for (const att of attachmentRows) {
+      const bytes = await readAttachmentBytes(att.storagePath);
+      // Build a File from the buffer so the SDK can stream it back
+      // with the original filename + content-type. contentType was
+      // already normalised at upload time (see normaliseContentType
+      // in src/lib/dust/content-type.ts) so it matches Dust's union.
+      const fileObject = new File([bytes], att.filename, { type: att.contentType });
+      const r = await dust.client.uploadFile({
+        contentType: att.contentType as Parameters<typeof dust.client.uploadFile>[0]['contentType'],
+        fileName: att.filename,
+        fileSize: att.sizeBytes,
+        useCase: 'conversation',
+        fileObject,
+      });
+      if (r.isErr()) {
+        throw new Error(
+          `attachment upload to Dust failed (${att.filename}): ${r.error?.message ?? 'unknown'}`,
+        );
+      }
+      attachmentFileIds.push(r.value.sId);
+      attachmentFileMetas.push({ sId: r.value.sId, name: att.filename });
+    }
+    console.log(
+      `[runner] task=${job.id} re-uploaded ${attachmentFileIds.length} attachment(s) to Dust`,
+    );
+  }
+
+  const conv = await createDustConversation(
+    job.agentSId,
+    agentPrompt,
+    convTitle,
+    mcpServerIds,
+    'cli',
+    attachmentFileIds ?? null,
+    attachmentFileMetas ?? null,
+  );
   // Stamp the TaskRun with the Dust conversation sId ASAP so the
   // /run page can show a "Chat" link even if the run later fails
   // mid-stream. Fire-and-forget — not worth aborting for.

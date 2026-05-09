@@ -1,71 +1,13 @@
 import { NextResponse } from 'next/server';
-import { isSupportedFileContentType } from '@dust-tt/client';
 import { getDustClient } from '@/lib/dust/client';
+import { normaliseContentType } from '@/lib/dust/content-type';
 import { badRequest, unauthorized } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
-/**
- * Extension → Dust-supported MIME map.
- *
- * Browsers send platform-specific MIME types that Dust does not
- * recognise (e.g. .ps1 → "application/x-powershell" on Chrome/Windows
- * because of the registered file association). The SDK's
- * SupportedFileContentType union lists only canonical MIMEs and Dust
- * rejects anything else with a 400 file_type_not_supported.
- *
- * For text-equivalent payloads (scripts, config files, logs) we map
- * the extension to "text/plain" before forwarding so they are
- * accepted as readable context. Binary extensions are not in this
- * map — they fall back to application/octet-stream and Dust decides.
- *
- * Edit this map (not the upload code) to extend coverage.
- */
-const TEXT_LIKE_EXTENSIONS: Record<string, string> = {
-  // PowerShell — Franck 2026-05-01
-  ps1: 'text/plain',
-  psm1: 'text/plain',
-  psd1: 'text/plain',
-  // Windows / shell scripts
-  bat: 'text/plain',
-  cmd: 'text/plain',
-  // Config / IaC
-  toml: 'text/plain',
-  ini: 'text/plain',
-  env: 'text/plain',
-  conf: 'text/plain',
-  cfg: 'text/plain',
-  tf: 'text/plain',
-  tfvars: 'text/plain',
-  dockerfile: 'text/plain',
-  // Logs
-  log: 'text/plain',
-};
-
-/**
- * Normalise a (filename, browser-MIME) pair to a Dust-accepted MIME.
- *
- * Strategy:
- *   1. If the browser MIME is already supported, keep it.
- *   2. Otherwise, look up the file extension in TEXT_LIKE_EXTENSIONS.
- *   3. Otherwise, fall back to application/octet-stream (Dust may
- *      still reject — surfaced upstream).
- */
-function normaliseContentType(name: string, browserType: string): string {
-  const ct = (browserType || '').toLowerCase();
-  if (ct && isSupportedFileContentType(ct)) return ct;
-
-  const dot = name.lastIndexOf('.');
-  if (dot >= 0) {
-    const ext = name.slice(dot + 1).toLowerCase();
-    if (TEXT_LIKE_EXTENSIONS[ext]) return TEXT_LIKE_EXTENSIONS[ext];
-  }
-  // Filename without extension but matching a known stem (e.g. "Dockerfile")
-  const base = name.split('/').pop()?.toLowerCase() ?? '';
-  if (TEXT_LIKE_EXTENSIONS[base]) return TEXT_LIKE_EXTENSIONS[base];
-
-  return 'application/octet-stream';
-}
+// MIME normalisation lives in src/lib/dust/content-type.ts so the
+// cron runner can apply the same rewrite when re-uploading Task
+// attachments (Franck 2026-05-09).
 // Body sizes are capped by Next's default 4MB JSON limit, but we
 // accept multipart/form-data streams which route through a larger
 // internal limit. Users should still avoid massive uploads in one

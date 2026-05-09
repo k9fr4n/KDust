@@ -259,6 +259,20 @@ function ChatPageInner({
   // wait_for_run from chat. null when no project is active or the
   // ensure call failed (chat then degrades to fs-cli only).
   const [taskRunnerServerId, setTaskRunnerServerId] = useState<string | null>(null);
+  // MCP catalog (Franck 2026-05-09). Fetched once at mount from
+  // /api/mcp/catalog; powers the header bubble so the list of MCPs
+  // and tools stays in sync with the server-side registry rather
+  // than being hardcoded in JSX.
+  const [mcpCatalog, setMcpCatalog] = useState<
+    | {
+        id: string;
+        name: string;
+        description: string;
+        scope: 'chat' | 'task';
+        tools: { name: string; description?: string }[];
+      }[]
+    | null
+  >(null);
   // `serverStreaming` reflects server-side knowledge of an in-flight agent
   // reply. It stays true even if the user navigated away and came back,
   // as long as the Dust call is still producing tokens in the background.
@@ -308,6 +322,26 @@ function ChatPageInner({
   useEffect(() => {
     setVisibleCount(VISIBLE_STEP);
   }, [currentId]);
+
+  // Fetch MCP catalog once at mount (Franck 2026-05-09). Static
+  // data, drives the header bubble. Soft-fails: if the call errors
+  // we leave the state null and the bubble falls back to the
+  // hardcoded chat-scope MCPs (fs + task-runner) so the indicator
+  // never goes blank.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/mcp/catalog');
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!cancelled && Array.isArray(j.catalog)) setMcpCatalog(j.catalog);
+      } catch {
+        /* leave null; bubble has a fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Cross-tab / cross-page sync (Franck 2026-04-20 17:04). When
   // another surface (dashboard, /conversation, a second /chat tab)
@@ -1403,16 +1437,54 @@ function ChatPageInner({
               ("which one is the fs again?").
             */}
             {currentProject && (() => {
-              const fsReady = mcpStatus === 'ready';
-              const trReady = !!taskRunnerServerId;
-              const allReady = fsReady && trReady;
-              const fsLabel = fsReady
-                ? 'ready'
-                : mcpStatus === 'starting'
-                  ? 'starting\u2026'
-                  : mcpStatus === 'error'
-                    ? 'failed'
-                    : 'inactive';
+              // Per-MCP runtime status, keyed by catalog id. The
+              // bubble renders one block per catalog entry; chat-
+              // scoped MCPs are graded ready/partial/failed against
+              // this map, task-scoped ones are always 'task-only'
+              // (still listed so the operator knows they exist but
+              // is not surprised by a red dot when chatting).
+              type Status = 'ready' | 'starting' | 'failed' | 'inactive' | 'task-only';
+              const STATUS_LABEL: Record<Status, string> = {
+                ready: 'ready',
+                starting: 'starting\u2026',
+                failed: 'failed',
+                inactive: 'inactive',
+                'task-only': 'task-only',
+              };
+              const STATUS_DOT: Record<Status, string> = {
+                ready: 'bg-green-500',
+                starting: 'bg-amber-500',
+                failed: 'bg-red-500',
+                inactive: 'bg-red-500',
+                'task-only': 'bg-slate-400 dark:bg-slate-600',
+              };
+              const statusFor = (id: string, scope: 'chat' | 'task'): Status => {
+                if (scope === 'task') return 'task-only';
+                if (id === 'fs') {
+                  if (mcpStatus === 'ready') return 'ready';
+                  if (mcpStatus === 'starting') return 'starting';
+                  if (mcpStatus === 'error') return 'failed';
+                  return 'inactive';
+                }
+                if (id === 'task-runner') return taskRunnerServerId ? 'ready' : 'inactive';
+                return 'inactive';
+              };
+
+              // Fallback when the catalog hasn't loaded yet (or the
+              // call failed) -- keep the previous static list so the
+              // indicator never goes blank.
+              const catalog = mcpCatalog ?? [
+                { id: 'fs',          name: 'fs',          description: '', scope: 'chat' as const, tools: [] },
+                { id: 'task-runner', name: 'task-runner', description: '', scope: 'chat' as const, tools: [] },
+              ];
+
+              // Aggregate verdict: green only if every chat-scoped
+              // MCP is 'ready'. task-scoped MCPs do not influence the
+              // top-level colour (they aren't expected to be active
+              // in /chat).
+              const chatScoped = catalog.filter((c) => c.scope === 'chat');
+              const allReady = chatScoped.length > 0 && chatScoped.every((c) => statusFor(c.id, c.scope) === 'ready');
+
               return (
                 <div className="relative group">
                   <span
@@ -1432,42 +1504,46 @@ function ChatPageInner({
                     z-50 to stay above the conv list and the message
                     area. Right-aligned (`right-0`) because the icon
                     sits in the right cluster of the header.
+                    Width widened (w-80) to fit the tools list of the
+                    task-runner MCP without truncation.
                   */}
                   <div
                     role="tooltip"
-                    className="pointer-events-none absolute right-0 top-full mt-1 z-50 w-72 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-2"
+                    className="pointer-events-none absolute right-0 top-full mt-1 z-50 w-80 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto"
                   >
-                    <p className="font-semibold text-slate-800 dark:text-slate-100">MCP tools</p>
-                    <div>
-                      <p className="font-medium flex items-center gap-1.5">
-                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${fsReady ? 'bg-green-500' : 'bg-red-500'}`} />
-                        fs &mdash; <span className="text-slate-500 dark:text-slate-400">{fsLabel}</span>
-                      </p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">
-                        Project: <code className="font-mono">{currentProject}</code>
-                      </p>
-                      <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
-                        <li><code className="font-mono">read_file</code></li>
-                        <li><code className="font-mono">edit_file</code></li>
-                        <li><code className="font-mono">search_files</code></li>
-                        <li><code className="font-mono">search_content</code></li>
-                        <li><code className="font-mono">run_command</code></li>
-                      </ul>
-                    </div>
-                    <div>
-                      <p className="font-medium flex items-center gap-1.5">
-                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${trReady ? 'bg-green-500' : 'bg-red-500'}`} />
-                        task-runner &mdash; <span className="text-slate-500 dark:text-slate-400">{trReady ? 'ready' : 'inactive'}</span>
-                      </p>
-                      <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
-                        <li><code className="font-mono">list_tasks</code></li>
-                        <li><code className="font-mono">describe_task</code></li>
-                        <li><code className="font-mono">run_task</code></li>
-                        <li><code className="font-mono">dispatch_task</code></li>
-                        <li><code className="font-mono">wait_for_run</code></li>
-                        <li><code className="font-mono">enqueue_followup</code></li>
-                      </ul>
-                    </div>
+                    <p className="font-semibold text-slate-800 dark:text-slate-100">
+                      MCP tools{mcpCatalog === null ? ' (loading\u2026)' : ''}
+                    </p>
+                    {catalog.map((c) => {
+                      const st = statusFor(c.id, c.scope);
+                      return (
+                        <div key={c.id}>
+                          <p className="font-medium flex items-center gap-1.5">
+                            <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[st]}`} />
+                            <span className="font-mono">{c.name}</span>
+                            <span className="text-slate-500 dark:text-slate-400">&mdash; {STATUS_LABEL[st]}</span>
+                          </p>
+                          {c.description && (
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">{c.description}</p>
+                          )}
+                          {c.id === 'fs' && (
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">
+                              Project: <code className="font-mono">{currentProject}</code>
+                            </p>
+                          )}
+                          {c.tools.length > 0 && (
+                            <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
+                              {c.tools.map((t) => (
+                                <li key={t.name}>
+                                  <code className="font-mono">{t.name}</code>
+                                  {t.description && <span className="text-slate-500 dark:text-slate-500"> &mdash; {t.description}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );

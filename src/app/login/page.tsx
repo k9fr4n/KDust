@@ -3,6 +3,31 @@ import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
 
+/**
+ * Safe JSON-or-text reader for an error response. The server always
+ * answers `{ error: string }` on the happy unhappy path, but if a
+ * reverse-proxy rewrites the body, or Next.js serves a generic HTML
+ * 500 page (e.g. SESSION_SECRET unset → issueSession throws), the
+ * naive `(await res.json()).error` crashes the submit handler and
+ * the form looks frozen ("nothing happens"). This helper degrades
+ * to plain text and finally to the HTTP status.
+ */
+async function readErrorMessage(res: Response): Promise<string> {
+  try {
+    const data = (await res.clone().json()) as { error?: unknown };
+    if (typeof data.error === 'string' && data.error.length > 0) return data.error;
+  } catch {
+    /* not JSON — fall through */
+  }
+  try {
+    const text = (await res.text()).trim();
+    if (text.length > 0 && text.length < 200) return text;
+  } catch {
+    /* unreadable body */
+  }
+  return `HTTP ${res.status}`;
+}
+
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
@@ -12,19 +37,43 @@ function LoginForm() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return; // anti double-submit
     setErr(null);
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    setLoading(false);
-    if (!res.ok) {
-      setErr((await res.json()).error ?? 'error');
+    if (password.length === 0) {
+      setErr('Mot de passe requis');
       return;
     }
-    router.replace(params.get('from') ?? '/');
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+        // Belt-and-suspenders: ensure cookies set in the response are
+        // honoured by the browser even when the page is served from a
+        // different host than the API in dev / proxy setups.
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        setErr(await readErrorMessage(res));
+        return;
+      }
+      // Resolve target before navigation; fall back to / on anything fishy.
+      const from = params.get('from');
+      const target = from && from.startsWith('/') && !from.startsWith('//') ? from : '/';
+      router.replace(target);
+      // router.replace returns immediately; keep the spinner up so the
+      // user does not get a chance to re-click while the navigation
+      // is in flight.
+    } catch (e) {
+      // Network error, CSP block, aborted request, etc. Surface it
+      // instead of leaving the user staring at "Connexion...".
+      const msg = e instanceof Error ? e.message : 'Network error';
+      setErr(msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -38,8 +87,12 @@ function LoginForm() {
         className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2"
         autoFocus
       />
-      {err && <p className="text-sm text-red-500">{err}</p>}
-      <Button type="submit" disabled={loading} className="w-full">
+      {err && (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400 break-words">
+          {err}
+        </p>
+      )}
+      <Button type="submit" disabled={loading || password.length === 0} className="w-full">
         {loading ? 'Connexion...' : 'Se connecter'}
       </Button>
     </form>
@@ -48,10 +101,38 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <Suspense fallback={<div>Chargement...</div>}>
-        <LoginForm />
-      </Suspense>
+    <div className="relative min-h-screen overflow-hidden flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+      {/* Stylised KDust watermark. `aria-hidden` because it is purely
+          decorative — screen readers should not read the brand name
+          twice (the form heading already says "KDust — Login").
+          `select-none` and `pointer-events-none` keep it from
+          interfering with the form interaction. */}
+      <div
+        aria-hidden
+        className="pointer-events-none select-none absolute inset-0 flex items-center justify-center"
+      >
+        <span
+          className={[
+            // Huge, responsive, italic, ultra-bold.
+            'font-black italic tracking-tighter',
+            'text-[24vw] sm:text-[20vw] md:text-[18vw] leading-none',
+            // Brand gradient text — relies on Tailwind brand-* palette
+            // already used elsewhere in the app.
+            'bg-gradient-to-br from-brand-500 via-brand-600 to-indigo-500',
+            'bg-clip-text text-transparent',
+            // Faded so it stays a background, not a foreground.
+            'opacity-10 dark:opacity-[0.08]',
+            'drop-shadow-sm',
+          ].join(' ')}
+        >
+          KDust
+        </span>
+      </div>
+      <div className="relative z-10">
+        <Suspense fallback={<div>Chargement...</div>}>
+          <LoginForm />
+        </Suspense>
+      </div>
     </div>
   );
 }

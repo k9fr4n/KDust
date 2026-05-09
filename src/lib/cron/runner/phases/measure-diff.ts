@@ -6,6 +6,15 @@
 // against HEAD to count what the agent produced, then short-circuit
 // the run as 'no-op' when the agent made zero file changes.
 //
+// ADR-0010 (2026-05-09): a no-op run that recorded a `pendingFollowup*`
+// successor (via the `enqueue_followup` MCP tool) MUST still dispatch
+// that successor before short-circuiting. Verifier-style agents
+// (test-engineer in re-test mode, lint, audit, coverage-check) can
+// legitimately produce zero file changes while having a meaningful
+// verdict to forward downstream. Cascade-stop is still preserved on
+// `failed` runs (control jumps to runHandleFailure and never reaches
+// here).
+//
 // Discriminated return value:
 //
 //   { ok: false, runId }
@@ -152,6 +161,26 @@ export async function runMeasureDiff(
       agentText,
     );
     console.log(`[cron] no-op job="${job.name}" duration=${durationMs}ms`);
+
+    // ADR-0010 (2026-05-09): if the agent recorded a successor via
+    // `enqueue_followup`, dispatch it now even though the run is a
+    // no-op. The pendingFollowup* columns being set is the agent's
+    // explicit opt-in to chain forward; absence of a diff is
+    // orthogonal. Best-effort: any error here is logged and does NOT
+    // alter the no-op return contract — the run row is already
+    // persisted as `no-op` and the Teams card already posted above.
+    // Lazy dynamic import to break the runner.ts <-> measure-diff.ts
+    // module cycle (runner imports this phase; the helper lives in
+    // runner.ts to share `runTask`).
+    try {
+      const { dispatchPendingFollowup } = await import('../../runner');
+      await dispatchPendingFollowup(runId, job.name);
+    } catch (e) {
+      console.error(
+        `[cron] no-op followup dispatch failed for run=${runId}: ${(e as Error)?.message ?? e}`,
+      );
+    }
+
     return { ok: false, runId };
   }
 

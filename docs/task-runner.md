@@ -193,7 +193,7 @@ The successor runs as a brand-new top-level run.
 
 | Mode       | Trigger                                             | Behaviour |
 |------------|-----------------------------------------------------|-----------|
-| **chain**  | Called from inside a TaskRun (`orchestratorRunId` set, e.g. agent chains via `enqueue_followup`) | Tool **records** params on parent's `TaskRun` row; runner dispatches the successor **after `commit-and-push` and the success notification**. Race-free — parent's chain branch is on origin before successor's pre-sync runs `git fetch`. Cascade-stop preserved: parent fail before that step → `pendingFollowup*` is silently abandoned. |
+| **chain**  | Called from inside a TaskRun (`orchestratorRunId` set, e.g. agent chains via `enqueue_followup`) | Tool **records** params on parent's `TaskRun` row; runner dispatches the successor **after `commit-and-push` and the success notification** (success path) **or right after the no-op short-circuit** when the agent produced zero file changes (ADR-0010, 2026-05-09 — verifier agents like test-engineer in re-test mode). Race-free — parent's chain branch is on origin before successor's pre-sync runs `git fetch`. Cascade-stop preserved: parent **fail** before that step → `pendingFollowup*` is silently abandoned. |
 | **chat**   | Called from a Dust chat conversation (no parent run, `orchestratorRunId` is null, e.g. human types "run task X" in `/chat`) | Tool **dispatches immediately** via `runTask()` and returns the `run_id`. No parent commit-and-push to wait for, no race risk. This preserves the chat-mode UX. |
 
 The mode is auto-detected from the MCP context. The same `enqueue_followup`

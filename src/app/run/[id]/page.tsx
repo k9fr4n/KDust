@@ -401,7 +401,11 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               const taskHref = pendingFollowupTask
                 ? `/task/${pendingFollowupTask.id}`
                 : null;
-              const isBug = status === 'success';
+              // ADR-0010 (2026-05-09): no-op runs are now expected to dispatch
+              // their followup too, so a no-op + missing followupRunId is the
+              // same diagnostic as the success bug case (likely crash between
+              // the no-op short-circuit and dispatchPendingFollowup).
+              const isBug = status === 'success' || status === 'no-op';
               const isInFlight = status === 'running';
               const klass = isBug
                 ? 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 border-orange-300 dark:border-orange-800'
@@ -415,10 +419,10 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                 ? 'Successor scheduled'
                 : 'Abandoned successor';
               const tooltip = isBug
-                ? 'Run reached success but the deferred dispatch (ADR-0009) never created the successor run row. Likely a crash between runNotifySuccess and dispatchPendingFollowup; check server logs.'
+                ? 'Run completed (success or no-op) but the deferred dispatch (ADR-0009 / ADR-0010) never created the successor run row. Likely a crash between the dispatch hook and dispatchPendingFollowup; check server logs.'
                 : isInFlight
                 ? 'Agent declared a successor via enqueue_followup. It will be dispatched after this run reaches success (ADR-0009 deferred dispatch).'
-                : 'Agent declared a successor via enqueue_followup, but this run did not reach success — the deferred dispatch never ran. Cascade-stop preserved by ADR-0009.';
+                : 'Agent declared a successor via enqueue_followup, but this run failed before the deferred dispatch could run. Cascade-stop preserved by ADR-0009 (no-op runs now also dispatch their successor under ADR-0010).';
               return (
                 <div className="mb-2" title={tooltip}>
                   <span className="text-slate-500 text-xs">

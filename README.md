@@ -965,3 +965,102 @@ dispatchers still pass it; preflight ignores absent rows) but
 - Remove the `predecessorRunId` channel entirely once we confirm
   no chat-mode caller depends on it (grep-clean as of this ADR;
   defer one release for safety).
+
+### ADR-0010 — Dispatch deferred successor on no-op runs (2026-05-09)
+
+**Status**: Accepted (extends ADR-0009)
+**Date**: 2026-05-09
+**Context**: Postmortem of run `cmoy3enpf006xxsp03l4v4ubu`
+(`test-engineer` ATTEMPT 2, chain `windows_winget_package-ds`).
+Symptom: the chain stopped silently after a green re-test.
+Timeline:
+
+| 08:39:18 | `test-engineer` ATTEMPT 2 starts (re-test after `provider-coder` fix) |
+| 08:50:45 | tests pass (coverage 69.2%); agent calls `enqueue_followup(quality-gate)` and emits its verdict report |
+| 08:50:45 | run terminates as `no-op` — `filesChanged === 0` (the agent only updated a YAML report which happened to be byte-identical to the previous attempt's) |
+| —        | **`quality-gate` is never dispatched**; `/run` shows the abandoned-successor pill ("never ran") |
+
+ADR-0009's deferred dispatch is wired to the **success path only**
+(`runner.ts`, after `runNotifySuccess`). Phase [6] `measureDiff`
+short-circuits the run as `no-op` and returns immediately — phase
+[11] (`dispatchPendingFollowup`) is never reached. The
+`pendingFollowup*` columns stay set, the `/run` UI surfaces them as
+*abandoned successor*, but no successor runs.
+
+This was tolerable when no-op was a rare "agent had nothing to do"
+outcome. With **verifier-style agents** (`test-engineer` in re-test
+mode after an upstream fix; lint-only; security-audit; coverage
+gate), the legitimate output is a **verdict** carried by
+`enqueue_followup`, not a git diff. Conflating *zero diff* with
+*nothing to chain* breaks every such chain.
+
+**Decision**: Extend the deferred dispatch to fire from the no-op
+short-circuit too, when (and only when) the agent recorded a
+`pendingFollowupTaskId` on the parent row.
+
+Implementation (`src/lib/cron/runner/phases/measure-diff.ts`):
+immediately after the no-op DB persistence + Teams notify, before
+returning `{ ok: false }`, dynamically import
+`dispatchPendingFollowup` from `runner.ts` and invoke it. The
+import is dynamic to break the runner.ts ↔ measure-diff.ts module
+cycle (runner.ts owns `runTask`, which `dispatchPendingFollowup`
+needs; measure-diff.ts is imported by runner.ts). Errors from the
+dispatch are logged and swallowed: the no-op TaskRun row is
+already persisted, the success card already posted, and the
+at-most-one-successor invariant is enforced inside the helper
+(belt-and-braces against double-dispatch).
+
+`/run` pill semantics updated: the "pending dispatch failed"
+(orange `⚠`) variant now triggers on `status === 'success' || status === 'no-op'`
+(both should have dispatched and didn't). Failed/cancelled runs
+keep the "abandoned" (`🚫`) variant — cascade-stop is unchanged.
+
+**Invariants preserved**:
+
+- Cascade-stop on **failure**: control still jumps from any phase
+  ≤ [6] to `runHandleFailure` via the runner's `catch{}`, never
+  reaching the new no-op dispatch hook. `pendingFollowup*` stays
+  abandoned (postmortem signal).
+- AT MOST ONE successor per run: enforced inside
+  `dispatchPendingFollowup` (checks `followupRunId` before
+  starting `runTask`). Calling the helper twice (once from no-op,
+  once from success — impossible since the two paths are
+  exclusive, but defensive) is a no-op the second time.
+- Branches NEVER auto-inherit: `pendingFollowupBaseBranch` is
+  replayed verbatim, same as ADR-0009.
+- No new prompt or schema change. Same DB columns, same MCP tool
+  contract.
+
+**Migration**: none. Code-only change.
+
+**Consequences**:
+
+*Positive*:
+
+- Verifier agents can chain forward without producing a
+  cosmetic-only commit (no more `touch` hacks).
+- Sets a clean separation between "agent had nothing to do" (no
+  `enqueue_followup` call, no diff → run ends, chain stops
+  naturally) and "agent had a verdict to forward" (called
+  `enqueue_followup`, no diff → chain continues).
+- The `/run` abandoned-successor pill becomes a tighter signal
+  (only fires on real failures or actual dispatch crashes).
+
+*Negative*:
+
+- A no-op run now incurs the cost of starting a successor
+  (preflight, branch checkout, agent boot). Negligible vs. the
+  alternative of breaking the chain.
+- Adds a second call site for `dispatchPendingFollowup`. Mitigated
+  by the at-most-one invariant inside the helper and by the
+  exclusivity of the two paths (no-op short-circuit returns; the
+  success path is gated on `filesChanged > 0`).
+
+**Follow-ups**:
+
+- Add a `Risks` note to `docs/tasks.md` so authors of new
+  verifier-style tasks know they don't need a fake commit.
+- Consider an explicit `escalated` status for agents that
+  *refuse* to act (cf. provider-coder's `ESCALATE` convention,
+  see run `cmoy19nem005fxsp0o5b6g8mj` postmortem). Distinct from
+  `no-op` because semantics differ (refusal vs. nothing-to-do).

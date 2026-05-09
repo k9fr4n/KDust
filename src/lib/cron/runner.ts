@@ -636,7 +636,9 @@ export async function runTask(
       console.log(`[cron] success job="${job.name}" duration=${durationMs}ms`);
     }
 
-    // [11] Deferred chain successor dispatch (ADR-0009, 2026-05-05).
+    // [11] Deferred chain successor dispatch (ADR-0009, 2026-05-05;
+    // extended by ADR-0010, 2026-05-09 to also fire from the no-op
+    // short-circuit in phase [6] when pendingFollowup* is set).
     //
     // Reads the `pendingFollowup*` columns recorded by the agent's
     // `enqueue_followup` MCP tool call (during run-agent, phase 5)

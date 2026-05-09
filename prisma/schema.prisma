@@ -456,7 +456,38 @@ model Task {
   // No auto-propagation to child tasks spawned via task-runner.
   secretBindings TaskSecret[]
 
+  // --- Task attachments (Franck 2026-05-09) ---
+  // Files uploaded once at task creation/edit time, stored on disk
+  // under KDUST_ATTACHMENTS_DIR, and re-uploaded to Dust as content
+  // fragments on every run. Dust file ids are short-lived (per
+  // conversation) so persisting them as bytes locally is the only
+  // way to keep the attachments alive across cron ticks. See
+  // docs/task-attachments.md.
+  attachments    TaskAttachment[]
+
   @@map("CronJob")
+}
+
+// Task attachments (Franck 2026-05-09).
+//
+// Files attached to a Task definition. Stored on disk (path in
+// `storagePath`, RELATIVE to KDUST_ATTACHMENTS_DIR — usually
+// /projects/.kdust-attachments). Cascade delete drops the row when
+// the parent Task is removed; the API DELETE handler is responsible
+// for unlinking the on-disk blob. `contentType` is already
+// normalised to a Dust-supported MIME at upload time so the runner
+// can re-upload without re-applying the extension fallback table.
+model TaskAttachment {
+  id          String   @id @default(cuid())
+  taskId      String
+  filename    String
+  contentType String
+  sizeBytes   Int
+  storagePath String   // relative to KDUST_ATTACHMENTS_DIR
+  createdAt   DateTime @default(now())
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
 }
 
 // Renamed CronRun -> TaskRun in v2. Underlying SQL table kept as

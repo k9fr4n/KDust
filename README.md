@@ -1064,3 +1064,48 @@ keep the "abandoned" (`🚫`) variant — cascade-stop is unchanged.
   *refuse* to act (cf. provider-coder's `ESCALATE` convention,
   see run `cmoy19nem005fxsp0o5b6g8mj` postmortem). Distinct from
   `no-op` because semantics differ (refusal vs. nothing-to-do).
+
+### ADR-0010 — Task attachments (2026-05-09)
+
+**Status**: Accepted
+
+**Context**:
+
+The `/chat` composer has supported file attachments since
+2026-04-23, but Tasks (cron + manual + MCP-dispatched) had no
+equivalent: a task whose prompt referenced "the attached spec"
+could not actually pass the file to the agent. Workarounds (paste
+the content into the prompt, host the file in the project repo)
+are clunky for binary files like PDFs.
+
+**Decision**:
+
+New `TaskAttachment` model with bytes stored on disk under
+`KDUST_ATTACHMENTS_DIR` (default `/projects/.kdust-attachments`).
+The runner re-uploads each blob to Dust on every run and passes
+the resulting `fileIds` to `createDustConversation`, which already
+supports the wire shape from the chat composer. Caps: 50 MB / file,
+200 MB total per task.
+
+Dust file ids are not cached: they are short-lived and
+conversation-bound, so re-uploading is the only correct approach.
+
+See `docs/task-attachments.md` for full details.
+
+**Consequences**:
+
+*Positive*:
+
+- Tasks with binary inputs (PDFs, Office docs, screenshots) are
+  finally first-class.
+- Single source of truth for MIME normalisation
+  (`src/lib/dust/content-type.ts`), shared between the chat
+  composer and the cron runner.
+
+*Negative*:
+
+- Adds a per-run network round-trip per attachment to Dust's
+  `uploadFile`. Negligible at our scale (few attachments, sequential
+  upload).
+- Adds a new on-disk persistence root that must be backed up if
+  attachments matter operationally.

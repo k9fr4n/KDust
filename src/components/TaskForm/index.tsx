@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import type { BindingDraft } from '@/components/TaskSecretBindings';
+import type { PendingTaskFile } from '@/components/TaskAttachments';
 import {
   type CronFormValues,
   type Agent,
@@ -24,6 +25,7 @@ import { RoutingSection } from './RoutingSection';
 import { ExecutionSection } from './ExecutionSection';
 import { AutomationPushSection } from './AutomationPushSection';
 import { NotificationsSection } from './NotificationsSection';
+import { AttachmentsSection } from './AttachmentsSection';
 
 // Re-export the type so existing importers (api/task page) stay
 // happy. The legacy single-file location was '@/components/TaskForm'
@@ -52,6 +54,11 @@ export function TaskForm({
   // the task row is created. In edit mode the child component
   // persists directly and this state is unused.
   const [pendingBindings, setPendingBindings] = useState<BindingDraft[]>([]);
+  // Attachments drafted on /task/new (deferred mode of
+  // TaskAttachments). Flushed via POST /api/task/:id/attachment
+  // after the task row is created. In edit mode the child component
+  // talks to the API directly and this state is unused.
+  const [pendingFiles, setPendingFiles] = useState<PendingTaskFile[]>([]);
 
   useEffect(() => {
     void fetch('/api/agents')
@@ -132,19 +139,26 @@ export function TaskForm({
       return;
     }
 
+    // Create-mode follow-ups (bindings + attachments) need the new
+    // task id from the response. Read the body once here so the two
+    // blocks don't fight over a single-use stream (Franck 2026-05-09).
+    let createdTaskId: string | undefined;
+    if (!isEdit && (pendingBindings.length > 0 || pendingFiles.length > 0)) {
+      try {
+        const j = (await res.json()) as { task?: { id?: string } };
+        createdTaskId = j.task?.id;
+      } catch {
+        createdTaskId = undefined;
+      }
+    }
+
     // Create-mode only: flush pending secret bindings now that we
     // have the new task id. One POST per binding — non-batched so
     // partial failures (eg. deleted secret name) are reported but
     // don't wipe sibling bindings. Any failure here surfaces the
     // task id so the user can finish wiring from /task/:id/edit.
     if (!isEdit && pendingBindings.length > 0) {
-      let created: { task?: { id?: string } };
-      try {
-        created = await res.json();
-      } catch {
-        created = {};
-      }
-      const newId = created.task?.id;
+      const newId = createdTaskId;
       if (!newId) {
         setLoading(false);
         setErr(
@@ -182,6 +196,34 @@ export function TaskForm({
       }
     }
 
+    // Create-mode only: flush pending file attachments. Single
+    // multipart POST batches them all in one request — the API
+    // route accepts repeatable `files` entries and writes each row
+    // sequentially, returning partial progress on failure.
+    if (!isEdit && pendingFiles.length > 0) {
+      const newId = createdTaskId;
+      if (newId) {
+        const fd = new FormData();
+        for (const p of pendingFiles) fd.append('files', p.file, p.file.name);
+        const aRes = await fetch(
+          `/api/task/${encodeURIComponent(newId)}/attachment`,
+          { method: 'POST', body: fd },
+        );
+        if (!aRes.ok) {
+          const j = await aRes.json().catch(() => ({}));
+          setLoading(false);
+          setErr(
+            `Task created but attachment upload failed: ${
+              j.error ?? `HTTP ${aRes.status}`
+            }. Finish the upload from /task/${newId}/edit.`,
+          );
+          router.push(`/task/${newId}/edit`);
+          router.refresh();
+          return;
+        }
+      }
+    }
+
     setLoading(false);
     router.push(isEdit ? `/task/${taskId}` : '/task');
     router.refresh();
@@ -214,6 +256,12 @@ export function TaskForm({
         setPendingBindings={setPendingBindings}
       />
       <AutomationPushSection form={form} setForm={setForm} projects={projects} />
+      <AttachmentsSection
+        taskId={taskId}
+        isEdit={isEdit}
+        pendingFiles={pendingFiles}
+        setPendingFiles={setPendingFiles}
+      />
       <NotificationsSection form={form} setForm={setForm} />
 
       {err && <p className="text-red-500 text-sm">{err}</p>}

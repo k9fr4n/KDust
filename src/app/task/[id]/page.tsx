@@ -32,6 +32,19 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
         select: { envName: true, secretName: true },
         orderBy: { envName: 'asc' },
       },
+      // File attachments (Franck 2026-05-09). Bytes live on disk;
+      // we only need the metadata to render a chip list and a
+      // download link.
+      attachments: {
+        select: {
+          id: true,
+          filename: true,
+          contentType: true,
+          sizeBytes: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      },
     },
   });
   if (!task) return notFound();
@@ -273,6 +286,50 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
           </div>
         </div>
       </section>
+
+      {task.attachments.length > 0 && (
+        <section className="mb-6">
+          <h2 className="font-semibold mb-2">
+            Attachments{' '}
+            <span className="text-xs text-slate-400 font-mono">
+              ({task.attachments.length})
+            </span>
+          </h2>
+          <ul className="space-y-1 text-sm">
+            {task.attachments.map((a) => (
+              <li
+                key={a.id}
+                className="flex items-center gap-2 rounded border border-slate-200 dark:border-slate-800 px-2 py-1.5"
+              >
+                <span className="font-mono text-xs truncate flex-1" title={a.filename}>
+                  {a.filename}
+                </span>
+                <span className="text-xs text-slate-400 shrink-0">
+                  {a.contentType}
+                </span>
+                <span className="text-xs text-slate-400 shrink-0">
+                  {a.sizeBytes < 1024 * 1024
+                    ? `${(a.sizeBytes / 1024).toFixed(1)} KB`
+                    : `${(a.sizeBytes / (1024 * 1024)).toFixed(1)} MB`}
+                </span>
+                <a
+                  href={`/api/task/${task.id}/attachment/${a.id}`}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  download
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-slate-500 mt-2">
+            Re-uploaded to Dust as content fragments on every run. Manage from{' '}
+            <Link href={`/task/${task.id}/edit`} className="underline">
+              edit
+            </Link>
+            .
+          </p>
+        </section>
+      )}
 
       <section className="mb-6">
         <div className="flex items-baseline justify-between mb-2">

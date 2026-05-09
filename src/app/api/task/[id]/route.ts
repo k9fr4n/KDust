@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { reloadScheduler } from '@/lib/cron/scheduler';
 import { isValidCronExpression } from '@/lib/cron/validator';
 import { isSideEffects, validateRoutingMetadata } from '@/lib/task-routing';
+import { deleteTaskAttachmentDir } from '@/lib/task-attachments';
 import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
@@ -170,6 +171,11 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     );
   }
   await db.task.delete({ where: { id } });
+  // Best-effort cleanup of the on-disk attachment dir (Franck
+  // 2026-05-09). Cascade delete already removed the TaskAttachment
+  // rows; this rm -rf is the corresponding fs cleanup. Failures
+  // are swallowed inside the helper.
+  await deleteTaskAttachmentDir(id);
   await reloadScheduler();
   return NextResponse.json({ ok: true });
 }

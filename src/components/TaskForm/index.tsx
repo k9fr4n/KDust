@@ -246,6 +246,12 @@ export function TaskForm({
       </div>
 
       <PromptSection form={form} setForm={setForm} />
+      <AttachmentsSection
+        taskId={taskId}
+        isEdit={isEdit}
+        pendingFiles={pendingFiles}
+        setPendingFiles={setPendingFiles}
+      />
       <RoutingSection form={form} setForm={setForm} />
       <ExecutionSection
         form={form}
@@ -256,12 +262,6 @@ export function TaskForm({
         setPendingBindings={setPendingBindings}
       />
       <AutomationPushSection form={form} setForm={setForm} projects={projects} />
-      <AttachmentsSection
-        taskId={taskId}
-        isEdit={isEdit}
-        pendingFiles={pendingFiles}
-        setPendingFiles={setPendingFiles}
-      />
       <NotificationsSection form={form} setForm={setForm} />
 
       {err && <p className="text-red-500 text-sm">{err}</p>}

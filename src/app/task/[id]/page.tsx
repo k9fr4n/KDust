@@ -287,6 +287,17 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
         </div>
       </section>
 
+      <section className="mb-6">
+        <div className="flex items-baseline justify-between mb-2">
+          <h2 className="font-semibold">Prompt</h2>
+          <span className="text-xs text-slate-400 font-mono">
+            {task.prompt.length.toLocaleString('fr-FR')} chars ·{' '}
+            {task.prompt.split(/\r?\n/).length.toLocaleString('fr-FR')} lines
+          </span>
+        </div>
+        <pre className="whitespace-pre-wrap break-words rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm overflow-x-auto">{task.prompt}</pre>
+      </section>
+
       {task.attachments.length > 0 && (
         <section className="mb-6">
           <h2 className="font-semibold mb-2">
@@ -330,17 +341,6 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
           </p>
         </section>
       )}
-
-      <section className="mb-6">
-        <div className="flex items-baseline justify-between mb-2">
-          <h2 className="font-semibold">Prompt</h2>
-          <span className="text-xs text-slate-400 font-mono">
-            {task.prompt.length.toLocaleString('fr-FR')} chars ·{' '}
-            {task.prompt.split(/\r?\n/).length.toLocaleString('fr-FR')} lines
-          </span>
-        </div>
-        <pre className="whitespace-pre-wrap break-words rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm overflow-x-auto">{task.prompt}</pre>
-      </section>
     </div>
   );
 }

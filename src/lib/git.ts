@@ -35,7 +35,17 @@ function runGit(args: string[], cwd?: string, timeoutMs = 120_000): Promise<{ co
       ...process.env,
       // Pas d'interactif, pas d'askpass graphique
       GIT_TERMINAL_PROMPT: '0',
-      // accepte automatiquement les nouveaux host keys (ecritel, github…)
+      // SSH command priority (Franck 2026-05-09, ADR-0011):
+      //   1. process.env.GIT_SSH_COMMAND if explicitly set by an
+      //      operator OR by src/lib/ssh/bootstrap.ts at boot when
+      //      at least one SshIdentity row is enabled (it points at
+      //      /run/kdust/ssh/config).
+      //   2. Else legacy fallback against /home/node/.ssh -- still
+      //      populated by docker/entrypoint.sh from /host-ssh on
+      //      hosts that haven't migrated to self-hosted identities.
+      // SSH_AUTH_SOCK from the host (when mounted) is still tried
+      // first by ssh(1) regardless of GIT_SSH_COMMAND, so a host
+      // ssh-agent keeps working as a third fallback.
       GIT_SSH_COMMAND:
         process.env.GIT_SSH_COMMAND ||
         'ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/home/node/.ssh/known_hosts',

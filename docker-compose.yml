@@ -34,6 +34,15 @@ services:
       # le groupe `docker` du container, puis `node` y est ajouté.
       # [CRITICAL] accès = root sur l'hôte; cf. Dockerfile.
       - /var/run/docker.sock:/var/run/docker.sock
+    # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
+    # In-memory tmpfs where src/lib/ssh/bootstrap.ts materialises the
+    # decrypted private keys at boot. mode=0700 + uid/gid=1000 so only
+    # the `node` user (= the running Next.js process) can read it.
+    # Size is intentionally small: a handful of ed25519 keys + the
+    # generated config + known_hosts. NEVER bind-mount a host path
+    # here -- the whole point is to keep keys out of the host fs.
+    tmpfs:
+      - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

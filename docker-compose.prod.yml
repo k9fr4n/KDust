@@ -42,6 +42,10 @@ services:
       - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
       # Docker socket — DooD (accès = root sur l'hôte, cf. Dockerfile)
       - /var/run/docker.sock:/var/run/docker.sock
+    # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
+    # Cf. docker-compose.yml pour le détail.
+    tmpfs:
+      - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

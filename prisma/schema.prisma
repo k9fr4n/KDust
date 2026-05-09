@@ -788,3 +788,63 @@ model TaskSecret {
   @@unique([taskId, envName])
   @@index([secretName])
 }
+
+// ---------------------------------------------------------------
+// Self-hosted SSH identities (Franck 2026-05-09, ADR-0011).
+//
+// Goal: stop depending on the host's ssh-agent / bind-mounted
+// ${HOME}/.ssh for the push pipeline. KDust now stores private
+// keys in the DB (AES-256-GCM via APP_ENCRYPTION_KEY, same
+// envelope as Secret.valueEnc) and materialises them at boot to
+// a tmpfs (/run/kdust/ssh, mode 0700, uid 1000) so git and
+// ssh(1) can pick them up via a generated `~/.ssh/config`-like
+// file. See src/lib/ssh/bootstrap.ts.
+//
+// Multi-host: one identity per `hostPattern` (literal hostname or
+// `*` wildcard, evaluated by ssh's own Host matching). The
+// generated ssh config emits one `Host <pattern>` block per
+// identity, in `priority` ascending order.
+//
+// Threat model:
+//   * privateKeyEnc never returned by any read API.
+//   * publicKey is plaintext (it IS public by design) so the UI
+//     can show it for copy-paste into GitHub/GitLab deploy keys.
+//   * fingerprint is derived server-side via `ssh-keygen -lf`;
+//     the user cannot inject a forged value.
+model SshIdentity {
+  id            Int      @id @default(autoincrement())
+  // URL-safe slug, unique. Used as the file name on tmpfs
+  // (/run/kdust/ssh/id_<name>) so it must stay shell-safe.
+  name          String   @unique
+  // ssh_config-style Host pattern this identity authenticates
+  // for. Examples: "github.com", "gitlab.ecritel.net", "*".
+  hostPattern   String
+  // AES-256-GCM ciphertext of the OpenSSH private key (PEM,
+  // including BEGIN/END markers). Decoded only by
+  // src/lib/ssh/bootstrap.ts at boot, written to tmpfs 0600,
+  // never logged, never returned by any API.
+  privateKeyEnc String
+  // Plain authorized_keys-format public line ("ssh-ed25519 AAAA...
+  // [comment]"), derived server-side from the private key via
+  // `ssh-keygen -y -f`. Surfaced in the UI for deploy-key copy.
+  publicKey     String?
+  // SHA256 fingerprint, as printed by `ssh-keygen -lf`. Stored
+  // for audit / UI display; the source of truth remains the
+  // private key.
+  fingerprint   String?
+  description   String?
+  // Soft toggle: when false the identity is left out of the
+  // generated ssh config. Lets the operator stage a key without
+  // activating it.
+  enabled       Boolean  @default(true)
+  // Lower number = higher priority in the generated ssh config
+  // (first matching Host block wins for ssh).
+  priority      Int      @default(100)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  // Bumped each time the bootstrap materialises this identity
+  // (boot + rotation). Lets the UI flag stale rows.
+  lastUsedAt    DateTime?
+
+  @@index([hostPattern])
+}

@@ -1109,3 +1109,65 @@ See `docs/task-attachments.md` for full details.
   upload).
 - Adds a new on-disk persistence root that must be backed up if
   attachments matter operationally.
+
+## ADR-0011 — Self-hosted SSH identities (Franck 2026-05-09)
+
+**Status**: Proposed.
+
+**Date**: 2026-05-09.
+
+**Context**:
+
+Until now, KDust relied on the host's `ssh-agent` (forwarded via
+`SSH_AUTH_SOCK`) and a read-only bind mount of `${HOME}/.ssh` at
+`/host-ssh` to authenticate the git push pipeline. Both mechanisms
+tie KDust to the operator's desktop session: an agent that dies, a
+locked workstation, or a Pi that boots without an interactive login
+breaks every scheduled run.
+
+**Decision**:
+
+Introduce a `SshIdentity` model holding the private key encrypted at
+rest (AES-256-GCM, same envelope as `Secret.valueEnc`). At boot,
+`src/lib/ssh/bootstrap.ts` decrypts every enabled identity, writes
+them to a tmpfs at `/run/kdust/ssh` (mode 0700, uid 1000), generates
+an ssh config block per identity, and sets `process.env.GIT_SSH_COMMAND`
+so `src/lib/git.ts` picks them up.
+
+The legacy `SSH_AUTH_SOCK` and `/host-ssh` paths are kept as
+fallbacks: ssh tries the agent first regardless, and `git.ts` still
+defaults to `/home/node/.ssh/known_hosts` when no identity is
+configured. Migration is therefore zero-downtime: the operator can
+add identities one at a time, verify with the new reachability probe
+at `/settings/ssh`, then unmount the host bind mount in a follow-up.
+
+A new settings page at `/settings/ssh` hosts identity CRUD, public-
+key copy buttons, fingerprint display, enable/disable, rotation, and
+a stripped-down debug panel that runs `ssh -vT git@<host>` against
+the generated config (replaces the standalone `/api/ssh-debug`).
+
+**Consequences**:
+
+*Positive*:
+
+- The push pipeline becomes self-contained: a fresh deploy of KDust
+  on a server with no operator login can push to git as long as
+  `APP_ENCRYPTION_KEY` and `kdust.db` are restored.
+- Identity rotation is now a 5-second UI action -- no redeploy.
+- Per-host identities map cleanly to deploy-key UX on GitHub /
+  GitLab.
+- One-stop shop in `/settings/ssh` for operators (keys + diagnostics).
+
+*Negative*:
+
+- One more thing to back up alongside `APP_ENCRYPTION_KEY`. Losing
+  the key still bricks restore -- same as `Secret`.
+- The decrypted private bytes live in tmpfs while the container is
+  running; a host root attacker can read them. This is acceptable
+  given the existing DooD docker.sock mount already grants host
+  root.
+- Encrypted/passphrase-protected keys are rejected (would hang the
+  unattended pipeline). Operators must generate fresh keys with
+  `ssh-keygen -N ""`.
+
+See `docs/ssh-identities.md` for the full operator handbook.

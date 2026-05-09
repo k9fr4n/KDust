@@ -90,6 +90,22 @@ export async function register() {
       );
     }
 
+    // Materialise self-hosted SSH identities to tmpfs (Franck
+    // 2026-05-09, ADR-0011). Best-effort: a bad identity must not
+    // brick the container, so any failure logs and falls through
+    // to the legacy /home/node/.ssh path. Runs BEFORE the scheduler
+    // so the very first scheduled push pipeline already sees the
+    // generated GIT_SSH_COMMAND.
+    try {
+      const { materializeSshIdentities } = await import('./lib/ssh/bootstrap');
+      const r = await materializeSshIdentities();
+      if (!r.ok && r.error) {
+        console.warn(`[instrumentation] ssh bootstrap soft-failed: ${r.error}`);
+      }
+    } catch (e) {
+      console.error(`[instrumentation] ssh bootstrap crashed: ${(e as Error).message}`);
+    }
+
     // Boot the task scheduler. Reinstated 2026-04-19 after the Dust
     // billing hold was lifted. reloadScheduler() reads every enabled
     // Task whose `schedule` is a valid cron expression and wires up

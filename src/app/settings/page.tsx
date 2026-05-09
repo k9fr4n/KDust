@@ -8,6 +8,7 @@ import {
   KeyRound,
   MessageCircle,
   Workflow,
+  Terminal,
 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 
@@ -65,6 +66,17 @@ export default function SettingsIndex() {
         'Encrypted credentials injected as environment variables into command-runner tasks (GitHub tokens, cloud creds, ...). Values never reach the LLM.',
       icon: <KeyRound size={18} />,
       accent: 'text-rose-600 dark:text-rose-400',
+    },
+    {
+      // SSH identities (Franck 2026-05-09, ADR-0011). Self-hosted
+      // SSH keys for the git push pipeline + a stripped-down debug
+      // panel (replaces the legacy /api/ssh-debug standalone page).
+      href: '/settings/ssh',
+      title: 'SSH',
+      description:
+        'Self-hosted SSH identities for the git push pipeline. Encrypted at rest, materialised to tmpfs at boot. Includes a reachability probe.',
+      icon: <Terminal size={18} />,
+      accent: 'text-emerald-600 dark:text-emerald-400',
     },
     {
       // Task Runner MCP settings (Franck 2026-05-02). Knobs that

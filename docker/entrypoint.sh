@@ -8,6 +8,19 @@ if [ "$(id -u)" = "0" ]; then
   mkdir -p /data /projects
   chown -R node:node /data /projects || true
 
+  # Self-hosted SSH runtime dir (Franck 2026-05-09, ADR-0011).
+  # When docker-compose.yml mounts a tmpfs at /run/kdust/ssh with
+  # uid=1000 the directory already exists with the right perms and
+  # this is a no-op. On hosts that haven't updated their compose
+  # file yet we fall back to a plain dir on the container fs so the
+  # bootstrap doesn't soft-fail with EACCES on mkdir under /run.
+  # NB: in the fallback case keys land on the container's writable
+  # layer instead of memory -- still encrypted at rest in SQLite,
+  # but operators should add the tmpfs mount ASAP.
+  mkdir -p /run/kdust/ssh
+  chown node:node /run/kdust /run/kdust/ssh 2>/dev/null || true
+  chmod 700 /run/kdust/ssh || true
+
   # --- Docker socket GID remap (Franck 2026-04-20 23:46) ---
   # Option A / DooD: /var/run/docker.sock is bind-mounted from the host,
   # owned by the host's `docker` group. That GID is host-specific

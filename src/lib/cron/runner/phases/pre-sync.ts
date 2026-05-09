@@ -30,7 +30,10 @@
 // outer try/catch in runJob() converts it to a 'failed' TaskRun row
 // with a human-readable phase message.
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { resetToBase } from '../../../git';
+import { PROJECTS_ROOT } from '../../../projects';
 import type { RunPhase } from '../../phases';
 
 export interface PreSyncArgs {
@@ -40,10 +43,54 @@ export interface PreSyncArgs {
   baseBranch: string;
   /** Phase setter bound to this TaskRun. */
   setPhase: (phase: RunPhase, message: string) => Promise<unknown>;
+  /**
+   * Whether the task is configured to push (pushEnabled=true).
+   * - true  : pre-sync is mandatory; project MUST be a git repo
+   *           with an `origin/<baseBranch>` reachable. Failures bubble.
+   * - false : pre-sync is best-effort. If the project directory
+   *           exists but is NOT a git repo (no `.git`), pre-sync is
+   *           skipped cleanly — useful for non-code projects
+   *           (image generation, doc folders, scratch workspaces)
+   *           attached to a bound task purely for run-as-a-project
+   *           semantics.
+   * Defaults to true (preserves historical strict behaviour).
+   */
+  pushEnabled?: boolean;
+}
+
+/** Detect a usable git working copy. `.git` is either a directory
+ *  (regular repo) or a regular file (linked worktree pointer). */
+function isGitWorkingCopy(absDir: string): boolean {
+  return existsSync(join(absDir, '.git'));
 }
 
 export async function runPreSync(args: PreSyncArgs): Promise<void> {
-  const { projectFsPath, baseBranch, setPhase } = args;
+  const { projectFsPath, baseBranch, setPhase, pushEnabled = true } = args;
+  // Non-git project short-circuit (pushEnabled=false only).
+  // Bound tasks attached to a project directory that is NOT a git
+  // working copy used to fail the entire run at `git remote
+  // set-branches` with a misleading "fatal: not a git repository"
+  // transcript. For pushEnabled=false tasks the run never produces
+  // a commit anyway, so we skip the sync and proceed straight to
+  // the agent invocation. Push-enabled tasks keep the strict path:
+  // automation REQUIRES a real repo, no silent degradation.
+  const absProjectDir = join(PROJECTS_ROOT, projectFsPath);
+  if (!isGitWorkingCopy(absProjectDir)) {
+    if (pushEnabled) {
+      throw new Error(
+        `pre-sync failed: project "${projectFsPath}" is not a git repository ` +
+          `(no .git at ${absProjectDir}); pushEnabled=true requires a clone with origin/${baseBranch}`,
+      );
+    }
+    await setPhase(
+      'syncing',
+      `skipped: "${projectFsPath}" is not a git repository (pushEnabled=false)`,
+    );
+    console.log(
+      `[cron] git sync skipped: ${projectFsPath} is not a git working copy (pushEnabled=false)`,
+    );
+    return;
+  }
   await setPhase('syncing', `git fetch + reset --hard origin/${baseBranch}`);
   console.log(`[cron] git sync base=${baseBranch}`);
   // Phase 1 folder hierarchy (Franck 2026-04-27): pass projectFsPath

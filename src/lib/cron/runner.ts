@@ -421,7 +421,7 @@ export async function runTask(
     // (ADR-0006 Step C). Same `setPhase('syncing', \u2026)` + `resetToBase`
     // sequence; throws on failure so the outer catch converts to a
     // 'failed' TaskRun row.
-    await runPreSync({ projectFsPath, baseBranch: policy.baseBranch, setPhase });
+    await runPreSync({ projectFsPath, baseBranch: policy.baseBranch, setPhase, pushEnabled: job.pushEnabled });
 
     // [2b] Audit short-circuit REMOVED 2026-04-22 (full nuke).
     // Audits are now plain generic tasks dispatched via

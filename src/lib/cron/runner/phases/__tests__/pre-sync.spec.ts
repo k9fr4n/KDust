@@ -28,12 +28,21 @@ vi.mock('../../../../git', () => ({
   resetToBase: vi.fn(),
 }));
 
+// Mock node:fs so the new isGitWorkingCopy() check is deterministic.
+// Default: pretend every project dir IS a git working copy; individual
+// tests override per-call to exercise the non-git short-circuit.
+vi.mock('node:fs', () => ({
+  existsSync: vi.fn().mockReturnValue(true),
+}));
+
+import { existsSync } from 'node:fs';
 import { resetToBase } from '../../../../git';
 import { runPreSync } from '../pre-sync';
 
 // Shape-typed mocks to keep call-arg assertions strict without
 // needing the full GitOpResult shape every test.
 const mockedResetToBase = vi.mocked(resetToBase);
+const mockedExistsSync = vi.mocked(existsSync);
 
 function makeArgs(overrides: Partial<Parameters<typeof runPreSync>[0]> = {}) {
   const setPhase = vi.fn().mockResolvedValue(undefined);
@@ -51,6 +60,8 @@ function makeArgs(overrides: Partial<Parameters<typeof runPreSync>[0]> = {}) {
 describe('runPreSync', () => {
   beforeEach(() => {
     mockedResetToBase.mockReset();
+    mockedExistsSync.mockReset();
+    mockedExistsSync.mockReturnValue(true); // default: looks like a git repo
   });
 
   it('calls setPhase once with phase="syncing" and a base-branch message', async () => {
@@ -118,5 +129,40 @@ describe('runPreSync', () => {
     const { args } = makeArgs();
     const result = await runPreSync(args);
     expect(result).toBeUndefined();
+  });
+
+  describe('non-git project short-circuit', () => {
+    it('skips resetToBase and reports a "skipped" syncing message when pushEnabled=false and .git is missing', async () => {
+      mockedExistsSync.mockReturnValue(false);
+      const { args, setPhase } = makeArgs({
+        projectFsPath: 'Perso/Keriann/AnimalMixer',
+        pushEnabled: false,
+      });
+      await runPreSync(args);
+      expect(mockedResetToBase).not.toHaveBeenCalled();
+      expect(setPhase).toHaveBeenCalledTimes(1);
+      const [phase, message] = setPhase.mock.calls[0];
+      expect(phase).toBe('syncing');
+      expect(message).toMatch(/skipped/);
+      expect(message).toContain('Perso/Keriann/AnimalMixer');
+    });
+
+    it('throws (preserving strict behaviour) when pushEnabled=true and .git is missing', async () => {
+      mockedExistsSync.mockReturnValue(false);
+      const { args } = makeArgs({
+        projectFsPath: 'Perso/fsallet/no-such-clone',
+        pushEnabled: true,
+      });
+      await expect(runPreSync(args)).rejects.toThrow(/not a git repository/);
+      expect(mockedResetToBase).not.toHaveBeenCalled();
+    });
+
+    it('defaults to strict (pushEnabled omitted ⇒ throws on non-git project)', async () => {
+      // Backward-compat anchor: callers that pre-date the pushEnabled
+      // flag MUST keep the old strict semantics.
+      mockedExistsSync.mockReturnValue(false);
+      const { args } = makeArgs(); // no pushEnabled
+      await expect(runPreSync(args)).rejects.toThrow(/not a git repository/);
+    });
   });
 });

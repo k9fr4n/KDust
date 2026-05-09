@@ -58,13 +58,14 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
     description: 'Discover and dispatch KDust tasks; orchestrators get this attached automatically.',
     scope: 'chat',
     tools: [
+      // ADR-0008 (2026-05-03): the legacy synchronous-orchestration
+      // trio (run_task / dispatch_task / wait_for_run) was removed in
+      // favour of the decoupled chain model. Only these four tools
+      // remain on the live server (see src/lib/mcp/task-runner/tools/).
       { name: 'list_tasks',          description: 'List dispatchable tasks.' },
       { name: 'describe_task',       description: 'Full prompt + JSON Schema of a task.' },
       { name: 'update_task_routing', description: 'Edit a task\'s routing metadata.' },
-      { name: 'enqueue_followup',    description: 'Chain the next task as a fresh top-level run.' },
-      { name: 'run_task',            description: 'Execute a task and wait for completion.' },
-      { name: 'dispatch_task',       description: 'Execute a task without waiting (fire-and-forget).' },
-      { name: 'wait_for_run',        description: 'Block until a previously dispatched run finishes.' },
+      { name: 'enqueue_followup',    description: 'Chain the next task as a fresh top-level run (decoupled chain).' },
     ],
   },
   {

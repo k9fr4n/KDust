@@ -111,6 +111,17 @@ queue).
 | `projectPath`  | string? | null = generic. Otherwise must match a `Project.name`. |
 | `teamsWebhook` | string? | optional per-task override; falls back to project webhook |
 
+> **Non-git project directories** (no `.git` under `/projects/<projectPath>`):
+> the run-time `pre-sync` phase (`git fetch + reset --hard origin/<base>`)
+> is **skipped** when `pushEnabled=false` — useful for non-code workspaces
+> attached to a bound task purely for project-context semantics (image
+> generation folders, scratch dirs, doc folders not yet under version
+> control). The phase message becomes `skipped: "<projectPath>" is not
+> a git repository (pushEnabled=false)`. With `pushEnabled=true` the
+> strict path is preserved: a non-git directory fails the run with a
+> clear `not a git repository` error instead of the misleading
+> `fatal: not a git repository (or any parent up to mount point /)`.
+
 ### Automation push (see [`docs/push-pipeline.md`](push-pipeline.md))
 
 | Field               | Type    | Default          | Notes |

@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
 import {
@@ -14,7 +13,6 @@ import {
 import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { ClickableRunRow } from '@/components/ClickableRunRow';
 import { RunCard } from '@/components/RunCard';
-import { RunsViewToggle } from '@/components/RunsViewToggle';
 import { RunsAutoRefresh } from '@/components/RunsAutoRefresh';
 import { Pagination } from '@/components/Pagination';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
@@ -56,8 +54,6 @@ const STATUS_CLASS: Record<string, string> = {
   skipped: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400',
 };
 
-type ViewMode = 'flat' | 'tree';
-
 type SearchProps = {
   searchParams?: Promise<{
     status?: string;
@@ -66,7 +62,6 @@ type SearchProps = {
     page?: string;
     sort?: string;
     dir?: SortDir;
-    view?: string;
   }>;
 };
 
@@ -165,20 +160,6 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const PAGE_SIZE = await getAdaptivePageSize(RUNS_PAGE_SIZE_CFG);
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
-  // View preference resolution (Franck 2026-04-22 20:48):
-  //   explicit ?view=… wins → otherwise fall back to the
-  //   `kdust_runs_view` cookie set by the RunsViewToggle → otherwise
-  //   default to flat. This makes "Runs" in the sidebar (a bare
-  //   /run link with no params) honour the user's last pick.
-  const cookieView = (await cookies()).get('kdust_runs_view')?.value;
-  const view: ViewMode =
-    sp.view === 'tree'
-      ? 'tree'
-      : sp.view === 'flat'
-        ? 'flat'
-        : cookieView === 'tree'
-          ? 'tree'
-          : 'flat';
   // currentProject is the cookie value (used for UI scope label),
   // currentProjectFsPath is the canonical fsPath used in DB filters
   // — they agree post-migration, and the helper auto-normalises
@@ -276,35 +257,6 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     });
   }
 
-  // Tree-view expansion (Franck 2026-04-22 20:34).
-  // In flat mode: `runs` is the final result set. In tree mode we
-  // need every run's ancestor chain fully materialised even when
-  // the ancestors fall outside the filter window — otherwise
-  // children would render orphaned. We fetch missing parents in
-  // batches, walking up until no new ids appear.
-  const treeRuns: typeof runs = [...runs];
-  if (view === 'tree') {
-    const seen = new Set(treeRuns.map((r) => r.id));
-    let wanted = treeRuns
-      .map((r) => r.parentRunId)
-      .filter((id): id is string => !!id && !seen.has(id));
-    // Bounded loop — KDUST_MAX_RUN_DEPTH caps chains at 10 so
-    // this converges fast.
-    for (let i = 0; i < 15 && wanted.length > 0; i++) {
-      const extra = await db.taskRun.findMany({
-        where: { id: { in: wanted } },
-        include: { task: { select: { id: true, name: true, projectPath: true } } },
-      });
-      for (const r of extra) {
-        seen.add(r.id);
-        treeRuns.push(r);
-      }
-      wanted = extra
-        .map((r) => r.parentRunId)
-        .filter((id): id is string => !!id && !seen.has(id));
-    }
-  }
-
   // Resolve TaskRun.dustConversationSId → local Conversation.id in a
   // single query. Stored as a soft reference (no FK) so we do the
   // lookup here and build a {sId → localId} map for O(1) access in the
@@ -312,7 +264,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   // the Dust call, or legacy pre-v3 rows) are simply absent from the
   // map and render no Chat link.
   const convSIds = Array.from(
-    new Set(treeRuns.map((r) => r.dustConversationSId).filter((s): s is string => !!s)),
+    new Set(runs.map((r) => r.dustConversationSId).filter((s): s is string => !!s)),
   );
   const convs = convSIds.length
     ? await db.conversation.findMany({
@@ -337,7 +289,6 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     q: string;
     sort: SortKey;
     dir: SortDir;
-    view: ViewMode;
     page: number;
   }>) => {
     const qs = new URLSearchParams();
@@ -347,13 +298,11 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       q: patch.q ?? q,
       sort: patch.sort ?? sort,
       dir: patch.dir ?? dir,
-      view: patch.view ?? view,
       // Any filter change (status/task/q/sort/dir) resets to page 1
-      // unless the caller explicitly passes a page value. The tree
-      // view toggle also resets paging since the row set differs.
+      // unless the caller explicitly passes a page value.
       page: patch.page ?? (
         (patch.status !== undefined || patch.task !== undefined || patch.q !== undefined ||
-         patch.sort !== undefined || patch.dir !== undefined || patch.view !== undefined)
+         patch.sort !== undefined || patch.dir !== undefined)
           ? 1
           : page
       ),
@@ -363,51 +312,9 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     if (merged.q) qs.set('q', merged.q);
     if (merged.sort !== 'started') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
-    if (merged.view !== 'flat') qs.set('view', merged.view);
     if (merged.page > 1) qs.set('page', String(merged.page));
     return `/run${qs.toString() ? `?${qs}` : ''}`;
   };
-  // Tree ordering: DFS over the fetched runs. We preserve the
-  // original top-level order (already sorted by SQLite per sort/dir
-  // above) and recurse into children. Each row is annotated with
-  // its `depth` so the rendering loop can indent cleanly. In flat
-  // mode we just tag everything with depth=0.
-  type RenderRow = (typeof treeRuns)[number] & { depth: number; isLastAtDepth: boolean[] };
-  const byId = new Map(treeRuns.map((r) => [r.id, r]));
-  const childrenOf = new Map<string | null, typeof treeRuns>();
-  for (const r of treeRuns) {
-    const pid = r.parentRunId ?? null;
-    const arr = childrenOf.get(pid) ?? [];
-    arr.push(r);
-    childrenOf.set(pid, arr);
-  }
-  // Children order mirrors the initial sort (treeRuns already in
-  // the desired order thanks to the DB orderBy). We keep insertion
-  // order in `childrenOf` since Map preserves it.
-  const rendered: RenderRow[] = [];
-  if (view === 'tree') {
-    // Roots = anything whose parentRunId is null OR whose parent
-    // isn't in `byId` (orphaned from the filter). We treat both as
-    // top-level so filtered views stay coherent.
-    const roots = treeRuns.filter(
-      (r) => !r.parentRunId || !byId.has(r.parentRunId),
-    );
-    const visit = (r: (typeof treeRuns)[number], depth: number, ancestryLast: boolean[]) => {
-      rendered.push({ ...r, depth, isLastAtDepth: [...ancestryLast] });
-      const kids = childrenOf.get(r.id) ?? [];
-      kids.forEach((k, i) => {
-        const isLast = i === kids.length - 1;
-        visit(k, depth + 1, [...ancestryLast, isLast]);
-      });
-    };
-    roots.forEach((r, i) => visit(r, 0, [i === roots.length - 1]));
-  } else {
-    // Flat view: preserve original ordering from `runs` (not
-    // treeRuns, which may have extra ancestors appended).
-    for (const r of runs) {
-      rendered.push({ ...r, depth: 0, isLastAtDepth: [] });
-    }
-  }
 
   const sortHref = (col: SortKey) => {
     if (sort === col) return buildHref({ dir: dir === 'asc' ? 'desc' : 'asc' });
@@ -429,23 +336,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         title="Run"
         scope={currentProject}
         right={
-          <>
-            <span className="text-sm text-slate-500">
-              {runs.length} shown
-              {view === 'tree' && treeRuns.length > runs.length && (
-                <span className="text-xs text-slate-400">
-                  {' '}(+{treeRuns.length - runs.length} ancestor
-                  {treeRuns.length - runs.length > 1 ? 's' : ''})
-                </span>
-              )}
-            </span>
-            <RunsAutoRefresh />
-            <RunsViewToggle
-              current={view}
-              flatHref={buildHref({ view: 'flat' })}
-              treeHref={buildHref({ view: 'tree' })}
-            />
-          </>
+          <RunsAutoRefresh />
         }
       />
 
@@ -502,40 +393,16 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       ) : (
         <>
           {/* Mobile card view (Franck 2026-05-01 mobile L3, level 1):
-              <lg the 9-column table is unusable. We render the same
-              `rendered` rows as <RunCard>s — they're already mobile-
-              friendly and reuse the dashboard styling. Tree-mode
-              indentation is collapsed into a `↳ child of …` mini-
-              badge above the card so the relationship stays visible
-              without ASCII connectors. The desktop table is hidden
-              below `lg`. We lose trigger / branch / live-duration
-              / open-chat-icon on mobile — clicking the card lands
-              on /run/:id where everything lives anyway. */}
+              <lg the 9-column table is unusable. We render each row
+              as a <RunCard> — they're already mobile-friendly and
+              reuse the dashboard styling. The desktop table is
+              hidden below `lg`. We lose trigger / branch / live-
+              duration / open-chat-icon on mobile — clicking the
+              card lands on /run/:id where everything lives anyway. */}
           <ul className="lg:hidden divide-y divide-slate-200 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-md overflow-hidden">
-            {rendered.map((r) => {
-              const parent =
-                view === 'tree' && r.depth > 0 && r.parentRunId
-                  ? byId.get(r.parentRunId)
-                  : null;
-              return parent ? (
-                // Tree mode: prefix the card with a "child of …"
-                // mini-banner. We render an outer wrapper <li> and
-                // let the RunCard's own <li> sit inside as a block;
-                // keeps ARIA semantics close enough without forking
-                // RunCard.
-                <li key={`m-${r.id}`} className="list-none">
-                  <div className="px-3 pt-1.5 text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                    <span className="select-none">↳</span>
-                    <span className="truncate">
-                      child of {parent.task?.name ?? '(deleted)'}
-                    </span>
-                  </div>
-                  <RunCard run={r} />
-                </li>
-              ) : (
-                <RunCard run={r} key={`m-${r.id}`} />
-              );
-            })}
+            {runs.map((r) => (
+              <RunCard run={r} key={`m-${r.id}`} />
+            ))}
           </ul>
 
         <table className="w-full text-sm hidden lg:table">
@@ -559,7 +426,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
             </tr>
           </thead>
           <tbody>
-            {rendered.map((r) => {
+            {runs.map((r) => {
               // Duration was previously computed server-side; now
               // LiveDuration ticks client-side so it keeps growing
               // during running. Server code no longer needs `dur`.
@@ -568,11 +435,6 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                 <ClickableRunRow
                   key={r.id}
                   runId={r.id}
-                  /* Tree view: child rows (depth > 0) render in
-                     compact mode \u2014 no top border + halved vertical
-                     padding \u2014 so a parent and its descendants read
-                     as a single visual group (Franck 2026-04-23 14:13). */
-                  compact={view === 'tree' && r.depth > 0}
                 >
                   <td className="py-2">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${statusCls}`}>
@@ -589,20 +451,6 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                     )}
                   </td>
                   <td>
-                    {/* Tree-view indentation. Uses a poor-man's
-                        ASCII connector (└─ for the last child at
-                        each level, ├─ otherwise) rendered in a
-                        monospace span before the link. Keeps pure
-                        CSS padding simple and avoids a wrapping
-                        flex container per cell. */}
-                    {view === 'tree' && r.depth > 0 && (
-                      <span className="text-slate-400 font-mono text-xs select-none mr-1">
-                        {r.isLastAtDepth.slice(0, -1).map((last, i) => (
-                          <span key={i}>{last ? '   ' : '│  '}</span>
-                        ))}
-                        {r.isLastAtDepth[r.isLastAtDepth.length - 1] ? '└─ ' : '├─ '}
-                      </span>
-                    )}
                     {r.task ? (
                       <Link href={`/task/${r.task.id}`} className="underline">
                         {r.task.name}

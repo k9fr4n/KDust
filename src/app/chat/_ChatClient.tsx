@@ -15,8 +15,7 @@ import {
   Send,
   Square,
   Trash2,
-  FolderTree,
-  ListChecks,
+  Wrench,
   Clock,
   Pin,
   PinOff,
@@ -1394,51 +1393,85 @@ function ChatPageInner({
               whether the title/agent column is wide or narrow. */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {/*
-              MCP tool status indicators (Franck 2026-05-01).
-              Compact icon-only chips: one icon per MCP server, colored
-              green when the server is registered/ready, red otherwise.
-              Hover tooltip carries the human-readable status. Replaces
-              the previous text chips ("fs · <project>", "tasks · ready")
-              to free up header space.
+              MCP tools status indicator (Franck 2026-05-09).
+              One icon for ALL MCP servers attached to the chat:
+              green if every server is ready, red as soon as one
+              is missing/erroring. The hover bubble lists each MCP
+              with its tools so the operator knows what the agent
+              can actually call. Replaces the previous per-server
+              chips (FolderTree + ListChecks) which were ambiguous
+              ("which one is the fs again?").
             */}
-            {currentProject && (
-              <span
-                className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
-                  mcpStatus === 'ready'
-                    ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
-                    : 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
-                }`}
-                title={
-                  mcpStatus === 'ready'
-                    ? `MCP fs tools active on ${currentProject}${mcpServerId ? ` (serverId=${mcpServerId})` : ''}`
-                    : mcpStatus === 'starting'
-                      ? 'MCP fs tools starting…'
-                      : mcpStatus === 'error'
-                        ? 'MCP fs tools failed to start'
-                        : 'MCP fs tools inactive'
-                }
-                aria-label={`fs MCP ${mcpStatus}`}
-              >
-                <FolderTree size={14} />
-              </span>
-            )}
-            {currentProject && (
-              <span
-                className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
-                  taskRunnerServerId
-                    ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
-                    : 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
-                }`}
-                title={
-                  taskRunnerServerId
-                    ? `KDust task-runner MCP active (serverId=${taskRunnerServerId}) — list_tasks / run_task / dispatch_task / wait_for_run available`
-                    : 'KDust task-runner MCP inactive — agent cannot dispatch tasks from chat'
-                }
-                aria-label={`task-runner MCP ${taskRunnerServerId ? 'ready' : 'off'}`}
-              >
-                <ListChecks size={14} />
-              </span>
-            )}
+            {currentProject && (() => {
+              const fsReady = mcpStatus === 'ready';
+              const trReady = !!taskRunnerServerId;
+              const allReady = fsReady && trReady;
+              const fsLabel = fsReady
+                ? 'ready'
+                : mcpStatus === 'starting'
+                  ? 'starting\u2026'
+                  : mcpStatus === 'error'
+                    ? 'failed'
+                    : 'inactive';
+              return (
+                <div className="relative group">
+                  <span
+                    className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
+                      allReady
+                        ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
+                        : 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
+                    }`}
+                    aria-label={`MCP tools ${allReady ? 'all ready' : 'partial'}`}
+                  >
+                    <Wrench size={14} />
+                  </span>
+                  {/*
+                    Hover bubble. Pure-CSS tooltip via group-hover --
+                    no extra deps. pointer-events-none so it never
+                    interferes with the surrounding click targets;
+                    z-50 to stay above the conv list and the message
+                    area. Right-aligned (`right-0`) because the icon
+                    sits in the right cluster of the header.
+                  */}
+                  <div
+                    role="tooltip"
+                    className="pointer-events-none absolute right-0 top-full mt-1 z-50 w-72 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-2"
+                  >
+                    <p className="font-semibold text-slate-800 dark:text-slate-100">MCP tools</p>
+                    <div>
+                      <p className="font-medium flex items-center gap-1.5">
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${fsReady ? 'bg-green-500' : 'bg-red-500'}`} />
+                        fs &mdash; <span className="text-slate-500 dark:text-slate-400">{fsLabel}</span>
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">
+                        Project: <code className="font-mono">{currentProject}</code>
+                      </p>
+                      <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
+                        <li><code className="font-mono">read_file</code></li>
+                        <li><code className="font-mono">edit_file</code></li>
+                        <li><code className="font-mono">search_files</code></li>
+                        <li><code className="font-mono">search_content</code></li>
+                        <li><code className="font-mono">run_command</code></li>
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="font-medium flex items-center gap-1.5">
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${trReady ? 'bg-green-500' : 'bg-red-500'}`} />
+                        task-runner &mdash; <span className="text-slate-500 dark:text-slate-400">{trReady ? 'ready' : 'inactive'}</span>
+                      </p>
+                      <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
+                        <li><code className="font-mono">list_tasks</code></li>
+                        <li><code className="font-mono">describe_task</code></li>
+                        <li><code className="font-mono">run_task</code></li>
+                        <li><code className="font-mono">dispatch_task</code></li>
+                        <li><code className="font-mono">wait_for_run</code></li>
+                        <li><code className="font-mono">enqueue_followup</code></li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             {/*
               Pin / Delete buttons used to live here (cluster
               `[pin/del]`) but Franck removed them on 2026-05-01:

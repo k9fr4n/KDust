@@ -11,7 +11,10 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { KeyRound, Plus, RefreshCcw, Trash2, X, Copy, Check, Activity, Power, PowerOff } from 'lucide-react';
+import {
+  KeyRound, Plus, RefreshCcw, Trash2, X, Copy, Check, Activity, Power, PowerOff,
+  CheckCircle2, XCircle, AlertTriangle, HelpCircle,
+} from 'lucide-react';
 
 export interface SshIdentitySerialized {
   id: number;
@@ -34,11 +37,39 @@ export interface RuntimeSnapshot {
   env: { GIT_SSH_COMMAND: string | null; SSH_AUTH_SOCK: string | null; KDUST_SSH_CONFIG: string | null };
 }
 
+// Mirror of ProbeResultPayload in
+// src/app/api/settings/ssh/debug/route.ts. Kept duplicated rather
+// than imported to avoid a route -> client component leak.
+type ProbeVerdict =
+  | 'authenticated'
+  | 'auth_failed'
+  | 'host_unreachable'
+  | 'host_key'
+  | 'no_identity'
+  | 'unknown';
+
 interface ProbeResult {
   host: string;
   code: number;
+  verdict: ProbeVerdict;
+  summary: string;
+  acceptedIdentity: string | null;
+  offered: string[];
+  remoteGreeting: string | null;
   out: string;
 }
+
+// Banner colour scheme per verdict. ok = green, warn = amber,
+// fail = red, neutral = slate. Tailwind classes only -- the page
+// already imports Tailwind base.
+const VERDICT_STYLE: Record<ProbeVerdict, { bg: string; border: string; text: string; icon: 'ok' | 'warn' | 'fail' | 'neutral' }> = {
+  authenticated:    { bg: 'bg-emerald-50 dark:bg-emerald-950/40', border: 'border-emerald-300 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-200', icon: 'ok' },
+  auth_failed:      { bg: 'bg-red-50 dark:bg-red-950/40',         border: 'border-red-300 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         icon: 'fail' },
+  host_unreachable: { bg: 'bg-red-50 dark:bg-red-950/40',         border: 'border-red-300 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         icon: 'fail' },
+  host_key:         { bg: 'bg-amber-50 dark:bg-amber-950/40',     border: 'border-amber-300 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     icon: 'warn' },
+  no_identity:      { bg: 'bg-amber-50 dark:bg-amber-950/40',     border: 'border-amber-300 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     icon: 'warn' },
+  unknown:          { bg: 'bg-slate-50 dark:bg-slate-900',        border: 'border-slate-300 dark:border-slate-700',     text: 'text-slate-800 dark:text-slate-200',     icon: 'neutral' },
+};
 
 export function SshEditor({
   initial,
@@ -321,12 +352,14 @@ export function SshEditor({
       {/* DEBUG / PROBE */}
       <section className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3">
         <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-          <Activity size={14} /> Reachability probe
+          <Activity size={14} /> Reachability &amp; key probe
         </h2>
         <p className="text-xs text-slate-500">
-          Runs <code>ssh -vT git@&lt;host&gt;</code> with <code>BatchMode=yes</code>. Auth
-          success returns a non-zero exit (servers like GitHub close the
-          channel after greeting) -- look at the verbose output instead.
+          Runs <code>ssh -vT git@&lt;host&gt;</code> with <code>BatchMode=yes</code> against the
+          generated config. KDust reads the verbose output and tells you whether
+          your key was accepted -- exit codes are unreliable here (GitHub /
+          GitLab close the channel after greeting, returning non-zero on
+          success).
         </p>
         <div className="flex items-center gap-2">
           <input
@@ -343,10 +376,46 @@ export function SshEditor({
             {probing ? 'Probing\u2026' : 'Run'}
           </button>
         </div>
+
+        {probeResult && (() => {
+          // Verdict banner -- the operator should be able to read just
+          // this and know whether to bother with the verbose log.
+          const style = VERDICT_STYLE[probeResult.verdict];
+          const Icon =
+            style.icon === 'ok' ? CheckCircle2 :
+            style.icon === 'warn' ? AlertTriangle :
+            style.icon === 'fail' ? XCircle : HelpCircle;
+          // Cheap inline-code rendering: the server-side summary
+          // wraps host names / file names in backticks.
+          const summaryHtml = probeResult.summary.split(/(`[^`]+`)/g).map((chunk, i) =>
+            chunk.startsWith('`') && chunk.endsWith('`')
+              ? <code key={i} className="rounded bg-black/5 dark:bg-white/10 px-1 py-0.5 font-mono">{chunk.slice(1, -1)}</code>
+              : <span key={i}>{chunk}</span>
+          );
+          return (
+            <div className={`rounded-md border ${style.border} ${style.bg} ${style.text} px-3 py-2 text-sm flex items-start gap-2`}>
+              <Icon size={16} className="shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="font-medium">{summaryHtml}</p>
+                {probeResult.offered.length > 0 && probeResult.verdict !== 'authenticated' && (
+                  <p className="text-xs opacity-80">
+                    Offered: {probeResult.offered.map((p) => p.split('/').pop()).join(', ')}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {probeResult && (
-          <pre className="text-xs font-mono bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded p-2 max-h-80 overflow-auto whitespace-pre-wrap">
+          <details className="text-xs">
+            <summary className="cursor-pointer text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 select-none">
+              Verbose log (exit {probeResult.code})
+            </summary>
+            <pre className="mt-2 font-mono bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded p-2 max-h-80 overflow-auto whitespace-pre-wrap">
 {`# host=${probeResult.host}  exit=${probeResult.code}\n` + probeResult.out}
-          </pre>
+            </pre>
+          </details>
         )}
       </section>
     </section>

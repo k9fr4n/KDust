@@ -5,7 +5,6 @@ import { apiGet, apiSend } from '@/lib/api/client';
 import {
   CircleUser,
   Settings as SettingsIcon,
-  Terminal,
   Info,
   LogOut,
   Link2,
@@ -118,9 +117,6 @@ export function UserMenu() {
           </Link>
           <Link href="/logs" onClick={() => setOpen(false)} className={item} role="menuitem">
             <ScrollText size={16} /> Container logs
-          </Link>
-          <Link href="/debug/ssh" onClick={() => setOpen(false)} className={item} role="menuitem">
-            <Terminal size={16} /> SSH debug
           </Link>
           <Link href="/about" onClick={() => setOpen(false)} className={item} role="menuitem">
             <Info size={16} /> About

@@ -111,6 +111,13 @@ export default function SettingsIndex() {
     },
   ];
 
+  // Sort sections alphabetically by title (Franck 2026-05-09).
+  // The original order encoded an opinionated UX flow ("agents
+  // before projects" etc.); now that we have 8+ tiles, alphabetical
+  // is more discoverable. Use a locale-aware comparator so future
+  // accented titles still sort sensibly.
+  tiles.sort((a, b) => a.title.localeCompare(b.title));
+
   return (
     <div className="max-w-3xl space-y-4">
       <PageHeader icon={<SettingsIcon size={20} />} title="Settings" />

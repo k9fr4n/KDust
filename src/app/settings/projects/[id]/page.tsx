@@ -46,7 +46,7 @@ type Project = {
   // Phase 2 (2026-04-19): git platform integration.
   platform: string | null;
   platformApiUrl: string | null;
-  platformTokenRef: string | null;
+  platformSecretName: string | null;
   remoteProjectRef: string | null;
   autoOpenPR: boolean;
   prTargetBranch: string | null;
@@ -92,7 +92,9 @@ export default function ProjectSettingsPage({
   // Phase 2: platform state. Empty strings map to null server-side.
   const [platform, setPlatform] = useState<GitPlatform>('auto');
   const [platformApiUrl, setPlatformApiUrl] = useState('');
-  const [platformTokenRef, setPlatformTokenRef] = useState('');
+  const [platformSecretName, setPlatformSecretName] = useState('');
+  // ADR-0014: list of Secret Manager names, lazy-fetched on mount.
+  const [availableSecrets, setAvailableSecrets] = useState<string[]>([]);
   const [remoteProjectRef, setRemoteProjectRef] = useState('');
   const [autoOpenPR, setAutoOpenPR] = useState(false);
   const [prTargetBranch, setPrTargetBranch] = useState('');
@@ -131,7 +133,7 @@ export default function ProjectSettingsPage({
             // Phase 2: platform hydration.
             setPlatform(isGitPlatform(found.platform) ? found.platform : 'auto');
             setPlatformApiUrl(found.platformApiUrl ?? '');
-            setPlatformTokenRef(found.platformTokenRef ?? '');
+            setPlatformSecretName(found.platformSecretName ?? '');
             setRemoteProjectRef(found.remoteProjectRef ?? '');
             setAutoOpenPR(found.autoOpenPR);
             setPrTargetBranch(found.prTargetBranch ?? '');
@@ -141,6 +143,26 @@ export default function ProjectSettingsPage({
         }
       } finally {
         if (!cancelled) setLoading(false);
+      }
+    })();
+    // ADR-0014: hydrate the Secret Manager name list once for the
+    // platformSecretName dropdown. Listing endpoint returns metadata
+    // only (no values). Failures degrade gracefully — the select
+    // simply stays empty and the user gets a missing-option hint
+    // when their currently bound secret can't be found.
+    (async () => {
+      try {
+        const r = await fetch('/api/secrets', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = (await r.json()) as { secrets?: Array<{ name?: string }> };
+        if (cancelled) return;
+        const names = (j.secrets ?? [])
+          .map((s) => s.name)
+          .filter((n): n is string => typeof n === 'string')
+          .sort((a, b) => a.localeCompare(b));
+        setAvailableSecrets(names);
+      } catch {
+        /* network blip — leave the dropdown empty */
       }
     })();
     return () => { cancelled = true; };
@@ -154,7 +176,7 @@ export default function ProjectSettingsPage({
   // Phase 2: normalised server values for platform comparison.
   const normPlatform = (p?.platform ?? 'auto') as string;
   const normPlatformApiUrl = p?.platformApiUrl ?? '';
-  const normPlatformTokenRef = p?.platformTokenRef ?? '';
+  const normPlatformSecretName = p?.platformSecretName ?? '';
   const normRemoteProjectRef = p?.remoteProjectRef ?? '';
   const normPrTargetBranch = p?.prTargetBranch ?? '';
   const normPrRequiredReviewers = p?.prRequiredReviewers ?? '';
@@ -168,7 +190,7 @@ export default function ProjectSettingsPage({
       protectedBranches.trim() !== p.protectedBranches ||
       platform !== normPlatform ||
       platformApiUrl.trim() !== normPlatformApiUrl ||
-      platformTokenRef.trim() !== normPlatformTokenRef ||
+      platformSecretName.trim() !== normPlatformSecretName ||
       remoteProjectRef.trim() !== normRemoteProjectRef ||
       autoOpenPR !== p.autoOpenPR ||
       prTargetBranch.trim() !== normPrTargetBranch ||
@@ -195,7 +217,7 @@ export default function ProjectSettingsPage({
       const bodyAny = body as Record<string, unknown>;
       if (platform !== normPlatform) bodyAny.platform = platform === 'auto' ? '' : platform;
       if (platformApiUrl.trim() !== normPlatformApiUrl) bodyAny.platformApiUrl = platformApiUrl.trim();
-      if (platformTokenRef.trim() !== normPlatformTokenRef) bodyAny.platformTokenRef = platformTokenRef.trim();
+      if (platformSecretName.trim() !== normPlatformSecretName) bodyAny.platformSecretName = platformSecretName.trim();
       if (remoteProjectRef.trim() !== normRemoteProjectRef) bodyAny.remoteProjectRef = remoteProjectRef.trim();
       if (autoOpenPR !== p.autoOpenPR) bodyAny.autoOpenPR = autoOpenPR;
       if (prTargetBranch.trim() !== normPrTargetBranch) bodyAny.prTargetBranch = prTargetBranch.trim();
@@ -650,16 +672,25 @@ export default function ProjectSettingsPage({
           </label>
           <label className="block">
             <span className="text-xs text-slate-500">
-              Token env var name <span className="text-amber-600">(required for auto-PR)</span>
+              Platform credential <span className="text-amber-600">(required for auto-PR)</span>
             </span>
-            <input
+            <select
               className="w-full mt-1 text-sm px-2 py-1 font-mono rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-              value={platformTokenRef}
-              onChange={(e) => setPlatformTokenRef(e.target.value)}
-              placeholder="GITHUB_TOKEN_ACME"
-            />
+              value={platformSecretName}
+              onChange={(e) => setPlatformSecretName(e.target.value)}
+            >
+              <option value="">— select a secret —</option>
+              {availableSecrets.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+              {/* If the project was bound to a now-deleted Secret, keep
+                  it visible so the user notices and can pick another. */}
+              {platformSecretName && !availableSecrets.includes(platformSecretName) && (
+                <option value={platformSecretName}>{platformSecretName} (missing)</option>
+              )}
+            </select>
             <span className="block text-[10px] text-slate-400 mt-0.5">
-              [CRITICAL] Store the <strong>name</strong> of an env var, not the token itself. The raw PAT stays in your secret manager / container env.
+              ADR-0014: stored in the Secret Manager (AES-256-GCM at rest). Create or rotate via <a href="/settings/secrets" className="underline">/settings/secrets</a>.
             </span>
           </label>
         </div>

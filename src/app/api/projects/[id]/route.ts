@@ -76,7 +76,7 @@ export async function PATCH(
     // Phase 2 (2026-04-19): git platform integration.
     platform?: unknown;
     platformApiUrl?: unknown;
-    platformTokenRef?: unknown;
+    platformSecretName?: unknown;
     remoteProjectRef?: unknown;
     autoOpenPR?: unknown;
     prTargetBranch?: unknown;
@@ -99,7 +99,7 @@ export async function PATCH(
     protectedBranches?: string;
     platform?: string | null;
     platformApiUrl?: string | null;
-    platformTokenRef?: string | null;
+    platformSecretName?: string | null;
     remoteProjectRef?: string | null;
     autoOpenPR?: boolean;
     prTargetBranch?: string | null;
@@ -160,7 +160,7 @@ export async function PATCH(
       );
     }
   }
-  for (const k of ['platformApiUrl', 'platformTokenRef', 'remoteProjectRef', 'prTargetBranch', 'prRequiredReviewers'] as const) {
+  for (const k of ['platformApiUrl', 'platformSecretName', 'remoteProjectRef', 'prTargetBranch', 'prRequiredReviewers'] as const) {
     const v = body[k];
     if (v === undefined) continue;
     if (v !== null && typeof v !== 'string') {

@@ -259,11 +259,11 @@ model Project {
   //   github \u2192 https://api.github.com
   //   gitlab \u2192 https://<host>/api/v4 (derived from gitUrl host)
   platformApiUrl     String?
-  // NAME of an environment variable containing the PAT / token. The
-  // raw token itself is NEVER stored in the DB. Runtime resolves via
-  // process.env[platformTokenRef]. Missing env = autoOpenPR skipped
-  // with a warning in TaskRun.output so the pipeline doesn\u0027t break.
-  platformTokenRef   String?
+  // ADR-0014 (2026-05-10): name of a row in the Secret Manager
+  // (model Secret). Resolved at runtime via decrypt(valueEnc).
+  // Replaces the legacy `platformTokenRef` which read from
+  // process.env: rotation, AES-256-GCM at rest, lastUsedAt tracking.
+  platformSecretName String?
   // 'owner/repo' (GitHub) or 'group/subgroup/repo' (GitLab). NULL
   // \u2192 parse from gitUrl.
   remoteProjectRef   String?

@@ -159,11 +159,11 @@ export async function runCommitAndPush(
   // would be a 422 from the platform anyway. Franck 2026-04-25.
   if (!job.dryRun && pushedToOrigin) {
     const platformTarget = project.prTargetBranch ?? policy.baseBranch;
-    const resolved = resolveGitPlatform({
+    const resolved = await resolveGitPlatform({
       gitUrl: project.gitUrl,
       platform: project.platform,
       platformApiUrl: project.platformApiUrl,
-      platformTokenRef: project.platformTokenRef,
+      platformSecretName: project.platformSecretName,
       remoteProjectRef: project.remoteProjectRef,
       autoOpenPR: project.autoOpenPR,
     });

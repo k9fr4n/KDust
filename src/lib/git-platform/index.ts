@@ -4,26 +4,33 @@
  * Resolves a `GitPlatformAdapter` for a Project. Handles:
  *  - Auto-detection of platform + owner/repo from gitUrl when the
  *    Project columns are null (zero-config happy path).
- *  - Token lookup via process.env[platformTokenRef] — the token
- *    value itself is never stored in the DB.
- *  - Graceful null return when:
+ *  - Token lookup via the Secret Manager (model Secret) — the token
+ *    value itself is never stored in the Project row, only the
+ *    secret NAME is. See ADR-0014 (2026-05-10) for the migration
+ *    away from process.env-based `platformTokenRef`.
+ *  - Graceful { ok: false } return when:
  *      * the project has no git remote (sandbox)
  *      * autoOpenPR is off
  *      * platform is explicitly 'none'
- *      * token env var is missing (UI must warn separately)
- *      * the remote is unknown / not supported yet
+ *      * platformSecretName is unset / unknown / decrypt fails
+ *      * the remote is unknown / not supported
  *
- * The runner treats `null` as "skip PR opening silently (still push)".
+ * The runner treats `{ ok: false }` as "skip PR opening silently
+ * (still push)" and records the reason in TaskRun.output.
  */
 
+import { db } from '../db';
+import { decrypt } from '../crypto';
+import { errMessage } from '../errors';
 import type { GitPlatformAdapter } from './types';
 import { makeGithubAdapter } from './github';
+import { makeGitlabAdapter } from './gitlab';
 
 export type PlatformProject = {
   gitUrl: string | null;
   platform: string | null;
   platformApiUrl: string | null;
-  platformTokenRef: string | null;
+  platformSecretName: string | null;
   remoteProjectRef: string | null;
   autoOpenPR: boolean;
 };
@@ -61,7 +68,7 @@ function detectPlatform(host: string): 'github' | 'gitlab' | null {
   return null;
 }
 
-export function resolveGitPlatform(project: PlatformProject): ResolveResult {
+export async function resolveGitPlatform(project: PlatformProject): Promise<ResolveResult> {
   if (!project.autoOpenPR) {
     return { ok: false, reason: 'autoOpenPR disabled' };
   }
@@ -92,17 +99,43 @@ export function resolveGitPlatform(project: PlatformProject): ResolveResult {
     return { ok: false, reason: `invalid remoteProjectRef "${ownerRepo}" (need "owner/repo")` };
   }
 
-  // Resolve token from env. Missing env = actionable error, not crash.
-  if (!project.platformTokenRef) {
-    return { ok: false, reason: 'platformTokenRef is not set on the project' };
+  // Resolve token from the Secret Manager (ADR-0014, 2026-05-10).
+  // The Project row only carries the NAME; the encrypted value lives
+  // in the `Secret` table and is decrypted in-memory just before
+  // being handed to the adapter.
+  if (!project.platformSecretName) {
+    return { ok: false, reason: 'platformSecretName is not set on the project' };
   }
-  const token = process.env[project.platformTokenRef];
+  const secretRow = await db.secret.findUnique({
+    where: { name: project.platformSecretName },
+    select: { id: true, name: true, valueEnc: true },
+  });
+  if (!secretRow) {
+    return {
+      ok: false,
+      reason: `Secret "${project.platformSecretName}" not found in Secret Manager`,
+    };
+  }
+  let token: string;
+  try {
+    token = decrypt(secretRow.valueEnc);
+  } catch (e: unknown) {
+    return {
+      ok: false,
+      reason: `decrypt failed for Secret "${project.platformSecretName}": ${errMessage(e)}`,
+    };
+  }
   if (!token) {
     return {
       ok: false,
-      reason: `env var "${project.platformTokenRef}" is empty or unset on this process`,
+      reason: `Secret "${project.platformSecretName}" decrypted to an empty value`,
     };
   }
+  // Best-effort lastUsedAt bump (don't block on the write; if it
+  // races with another resolve we don't care which timestamp wins).
+  void db.secret
+    .update({ where: { id: secretRow.id }, data: { lastUsedAt: new Date() } })
+    .catch(() => undefined);
 
   if (platform === 'github') {
     const apiUrl =
@@ -116,8 +149,23 @@ export function resolveGitPlatform(project: PlatformProject): ResolveResult {
     };
   }
 
-  // GitLab is scheduled for Phase 3.
-  return { ok: false, reason: `platform "${platform}" not implemented yet (Phase 3)` };
+  if (platform === 'gitlab') {
+    // GitLab v4 API root. Defaults to the gitUrl host when not
+    // overridden, which is the correct behaviour for both
+    // gitlab.com SaaS and any self-hosted instance.
+    const apiUrl = project.platformApiUrl ?? `https://${parsed.host}/api/v4`;
+    return {
+      ok: true,
+      platform: 'gitlab',
+      ownerRepo,
+      adapter: makeGitlabAdapter({ apiUrl, projectPath: ownerRepo, token }),
+    };
+  }
+
+  // Exhaustive: `platform` is narrowed to never here. If a new
+  // variant slips through the union, the compiler will flag this.
+  const _exhaustive: never = platform;
+  return { ok: false, reason: `platform "${String(_exhaustive)}" not supported` };
 }
 
 export type { GitPlatformAdapter } from './types';

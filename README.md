@@ -1400,3 +1400,90 @@ stays the sole MCP entry point.
   hundred MB.
 - No change to push-pipeline, secrets, MCP gateway, or run-depth
   semantics. Pure runtime tooling addition.
+
+### ADR-0014 — Push-pipeline credentials via Secret Manager (2026-05-10)
+
+**Status**: Accepted (supersedes the Phase 2 "env var name"
+decision from `src/lib/git-platform/README.md`).
+
+**Date**: 2026-05-10.
+
+**Context**:
+
+Up to this point KDust had **two parallel secret backends**:
+
+- The **Secret Manager** (`Secret` / `TaskSecret` models,
+  AES-256-GCM at rest, UI-driven rotation, `Secret.lastUsedAt`
+  audit, plaintext redaction via `src/lib/secrets/redact.ts`) —
+  used by `command-runner` to inject env vars into TaskRun
+  child processes. This is the path agents use when invoking
+  `gh`, `glab`, `curl`, etc.
+- A **legacy `process.env` lookup** (`Project.platformTokenRef`
+  -> `process.env[name]`) — used by `src/lib/git-platform/`
+  to obtain the PAT that opens PRs/MRs after a successful push.
+
+The asymmetry was real and unjustified:
+
+| Aspect | Secret Manager path | `process.env` path |
+|---|---|---|
+| At-rest encryption | AES-256-GCM | none (cleartext in `.env`) |
+| Rotation UX | UI, no restart | edit `.env` + restart container |
+| Audit | `Secret.lastUsedAt` | none |
+| Leak radius | run-scoped child env | whole-container `process.env` |
+| Redaction | runtime redactor attached | none |
+
+ADR-0013 (2026-05-10) committed the project to a single credential
+backend for agents ("CLIs + TaskSecret"). This ADR aligns the push
+pipeline with the same backend, removing the parallel path.
+
+An audit of the maintainer instance (Franck, Ecritel, 2026-05-10)
+showed no projects with an active `platformTokenRef` binding, which
+made the window for a clean break (no rollback path needed) optimal.
+
+**Decision**:
+
+1. Drop `Project.platformTokenRef` (string column).
+2. Add `Project.platformSecretName` (string column, nullable),
+   the name of a row in the `Secret` table.
+3. Make `resolveGitPlatform()` **async** and resolve the token via
+   `db.secret.findUnique({ where: { name } })` + `decrypt(valueEnc)`.
+   Best-effort bump of `Secret.lastUsedAt` for audit parity with
+   `resolveForRun()`.
+4. Implement `gitlab.ts` adapter (was a Phase 3 placeholder returning
+   `not implemented yet`). GitLab v4 REST over `fetch`, mirrors
+   `github.ts` in shape and error handling. Project ID = URL-encoded
+   `group/sub/repo`. Auth = `PRIVATE-TOKEN` header.
+5. UI `/settings/projects/:id`: replace the free-text
+   `platformTokenRef` input with a `<select>` populated from
+   `GET /api/secrets`. Missing-binding case kept visible to nudge
+   the user toward re-selection.
+
+**Consequences**:
+
+- The push pipeline now requires a `Secret` row, **not** a
+  container env var. Operators must create the secret via
+  `/settings/secrets` and bind it on the project edit page.
+- The same secret can be reused as a `TaskSecret` binding
+  (env var `GITHUB_TOKEN` / `GITLAB_TOKEN`) so agents invoking
+  `gh`/`glab` and the push pipeline opening the PR/MR share one
+  source of truth for the PAT. Rotation is one UI edit.
+- `resolveGitPlatform()` is now async; the only caller
+  (`src/lib/cron/runner/phases/commit-and-push.ts`) was updated to
+  `await` it. No other callsite touches the function.
+- Backward incompatibility: external instances with an active
+  `platformTokenRef` binding lose auto-PR until they re-bind via
+  the new mechanism. The pre-existing skip-with-warning behaviour
+  means the **push itself** keeps working; only the PR/MR opening
+  step is gated. This is acceptable for a personal-scale
+  self-hosted product (no announced external users at this date).
+- GitLab support unlocks the next class of use cases (Ecritel
+  self-hosted GitLab) without further schema changes. The same
+  `Secret` table powers it.
+- No new dependency. `@gitbeaker/*` was considered and rejected
+  for the same reason `@octokit/rest` was rejected in Phase 2:
+  the 3-endpoint surface does not justify the maintenance cost.
+- The master key `APP_ENCRYPTION_KEY` becomes the single point of
+  compromise for both Tasks and the push pipeline. This is
+  unchanged in nature (Tasks were already covered) and acceptable
+  given the alternative (two parallel key managements with worse
+  ergonomics).

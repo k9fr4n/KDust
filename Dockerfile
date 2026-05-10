@@ -39,6 +39,7 @@ WORKDIR /app
 # Dust \u00e9crivent d\u00e9j\u00e0 du code ex\u00e9cut\u00e9 dans ce container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl ca-certificates tini git openssh-client gosu curl gnupg rsync jq \
+    ripgrep unzip xz-utils make \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
   && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -56,7 +57,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && YQ_VERSION=v4.44.3 \
   && curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq \
   && chmod 0755 /usr/local/bin/yq \
-  && apt-get purge -y curl gnupg \
+  # glab — GitLab CLI officiel (gitlab-org/cli). Pas de repo apt Debian,
+  # on prend le .deb release pinné par version. Respecte $GITLAB_TOKEN
+  # (+ optionnellement $GITLAB_HOST) injecté par Secret Manager → TaskSecret,
+  # même contrat que `gh` avec $GITHUB_TOKEN.
+  && GLAB_VERSION=1.94.0 \
+  && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_$(dpkg --print-architecture).deb" -o /tmp/glab.deb \
+  && dpkg -i /tmp/glab.deb \
+  && rm /tmp/glab.deb \
+  && apt-get purge -y gnupg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \
   && install -d -o node -g node -m 700 /home/node/.ssh \

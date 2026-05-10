@@ -1,7 +1,15 @@
 # Docker MCP Gateway — operator handbook
 
-Status: **Proposed (ADR-0012)**. Companion document to the ADR in
-`README.md`.
+Status: **Accepted (ADR-0012, V2 with UI)**. Companion document
+to the ADR in `README.md`.
+
+> Since 2026-05-10 the recommended way to declare servers /
+> bindings / project filters is the **`/settings/mcp` UI**. The
+> `scripts/seed-mcp-gateway.mjs` script is kept as a fallback for
+> bootstrap or scripted installs but the UI is now the source of
+> truth. The "Apply changes" button there rewrites
+> `/mcp-gateway/secrets/kdust-mcp.env` and restarts the gateway
+> container in one click (DooD `docker restart kdust-mcp-gateway`).
 
 This page covers the practical side of running the Docker MCP
 Gateway alongside KDust: docker-compose snippet, adding /

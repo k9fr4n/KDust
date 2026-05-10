@@ -166,7 +166,14 @@ export async function startGatewayProxy(
   });
   const allowed = await resolveAllowedToolNames(projectFsPath);
 
-  const server = new McpServer({ name: MCP_SERVER_NAME, version: '0.1.0' });
+  // Declare the `tools` capability up-front so a project with zero
+  // whitelisted tools still answers tools/list with [] cleanly,
+  // instead of returning -32601 "Method not found" (which surfaces
+  // as a confusing red banner in the chat). Franck 2026-05-10.
+  const server = new McpServer(
+    { name: MCP_SERVER_NAME, version: '0.1.0' },
+    { capabilities: { tools: { listChanged: true } } },
+  );
 
   let registered = 0;
   for (const t of tools) {

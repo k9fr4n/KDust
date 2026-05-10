@@ -1174,7 +1174,7 @@ See `docs/ssh-identities.md` for the full operator handbook.
 
 ### ADR-0012 — Docker MCP Gateway integration (2026-05-10)
 
-**Status**: Accepted (V1 implemented, UI deferred).
+**Status**: Accepted (V2 — UI shipped 2026-05-10).
 
 **Date**: 2026-05-10.
 
@@ -1299,10 +1299,21 @@ snippet, adding/removing a server, secret rotation, debugging).
   `GET /api/mcp/gateway-tools`. The chat client folds the new
   ensure into the existing parallel-ensure flow next to fs-cli
   and task-runner.
-- The `/settings/mcp` CRUD UI is **NOT** shipped in V1. Operators
-  populate `McpGatewayServer` / `McpServerSecret` /
-  `ProjectMcpToolFilter` via `scripts/seed-mcp-gateway.mjs`. UI
-  follow-up tracked separately.
+- **UI** (`/settings/mcp`, V2 2026-05-10): three sections —
+  Servers (slug, name, enabled toggle, delete), per-server Secret
+  bindings (`secretKey` → `Secret.name`, with a dropdown sourced
+  from `listSecrets()`), and per-project tool filters (multi-select
+  modal against the live tools list from the gateway). An "Apply
+  changes" button calls `POST /api/mcp/regenerate-secrets` which
+  rewrites `kdust-mcp.env` and `docker restart`s the gateway
+  container via the host socket (DooD). The `seed-mcp-gateway.mjs`
+  script is kept as a fallback for scripted installs.
+- **Default-deny defect fix** (V2 2026-05-10): the proxy now
+  declares the `tools` capability up-front in the `McpServer`
+  ctor so a project with zero whitelisted tools answers
+  `tools/list` with `[]` cleanly instead of raising `-32601 Method
+  not found` — the latter surfaced as a confusing red banner in
+  /chat for any unconfigured project.
 - The proxy registers tools with a permissive (empty) input
   schema — the gateway-side server validates args. A future pass
   could convert each tool's JSON Schema to a Zod shape for tighter

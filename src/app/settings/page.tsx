@@ -9,6 +9,7 @@ import {
   MessageCircle,
   Workflow,
   Terminal,
+  Plug,
 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 
@@ -77,6 +78,19 @@ export default function SettingsIndex() {
         'Self-hosted SSH identities for the git push pipeline. Encrypted at rest, materialised to tmpfs at boot. Includes a reachability probe.',
       icon: <Terminal size={18} />,
       accent: 'text-emerald-600 dark:text-emerald-400',
+    },
+    {
+      // Docker MCP gateway (Franck 2026-05-10, ADR-0012). Lets
+      // operators declare which catalog servers and tools are
+      // exposed to each project's agent. Default-deny, per-project
+      // allow-list. Replaces the seed-mcp-gateway.mjs script of
+      // the V1 release.
+      href: '/settings/mcp',
+      title: 'MCP Gateway',
+      description:
+        'Docker MCP catalog servers exposed to your Dust agents (GitHub, etc.). Per-project allow-list of tools, secret bindings, default-deny.',
+      icon: <Plug size={18} />,
+      accent: 'text-violet-600 dark:text-violet-400',
     },
     {
       // Task Runner MCP settings (Franck 2026-05-02). Knobs that

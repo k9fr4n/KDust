@@ -1318,3 +1318,85 @@ snippet, adding/removing a server, secret rotation, debugging).
   schema — the gateway-side server validates args. A future pass
   could convert each tool's JSON Schema to a Zod shape for tighter
   agent-side hints.
+
+### ADR-0013 — CLI tools over MCP servers when a mature CLI exists (2026-05-10)
+
+**Status**: Accepted.
+
+**Date**: 2026-05-10.
+
+**Context**:
+
+The MCP ecosystem grows fast and it is tempting to wire every
+new server (zereight/gitlab-mcp, Atlassian community variants,
+etc.) into the `docker/mcp-gateway` from ADR-0012. Each new MCP
+adds: a sidecar container, a secret binding in `kdust-mcp.env`,
+tool descriptions consuming context window, and a fresh attack
+surface to audit.
+
+For a large class of services, an agent running inside the
+KDust container can already do the same job with a native CLI:
+`gh` for GitHub, `glab` for GitLab, `curl` for arbitrary HTTP,
+`rg`/`fd`/`make` for local code operations. KDust's secret
+pipeline already injects `TaskSecret` values as environment
+variables into the child process spawned by `command-runner`
+(`src/lib/mcp/command-runner-server.ts`), and the log buffer
+auto-redacts those plaintexts (`src/lib/logs/buffer.ts`,
+"DYNAMIC RUN LAYER"). So binding `GITHUB_TOKEN` or `GITLAB_TOKEN`
+to a task is enough for `gh` / `glab` to authenticate, with full
+redaction guarantees — no MCP server required.
+
+The trade-off is asymmetric:
+
+- Adding a CLI to the image: one apt-get / .deb line, no runtime
+  cost when unused, secrets work "for free" via env vars.
+- Adding an MCP server: a sidecar process, secret broker entry,
+  signature-verification decision, and tools/list tokens spent
+  on every chat ensure.
+
+**Decision**:
+
+When a service offers both a mature CLI and an MCP server, KDust
+prefers the CLI route by default. MCP servers are only added
+when at least one of the following holds:
+
+1. No mature CLI exists (e.g. Sentry, Atlassian, Playwright).
+2. Structured (JSON-Schema-validated) output is required for
+   reliable agent chaining across many calls.
+3. A narrow per-tool whitelist (< 5 tools) provides a strict
+   security boundary that a generic shell cannot.
+
+Concretely this ADR adds the following CLIs to the runner stage
+of the Dockerfile:
+
+- `curl` — kept at runtime (previously purged at the end of the
+  apt layer alongside `gnupg`).
+- `glab` v1.94.0 — official GitLab CLI from
+  `gitlab.com/gitlab-org/cli`, pinned `.deb` from the release.
+- `ripgrep` — fast, gitignore-aware code search.
+- `unzip`, `xz-utils` — extract release archives commonly
+  shipped by GitHub/GitLab/Linux projects.
+- `make` — canonical entry point for most repository tasklets
+  (`make test`, `make lint`, …).
+
+This explicitly **does not** introduce a generic MCP proxy (Option
+B/C from the 2026-05-10 discussion) — the `docker/mcp-gateway`
+stays the sole MCP entry point.
+
+**Consequences**:
+
+- The Tier-1 CLI list (`gh`, `glab`, `curl`, `rg`, `unzip`,
+  `xz-utils`, `make`, plus the pre-existing `git`, `jq`, `yq`,
+  `rsync`, `openssh-client`, `docker`, `docker-compose-plugin`)
+  is now part of the runtime contract. Removing one of them is
+  a breaking change for tasks that grew to rely on it.
+- The `mcp/gitlab` catalog server (archived upstream) is **not**
+  enabled. Agents talk to GitLab via `glab` + `GITLAB_TOKEN`
+  TaskSecret binding. Same pattern as `gh` + `GITHUB_TOKEN`.
+- Future MCP additions must justify against the three criteria
+  above in the PR description or a follow-up ADR.
+- Image size: +~22 MB (glab ~15 MB, Tier-1 utilities ~7 MB).
+  Acceptable given the runner stage already weights several
+  hundred MB.
+- No change to push-pipeline, secrets, MCP gateway, or run-depth
+  semantics. Pure runtime tooling addition.

@@ -645,7 +645,7 @@ export default function ProjectSettingsPage({
             >
               <option value="auto">auto-detect from git URL</option>
               <option value="github">github</option>
-              <option value="gitlab">gitlab (Phase 3 — not yet implemented)</option>
+              <option value="gitlab">gitlab</option>
               <option value="none">none (disable)</option>
             </select>
           </label>

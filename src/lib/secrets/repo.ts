@@ -25,8 +25,13 @@ import { errMessage } from '../errors';
 
 // --- validation ---------------------------------------------------
 
-// Secret name: URL-safe slug. Lowercased for consistency, 2–64 chars.
-const SECRET_NAME_RE = /^[a-z][a-z0-9_-]{1,63}$/;
+// Secret name: URL-safe slug. Case-sensitive (mirrors POSIX env
+// var conventions where uppercase is idiomatic for tokens), 2–64
+// chars. Franck 2026-05-10: relaxed from lowercase-only because
+// users naturally type GITHUB_PAT_MCP and were getting a generic
+// HTML5 "pattern mismatch" tooltip that did not explain the
+// uppercase rejection.
+const SECRET_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{1,63}$/;
 // Env var name: POSIX-ish. First char letter/underscore, rest word
 // chars. Enforced to avoid weird exports.
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -34,7 +39,7 @@ const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 export function validateSecretName(name: string): void {
   if (!SECRET_NAME_RE.test(name)) {
     throw new Error(
-      `Invalid secret name "${name}". Use 2–64 chars, start with a letter, only [a-z0-9_-].`,
+      `Invalid secret name "${name}". Use 2–64 chars, start with a letter, only [A-Za-z0-9_-].`,
     );
   }
 }

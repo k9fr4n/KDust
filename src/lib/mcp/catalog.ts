@@ -69,6 +69,22 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
     ],
   },
   {
+    // ADR-0012 (2026-05-10): Docker MCP gateway integration. The
+    // tool list is dynamic (driven by --servers=... in compose +
+    // ProjectMcpToolFilter rows in DB), so this entry is mostly
+    // a placeholder for the chat header bubble. The status dot
+    // reflects whether the per-project proxy is bound; the actual
+    // tool inventory can be inspected via /api/mcp/gateway-tools.
+    id: 'mcp-gateway',
+    name: 'mcp-gateway',
+    description:
+      'Docker MCP catalog tools (github-official, etc.) multiplexed via the sibling mcp-gateway service. Tools are whitelisted per project.',
+    scope: 'chat',
+    tools: [
+      // Dynamic — see GET /api/mcp/gateway-tools for the live list.
+    ],
+  },
+  {
     id: 'command-runner',
     name: 'command-runner',
     description: 'Spawn shell commands in a task-run sandbox. Attached only to TaskRuns whose Task has commandRunnerEnabled=true.',

@@ -106,6 +106,32 @@ export async function register() {
       console.error(`[instrumentation] ssh bootstrap crashed: ${(e as Error).message}`);
     }
 
+    // Materialise Docker MCP gateway secrets file (Franck
+    // 2026-05-10, ADR-0012). Best-effort: if the schema is not
+    // yet pushed (first boot after a deploy where db push lags
+    // behind the new image), the writer logs warnings and
+    // produces an empty file — the gateway starts in "no-secret"
+    // mode and the next manual restart picks up the file once
+    // the operator has populated McpGatewayServer rows. We DO
+    // NOT pre-open the gateway client here: it is opened lazily
+    // by the first /api/mcp/gateway-ensure call, so a temporary
+    // gateway outage at boot does not delay the Next.js startup.
+    try {
+      const { writeGatewaySecretsFile } = await import(
+        './lib/mcp/gateway-secrets'
+      );
+      const r = await writeGatewaySecretsFile();
+      if (r.warnings.length > 0) {
+        console.warn(
+          `[instrumentation] gateway secrets soft-warnings: ${r.warnings.length}`,
+        );
+      }
+    } catch (e) {
+      console.error(
+        `[instrumentation] gateway secrets bootstrap crashed: ${(e as Error).message}`,
+      );
+    }
+
     // Boot the task scheduler. Reinstated 2026-04-19 after the Dust
     // billing hold was lifted. reloadScheduler() reads every enabled
     // Task whose `schedule` is a valid cron expression and wires up

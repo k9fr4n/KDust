@@ -1,22 +1,26 @@
 import { startFsServer, type FsServerHandle } from './fs-server';
 import { startTaskRunnerServer, type TaskRunnerHandle } from './task-runner-server';
 import { startCommandRunnerServer, type CommandRunnerHandle } from './command-runner-server';
+import { startGatewayProxy, type GatewayProxyHandle } from './gateway-proxy';
 
 // Module-level singleton (survives across requests in a given node process)
 const g = globalThis as unknown as {
   __kdustMcp?: Map<string, Promise<FsServerHandle>>;
   __kdustTaskRunnerMcp?: Map<string, Promise<TaskRunnerHandle>>;
   __kdustCommandRunnerMcp?: Map<string, Promise<CommandRunnerHandle>>;
+  __kdustGatewayMcp?: Map<string, Promise<GatewayProxyHandle>>;
   __kdustMcpLastUsed?: Map<string, number>;
   __kdustFsSweeper?: NodeJS.Timeout;
 };
 if (!g.__kdustMcp) g.__kdustMcp = new Map();
 if (!g.__kdustTaskRunnerMcp) g.__kdustTaskRunnerMcp = new Map();
 if (!g.__kdustCommandRunnerMcp) g.__kdustCommandRunnerMcp = new Map();
+if (!g.__kdustGatewayMcp) g.__kdustGatewayMcp = new Map();
 if (!g.__kdustMcpLastUsed) g.__kdustMcpLastUsed = new Map();
 const cache = g.__kdustMcp!;
 const taskRunnerCache = g.__kdustTaskRunnerMcp!;
 const commandRunnerCache = g.__kdustCommandRunnerMcp!;
+const gatewayCache = g.__kdustGatewayMcp!;
 const lastUsedByProject = g.__kdustMcpLastUsed!;
 
 // ---------------------------------------------------------------------------
@@ -291,3 +295,50 @@ export async function releaseCommandRunnerServer(runId: string): Promise<void> {
     /* ignore */
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Docker MCP Gateway proxy registry (Franck 2026-05-10, ADR-0012).          */
+/*                                                                            */
+/*  One per-project proxy McpServer wrapping the gateway client. Cached by    */
+/*  projectFsPath (e.g. "Perso/fsallet/KDust"). NOT auto-swept: the proxy is  */
+/*  cheap (no chroot, no child process) and the underlying gateway client is  */
+/*  a singleton anyway.                                                       */
+/*                                                                            */
+/*  invalidate is the recovery path for the "unknown MCP server ID" 403 from  */
+/*  Dust, mirroring the fs-cli pattern.                                       */
+/* -------------------------------------------------------------------------- */
+
+export async function getGatewayServerId(projectFsPath: string): Promise<string> {
+  const existing = gatewayCache.get(projectFsPath);
+  if (existing) {
+    try {
+      const handle = await existing;
+      if (handle.serverId) return handle.serverId;
+    } catch {
+      gatewayCache.delete(projectFsPath);
+    }
+  }
+  const p = startGatewayProxy(projectFsPath);
+  gatewayCache.set(projectFsPath, p);
+  try {
+    const handle = await p;
+    return handle.serverId;
+  } catch (e) {
+    gatewayCache.delete(projectFsPath);
+    throw e;
+  }
+}
+
+export async function releaseGatewayServer(projectFsPath: string): Promise<void> {
+  const entry = gatewayCache.get(projectFsPath);
+  gatewayCache.delete(projectFsPath);
+  if (!entry) return;
+  try {
+    const handle = await entry;
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+export const invalidateGatewayServer = releaseGatewayServer;

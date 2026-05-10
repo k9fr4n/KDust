@@ -259,6 +259,11 @@ function ChatPageInner({
   // wait_for_run from chat. null when no project is active or the
   // ensure call failed (chat then degrades to fs-cli only).
   const [taskRunnerServerId, setTaskRunnerServerId] = useState<string | null>(null);
+  // Docker MCP gateway proxy serverId (Franck 2026-05-10, ADR-0012).
+  // null when no project is active, the gateway is unreachable, or
+  // the project has no whitelisted tools — chat degrades gracefully
+  // to fs-cli + task-runner only in any of those cases.
+  const [gatewayServerId, setGatewayServerId] = useState<string | null>(null);
   // MCP catalog (Franck 2026-05-09). Fetched once at mount from
   // /api/mcp/catalog; powers the header bubble so the list of MCPs
   // and tools stays in sync with the server-side registry rather
@@ -485,7 +490,7 @@ function ChatPageInner({
       // Franck 2026-04-25 11:31.
       if (convProject) {
         setMcpStatus('starting');
-        const [fsRes, trRes] = await Promise.allSettled([
+        const [fsRes, trRes, gwRes] = await Promise.allSettled([
           fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -495,6 +500,11 @@ function ChatPageInner({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectName: convProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/gateway-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectFsPath: convProject }),
           }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         ]);
         if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
@@ -511,10 +521,20 @@ function ChatPageInner({
           setTaskRunnerServerId(null);
           console.warn('[chat] task-runner MCP ensure failed; list_tasks/run_task unavailable');
         }
+        // Gateway failure is non-fatal too: chat still works with
+        // fs-cli + task-runner alone if the gateway is down or no
+        // tools are whitelisted for this project.
+        if (gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.serverId) {
+          setGatewayServerId(gwRes.value.j.serverId);
+        } else {
+          setGatewayServerId(null);
+          console.warn('[chat] gateway MCP ensure failed; catalog tools unavailable');
+        }
       } else {
         setMcpServerId(null);
         setMcpStatus('idle');
         setTaskRunnerServerId(null);
+        setGatewayServerId(null);
       }
     }
   };
@@ -610,7 +630,7 @@ function ChatPageInner({
           setMcpStatus('starting');
           // Mount-time parallel ensure of both MCPs. Same rationale
           // as the project-change handler above. Franck 2026-04-25 11:31.
-          const [fsRes, trRes] = await Promise.allSettled([
+          const [fsRes, trRes, gwRes] = await Promise.allSettled([
             fetch('/api/mcp/ensure', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -620,6 +640,11 @@ function ChatPageInner({
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ projectName: name }),
+            }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+            fetch('/api/mcp/gateway-ensure', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectFsPath: name }),
             }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
           ]);
           if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
@@ -637,6 +662,11 @@ function ChatPageInner({
             setTaskRunnerServerId(trRes.value.j.serverId);
           } else {
             console.warn('[chat] task-runner MCP ensure failed at mount; chat will run without task tools');
+          }
+          if (gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.serverId) {
+            setGatewayServerId(gwRes.value.j.serverId);
+          } else {
+            console.warn('[chat] gateway MCP ensure failed at mount; chat will run without gateway tools');
           }
         }
       })
@@ -956,12 +986,13 @@ function ChatPageInner({
     // client-side MCP servers" 403 that Dust emits for unknown IDs.
     let effectiveMcpServerId: string | null = mcpServerId;
     let effectiveTaskRunnerServerId: string | null = taskRunnerServerId;
+    let effectiveGatewayServerId: string | null = gatewayServerId;
     if (currentProject) {
-      // Re-ensure both MCPs in parallel just before sending so a
+      // Re-ensure all MCPs in parallel just before sending so a
       // serverId that Dust evicted server-side is refreshed before
       // we hit the 403 path. Franck 2026-04-25 11:31.
       try {
-        const [fsRes, trRes] = await Promise.allSettled([
+        const [fsRes, trRes, gwRes] = await Promise.allSettled([
           fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -971,6 +1002,11 @@ function ChatPageInner({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectName: currentProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/gateway-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectFsPath: currentProject }),
           }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         ]);
         if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
@@ -982,6 +1018,11 @@ function ChatPageInner({
           if (trRes.value.j.serverId !== taskRunnerServerId)
             setTaskRunnerServerId(trRes.value.j.serverId);
         }
+        if (gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.serverId) {
+          effectiveGatewayServerId = gwRes.value.j.serverId;
+          if (gwRes.value.j.serverId !== gatewayServerId)
+            setGatewayServerId(gwRes.value.j.serverId);
+        }
       } catch {
         // Non-fatal \u2014 fall through to the send attempt and let the
         // 403 retry below salvage the call if needed.
@@ -989,13 +1030,16 @@ function ChatPageInner({
     }
 
     // Build the MCP server ID array: fs-cli first (primary tool
-    // surface), task-runner second (delegation tools). Both can
-    // be absent independently \u2014 chat with neither still works
-    // for plain conversational turns. Filter nulls before passing.
+    // surface), task-runner second (delegation tools), gateway
+    // third (Docker MCP catalog tools). Any of them can be absent
+    // independently \u2014 chat with none of them still works for
+    // plain conversational turns. Filter nulls before passing.
     const buildMcpIds = () =>
-      [effectiveMcpServerId, effectiveTaskRunnerServerId].filter(
-        (x): x is string => !!x,
-      );
+      [
+        effectiveMcpServerId,
+        effectiveTaskRunnerServerId,
+        effectiveGatewayServerId,
+      ].filter((x): x is string => !!x);
 
     // Small helper: detects the misleading 403 Dust sends when a
     // client-side MCP server ID is unknown (torn down / never
@@ -1025,9 +1069,9 @@ function ChatPageInner({
       // Retry once with freshly-ensured serverIds. Re-evict and
       // re-create BOTH (we don't know which one Dust rejected, and
       // forcing both is cheap). Franck 2026-04-25 11:31.
-      console.warn('[chat] Dust rejected MCP serverId; re-ensuring both MCPs and retrying once');
+      console.warn('[chat] Dust rejected MCP serverId; re-ensuring all MCPs and retrying once');
       try {
-        const [fsRes, trRes] = await Promise.allSettled([
+        const [fsRes, trRes, gwRes] = await Promise.allSettled([
           fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1038,6 +1082,11 @@ function ChatPageInner({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectName: currentProject, force: true }),
           }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/gateway-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectFsPath: currentProject, force: true }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         ]);
         if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
           effectiveMcpServerId = fsRes.value.j.serverId;
@@ -1046,6 +1095,10 @@ function ChatPageInner({
         if (trRes.status === 'fulfilled' && trRes.value.ok && trRes.value.j.serverId) {
           effectiveTaskRunnerServerId = trRes.value.j.serverId;
           setTaskRunnerServerId(trRes.value.j.serverId);
+        }
+        if (gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.serverId) {
+          effectiveGatewayServerId = gwRes.value.j.serverId;
+          setGatewayServerId(gwRes.value.j.serverId);
         }
       } catch {
         /* swallow \u2014 retry regardless, worst case same error */
@@ -1467,6 +1520,7 @@ function ChatPageInner({
                   return 'inactive';
                 }
                 if (id === 'task-runner') return taskRunnerServerId ? 'ready' : 'inactive';
+                if (id === 'mcp-gateway') return gatewayServerId ? 'ready' : 'inactive';
                 return 'inactive';
               };
 

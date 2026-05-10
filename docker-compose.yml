@@ -20,6 +20,12 @@ services:
       # à l'intérieur de KDust vaut /projects/... et le daemon ne
       # trouve rien à monter (dossier vide créé silencieusement).
       - KDUST_HOST_PROJECTS_ROOT=${PWD}/projects
+      # Docker MCP gateway endpoint (ADR-0012, 2026-05-10).
+      # Reachable only on the Compose-internal network (no public
+      # ingress). Auth is disabled on the gateway via
+      # DOCKER_MCP_IN_CONTAINER=1, so no Bearer header is needed.
+      - MCP_GATEWAY_URL=http://mcp-gateway:8080/mcp
+      - MCP_GATEWAY_SECRETS_DIR=/mcp-gateway/secrets
     volumes:
       - ./data:/data
       - ./projects:/projects
@@ -34,6 +40,12 @@ services:
       # le groupe `docker` du container, puis `node` y est ajouté.
       # [CRITICAL] accès = root sur l'hôte; cf. Dockerfile.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Docker MCP gateway secrets dir (ADR-0012, 2026-05-10).
+      # KDust écrit ./mcp-gateway/secrets/kdust-mcp.env (mode 0600)
+      # à partir des Secret bindés sur les serveurs MCP, et la
+      # gateway lit le même fichier en read-only via son propre
+      # bind-mount. Côté KDust c'est en read-write.
+      - ./mcp-gateway/secrets:/mcp-gateway/secrets
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
     # In-memory tmpfs where src/lib/ssh/bootstrap.ts materialises the
     # decrypted private keys at boot. mode=0700 + uid/gid=1000 so only
@@ -43,9 +55,67 @@ services:
     # here -- the whole point is to keep keys out of the host fs.
     tmpfs:
       - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
+    depends_on:
+      - mcp-gateway
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # -------------------------------------------------------------------------- #
+  # Docker MCP Gateway (Franck 2026-05-10, ADR-0012).                          #
+  #                                                                            #
+  # Long-lived multiplexer for catalog MCP servers from hub.docker.com/mcp.    #
+  # KDust opens ONE streamable-HTTP MCP Client at boot (instrumentation.ts)    #
+  # and re-exports the discovered tools per-project via                        #
+  # DustMcpServerTransport.                                                    #
+  #                                                                            #
+  # Hardening:                                                                 #
+  #   * `expose: 8080` (no `ports:`) -> reachable only from sibling Compose    #
+  #     services. NEVER add a `ports:` mapping here.                           #
+  #   * `DOCKER_MCP_IN_CONTAINER=1` -> auth bypass on the internal network     #
+  #     (gateway expects Docker Desktop otherwise; we run headless).           #
+  #   * `--block-secrets --verify-signatures` -> default-secure flags.         #
+  #   * Image is signed by Docker; Watchtower auto-updates on the same scope  #
+  #     `kdust-autoupdate` as kdust itself.                                    #
+  #                                                                            #
+  # Active server list is hard-coded in `command:` for V1. To add/remove a    #
+  # server: edit `--servers=...` then `docker compose up -d mcp-gateway`.     #
+  # KDust's MCP Client reconnects automatically and re-runs tools/list.        #
+  #                                                                            #
+  # Secrets are NOT in env: they live in /secrets/kdust-mcp.env (rw on the     #
+  # kdust side, ro on the gateway side) and are loaded via `--secrets=`.       #
+  # See docs/mcp-gateway.md.                                                   #
+  # -------------------------------------------------------------------------- #
+  mcp-gateway:
+    image: docker/mcp-gateway:latest
+    container_name: kdust-mcp-gateway
+    restart: unless-stopped
+    pull_policy: always
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
+    environment:
+      - DOCKER_MCP_IN_CONTAINER=1
+    command:
+      - --transport=streaming
+      - --port=8080
+      - --servers=github-official
+      - --secrets=/secrets/kdust-mcp.env
+      - --block-secrets
+      - --verify-signatures
+      - --log-calls
+    volumes:
+      # Required: the gateway spawns its child MCP containers on the host
+      # daemon (DooD inception, audited in ADR-0012).
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only secrets file, written by KDust at boot and on every
+      # Secret edit. Mode 0600, owned by uid 1000.
+      - ./mcp-gateway/secrets:/secrets:ro
+    expose:
+      - "8080"
+    mem_limit: 1g
+    mem_reservation: 128m
+    cpus: 2.0

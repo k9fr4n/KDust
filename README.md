@@ -1171,3 +1171,139 @@ the generated config (replaces the standalone `/api/ssh-debug`).
   `ssh-keygen -N ""`.
 
 See `docs/ssh-identities.md` for the full operator handbook.
+
+### ADR-0012 — Docker MCP Gateway integration (2026-05-10)
+
+**Status**: Accepted (V1 implemented, UI deferred).
+
+**Date**: 2026-05-10.
+
+**Context**:
+
+Docker Hub publishes a curated catalog of MCP servers
+(`hub.docker.com/mcp`, 1900+ entries via the community registry)
+covering GitHub, Discord, Context7, Brave Search, Postgres, etc.
+KDust today ships only three in-process MCP servers (`fs-cli`,
+`task-runner`, `command-runner`) and has no way to consume any of
+the catalog servers — neither from `/chat` nor from Tasks.
+
+We considered three integration paths:
+
+1. **Proxy-per-image** — KDust spawns one stdio MCP container per
+   server slug, on demand, mirrored as a `DustMcpServerTransport`.
+   Native per-project sandboxing but N spawns per chat, all the
+   sandbox/secret/catalog plumbing on us.
+2. **Community gateway** (`hwdsl2/mcp-gateway`) — plug-and-play but
+   single-maintainer, fixed catalog of 8 servers, no extension
+   path.
+3. **Official `docker/mcp-gateway`** — Docker-published image,
+   `--transport streaming` HTTP endpoint, multiplexes N servers in
+   one process, native flags for sandboxing
+   (`--cpus --memory --block-network --block-secrets
+   --verify-signatures`), supports OCI catalogs and 1900+ community
+   servers. Authentication can be skipped on a private Docker
+   network with `DOCKER_MCP_IN_CONTAINER=1`.
+
+**Decision**:
+
+Adopt option 3 in **HTTP streaming long-lived** mode: a single
+`mcp-gateway` service is added to `docker-compose.yml` next to
+`kdust` and `watchtower`. KDust opens **one** MCP `Client` over
+streamable HTTP at `http://mcp-gateway:8080/mcp` from
+`instrumentation.ts`, lists tools at boot, and re-exports them via
+a new module `src/lib/mcp/gateway-proxy.ts` that creates one
+`DustMcpServerTransport`-backed `McpServer` per project on demand.
+The connection is held by a singleton handle; per-chat / per-run
+acquisition mirrors the existing `getFsServerId` pattern.
+
+The gateway is reachable only on the Compose-internal network
+(`expose: 8080`, no `ports:`). No public ingress, no Bearer auth
+needed for V1.
+
+**Per-project scoping** is enforced in KDust, not in the gateway:
+a new `ProjectMcpToolFilter` row whitelists `(server, tool)` pairs
+per project. Default-deny: an unconfigured project sees zero tools
+even if the gateway exposes them.
+
+**Secret injection** keeps the existing `Secret` model authoritative.
+KDust writes a `0600` env file to a tmpfs-backed bind mount
+(`./mcp-gateway/secrets/kdust-mcp.env`) after resolving each
+`McpServerSecret` row, and the gateway is started with
+`--secrets=/secrets/kdust-mcp.env`. Rotation = re-write the file
++ HUP / restart the gateway.
+
+**V1 scope is one server**: `github-official`, requiring a single
+`GITHUB_PERSONAL_ACCESS_TOKEN` secret. The catalog server `docker`
+is **explicitly excluded** from V1: it exposes a single
+`docker(args: string[])` tool that is an unbounded shell on the
+host docker socket (read host env, dump kdust.db, exec into any
+container) — incompatible with the existing `Secret` /
+`TaskSecret` redaction guarantees. A future ADR will define a
+KDust-managed Docker-introspection MCP tool with a hard-coded
+sub-command whitelist (`ps`, `logs`, `inspect`, `stats`) instead.
+
+Reconfiguring the active server list in V1 is a compose edit
+(`command: --servers=github-official,context7,...`) followed by
+`docker compose up -d mcp-gateway`. A future ADR will introduce
+a Prisma-backed registry.yaml watched by the gateway via `--watch`
+for runtime add/remove without compose churn.
+
+**Consequences**:
+
+*Positive*:
+
+- Unlocks 1900+ community MCP servers behind one stable contract,
+  without writing one proxy module per image.
+- Sandboxing (`--cpus`, `--memory`, `--block-network`,
+  `--verify-signatures`) handled by the gateway, audited by Docker.
+- Adding a new server = `--servers=...` flag edit + secret CRUD,
+  not a code change.
+- Per-project tool filtering remains a first-class KDust concept,
+  consistent with how chat / orchestrator / push pipeline already
+  scope capabilities.
+- No new top-level npm dependency: `@modelcontextprotocol/sdk`
+  already provides `Client` + streamable-HTTP transport.
+
+*Negative*:
+
+- One more long-lived container with `/var/run/docker.sock`
+  mounted. Mitigation: the gateway image is signed by Docker
+  (`--verify-signatures`) and Watchtower auto-updates it on the
+  same `kdust-autoupdate` scope as `kdust` itself.
+- "DooD inception": KDust → docker.sock → mcp-gateway →
+  docker.sock → child MCP containers. Auditable but increases
+  blast radius of a gateway compromise to whatever the gateway
+  spawns. Per-server `--cpus`/`--memory`/`--block-network`
+  defaults applied for V1.
+- Catalog servers requiring OAuth-via-Docker-Desktop are out of
+  scope. Workaround: provide raw tokens via `Secret`. Documented
+  in `docs/mcp-gateway.md`.
+- Secret rotation requires a gateway restart (no live SIGHUP path
+  yet on `--secrets=path`). Acceptable at our scale.
+
+See `docs/mcp-gateway.md` for the operator handbook (compose
+snippet, adding/removing a server, secret rotation, debugging).
+
+**V1 implementation notes (2026-05-10):**
+
+- `McpServerSecret.envName` was renamed to `secretKey` before any
+  `db push` ran; the field semantically holds the gateway-catalog
+  key (e.g. `github.personal_access_token`), not a POSIX env var.
+  The gateway resolves catalog keys to image-side env vars itself.
+- New modules: `src/lib/mcp/gateway-client.ts` (singleton MCP
+  Client over streamable HTTP), `src/lib/mcp/gateway-proxy.ts`
+  (per-project `DustMcpServerTransport`), `src/lib/mcp/gateway-
+  secrets.ts` (writes `${MCP_GATEWAY_SECRETS_DIR}/kdust-mcp.env`
+  at mode 0600 on boot).
+- New API routes: `POST /api/mcp/gateway-ensure`,
+  `GET /api/mcp/gateway-tools`. The chat client folds the new
+  ensure into the existing parallel-ensure flow next to fs-cli
+  and task-runner.
+- The `/settings/mcp` CRUD UI is **NOT** shipped in V1. Operators
+  populate `McpGatewayServer` / `McpServerSecret` /
+  `ProjectMcpToolFilter` via `scripts/seed-mcp-gateway.mjs`. UI
+  follow-up tracked separately.
+- The proxy registers tools with a permissive (empty) input
+  schema — the gateway-side server validates args. A future pass
+  could convert each tool's JSON Schema to a Zod shape for tighter
+  agent-side hints.

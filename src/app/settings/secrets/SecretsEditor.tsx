@@ -132,12 +132,16 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
               <input
                 name="name"
                 required
-                pattern="[a-z][a-z0-9_-]{1,63}"
-                placeholder="github_token"
+                // Mirrors SECRET_NAME_RE in src/lib/secrets/repo.ts.
+                // Case-sensitive on purpose (POSIX-style names like
+                // GITHUB_PAT_MCP are accepted as-is). Franck 2026-05-10.
+                pattern="[A-Za-z][A-Za-z0-9_\-]{1,63}"
+                title="2–64 chars, start with a letter, only A-Z, a-z, 0-9, underscore or dash."
+                placeholder="github_pat or GITHUB_PAT"
                 className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5 font-mono text-sm"
               />
               <span className="block text-xs text-slate-500 mt-1">
-                Lowercase slug, <code>[a-z0-9_-]</code>, 2–64 chars.
+                Slug <code>[A-Za-z0-9_-]</code>, must start with a letter, 2–64 chars (case-sensitive).
               </span>
             </label>
             <label className="block text-sm">

@@ -764,6 +764,11 @@ model Secret {
   lastUsedAt  DateTime?
 
   bindings    TaskSecret[]
+  // ADR-0012: Secrets can also be bound as env vars on Docker MCP
+  // gateway servers. Same Restrict semantics as TaskSecret: you
+  // can't delete a Secret while a McpServerSecret still references
+  // it; the UI must unbind first.
+  mcpBindings McpServerSecret[]
 }
 
 // Per-task env-var -> secret binding. Unique on (taskId, envName)
@@ -847,4 +852,127 @@ model SshIdentity {
   lastUsedAt    DateTime?
 
   @@index([hostPattern])
+}
+
+// ---------------------------------------------------------------
+// Docker MCP Gateway integration (Franck 2026-05-10, ADR-0012).
+//
+// KDust connects to a sibling `mcp-gateway` Compose service over
+// streamable HTTP (http://mcp-gateway:8080/mcp). The gateway
+// multiplexes catalog MCP servers from hub.docker.com/mcp.
+//
+// The DB does NOT store which servers the gateway exposes (that
+// is the gateway's `--servers=...` CLI flag, source of truth =
+// docker-compose.yml). We store:
+//   1. McpGatewayServer  — one row per server slug we know about,
+//      so the UI can list them with metadata (description, image,
+//      enabled-or-not). Servers can be present without being
+//      bound to any project (default-deny).
+//   2. McpServerSecret   — binding between a Secret name and the
+//      env var the gateway must inject for that server. Many-to-
+//      one: a server can need several env vars; a Secret can be
+//      shared across servers (e.g. one PAT used by github-official
+//      AND a hypothetical github-actions server).
+//   3. ProjectMcpToolFilter — per-project whitelist of fully-
+//      qualified tool names ("server.tool"). Default-deny: an
+//      unconfigured project sees zero tools.
+//
+// Filtering is enforced by KDust at registerTool() time when
+// minting the per-project DustMcpServerTransport-backed proxy
+// McpServer (src/lib/mcp/gateway-proxy.ts). It is NOT enforced
+// by the gateway itself, on purpose: the gateway is a single
+// shared multiplexer, oblivious to KDust projects.
+model McpGatewayServer {
+  id          Int      @id @default(autoincrement())
+  // Slug from the Docker MCP catalog (e.g. "github-official",
+  // "context7", "mcp-discord"). Unique. URL-safe and shell-safe.
+  // Must match exactly the `--servers=...` argument passed to the
+  // gateway in docker-compose.yml.
+  slug        String   @unique
+  // Human-friendly label for the UI. Defaults to slug.
+  name        String
+  // Free-form description shown in /settings/mcp. Optional.
+  description String?
+  // Reference to the upstream image (display-only; the gateway
+  // resolves the actual image from the catalog). Useful when an
+  // operator wants to verify on Docker Hub.
+  imageRef    String?
+  // Soft toggle: when false, the proxy ignores the server even
+  // if it is in the gateway's `--servers=...` list and skips it
+  // when minting per-project transports. Lets an operator quickly
+  // disable a misbehaving server without touching compose.
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  secrets     McpServerSecret[]
+  filters     ProjectMcpToolFilter[]
+}
+
+// Per-server secret binding. The KDust boot path
+// (src/lib/mcp/gateway-secrets.ts) walks every enabled server,
+// resolves each binding's Secret.valueEnc, and writes the
+// concatenated KEY=VALUE pairs to ${MCP_GATEWAY_SECRETS_DIR}/
+// kdust-mcp.env (mode 0600). The gateway loads that file via
+// `--secrets=/secrets/kdust-mcp.env`.
+//
+// `secretKey` matches the catalog server's secret declaration
+// (NOT a POSIX env var). The Docker MCP catalog uses a dotted
+// namespace, e.g. `github.personal_access_token` for the
+// github-official server. The gateway maps these keys to the
+// underlying image's env vars itself. Operators must look the
+// expected key on the Docker Hub config tab.
+//
+// Unique on (mcpServerId, secretKey): a server can declare
+// multiple keys, but each key has a single source of truth.
+//
+// onDelete:
+//   - McpGatewayServer: Cascade (drop the server -> drop bindings)
+//   - Secret: Restrict (you can't delete a Secret that's still
+//     bound to a server; UI must unbind first)
+model McpServerSecret {
+  id          Int    @id @default(autoincrement())
+  mcpServerId Int
+  // Catalog secret key (e.g. "github.personal_access_token").
+  // Allowed chars: [A-Za-z0-9_.-], 1..96.
+  secretKey   String
+  // Secret.name (string FK, mirrors TaskSecret pattern).
+  secretName  String
+
+  server McpGatewayServer @relation(fields: [mcpServerId], references: [id], onDelete: Cascade)
+  secret Secret           @relation(fields: [secretName], references: [name], onDelete: Restrict)
+
+  @@unique([mcpServerId, secretKey])
+  @@index([secretName])
+}
+
+// Per-project whitelist of tools. Keyed by project FS path so it
+// stays aligned with how the rest of KDust addresses projects
+// (cf. ADR-0005 "Project addressing"). One row per project +
+// per server. The list of allowed tool names lives as a JSON
+// array of strings (tool short names, NOT prefixed by server slug
+// — the (mcpServerId, projectFsPath) pair already disambiguates).
+//
+// Default-deny: missing row OR empty allowedTools = no tool
+// exposed. This is the inverse of the historical fs-cli/task-
+// runner pattern (which expose everything once enabled), and is
+// intentional given the gateway's broad surface.
+model ProjectMcpToolFilter {
+  id              Int    @id @default(autoincrement())
+  // FS path of the project (e.g. "Perso/fsallet/KDust"). Same
+  // canonical key used everywhere else in the schema.
+  projectFsPath   String
+  mcpServerId     Int
+  // JSON array of allowed tool short names, e.g.
+  //   ["get_file_contents","list_branches","search_code"]
+  // Empty array OR null = nothing allowed for this (project,server)
+  // pair. SQLite stores it as TEXT.
+  allowedTools    String @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  server McpGatewayServer @relation(fields: [mcpServerId], references: [id], onDelete: Cascade)
+
+  @@unique([projectFsPath, mcpServerId])
+  @@index([projectFsPath])
 }

@@ -33,6 +33,10 @@ services:
       # Chemin HÔTE du répertoire projects (résolu par Compose via ${PWD}).
       # Nécessaire pour les montages DooD (-v host_path:container_path).
       - KDUST_HOST_PROJECTS_ROOT=${PWD}/projects
+      # Docker MCP gateway endpoint (ADR-0012, 2026-05-10).
+      # Internal network only — pas d'auth Bearer (DOCKER_MCP_IN_CONTAINER=1).
+      - MCP_GATEWAY_URL=http://mcp-gateway:8080/mcp
+      - MCP_GATEWAY_SECRETS_DIR=/mcp-gateway/secrets
     volumes:
       - ./data:/data
       - ./projects:/projects
@@ -42,16 +46,53 @@ services:
       - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
       # Docker socket — DooD (accès = root sur l'hôte, cf. Dockerfile)
       - /var/run/docker.sock:/var/run/docker.sock
+      # Docker MCP gateway secrets dir (ADR-0012). KDust écrit
+      # ./mcp-gateway/secrets/kdust-mcp.env (mode 0600), la gateway
+      # le lit en ro via son propre bind-mount.
+      - ./mcp-gateway/secrets:/mcp-gateway/secrets
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
     # Cf. docker-compose.yml pour le détail.
     tmpfs:
       - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
+    depends_on:
+      - mcp-gateway
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # -------------------------------------------------------------------------- #
+  # Docker MCP Gateway (Franck 2026-05-10, ADR-0012).                          #
+  # Voir docker-compose.yml pour le commentaire complet.                       #
+  # -------------------------------------------------------------------------- #
+  mcp-gateway:
+    image: docker/mcp-gateway:latest
+    container_name: kdust-mcp-gateway
+    restart: unless-stopped
+    pull_policy: always
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
+    environment:
+      - DOCKER_MCP_IN_CONTAINER=1
+    command:
+      - --transport=streaming
+      - --port=8080
+      - --servers=github-official
+      - --secrets=/secrets/kdust-mcp.env
+      - --block-secrets
+      - --verify-signatures
+      - --log-calls
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./mcp-gateway/secrets:/secrets:ro
+    expose:
+      - "8080"
+    mem_limit: 1g
+    mem_reservation: 128m
+    cpus: 2.0
 
   # -------------------------------------------------------------------------- #
   # Watchtower — mise à jour automatique du conteneur kdust                    #

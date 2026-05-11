@@ -132,6 +132,24 @@ export async function register() {
       );
     }
 
+    // Authenticate gh + glab against the Secret Manager (Franck
+    // 2026-05-11). Reads `GH_TOKEN` / `GITLAB_TOKEN` (+ optional
+    // `GH_HOST` / `GITLAB_HOST`) and runs `gh auth login --with-
+    // token` / `glab auth login --stdin` so any spawned process
+    // (push pipeline, MCP run_command, docker exec) sees an
+    // already-authenticated CLI. Idempotent, best-effort, never
+    // throws — see src/lib/git-cli/bootstrap.ts for the threat
+    // model. Runs BEFORE the scheduler so the very first scheduled
+    // push pipeline already has gh/glab ready.
+    try {
+      const { bootstrapGitCliAuth } = await import('./lib/git-cli/bootstrap');
+      await bootstrapGitCliAuth();
+    } catch (e) {
+      console.error(
+        `[instrumentation] git-cli auth bootstrap crashed: ${(e as Error).message}`,
+      );
+    }
+
     // Boot the task scheduler. Reinstated 2026-04-19 after the Dust
     // billing hold was lifted. reloadScheduler() reads every enabled
     // Task whose `schedule` is a valid cron expression and wires up

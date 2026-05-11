@@ -4,6 +4,13 @@ services:
     image: kdust:local
     container_name: kdust
     restart: unless-stopped
+    # Labels Watchtower : présents en dev pour parité avec docker-compose.prod.yml.
+    # Si tu fais tourner watchtower en local, il ne touchera quand même pas
+    # `kdust:local` (pas de registry distant) — c'est juste pour la cohérence
+    # des labels entre les deux composes.
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
     ports:
       - "3000:3000"
     env_file: .env

@@ -22,11 +22,15 @@ services:
     container_name: kdust
     restart: unless-stopped
     pull_policy: always          # tire la dernière image à chaque `up`
-    # Label Watchtower : ce conteneur sera surveillé et mis à jour automatiquement
+    # Labels Watchtower : ce conteneur sera surveillé et mis à jour automatiquement.
+    # Le `scope` est OBLIGATOIRE : watchtower tourne avec WATCHTOWER_SCOPE=kdust-autoupdate
+    # et ignore tout container qui n'a pas le label `scope` correspondant, même
+    # avec `enable=true` (cf. --label-enable + WATCHTOWER_SCOPE, sémantique AND).
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
     ports:
-      - "3000:3000"
+      - "4000:3000"
     env_file: .env
     environment:
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
@@ -80,7 +84,7 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      - --servers=github-official
+      - --servers=playwright
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
       - --verify-signatures

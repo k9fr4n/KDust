@@ -12,6 +12,8 @@ Web UI perso
 - [`docs/task-runner.md`](docs/task-runner.md) — task-runner MCP server
   (`enqueue_followup` and the decoupled chain model, ADR-0008): prompt
   patterns, passing data between tasks, invariants, troubleshooting.
+- [`docs/git-cli-auth.md`](docs/git-cli-auth.md) — boot-time `gh` /
+  `glab` authentication via the Secret Manager (ADR-0015).
 
 ## Features
 
@@ -1487,3 +1489,63 @@ made the window for a clean break (no rollback path needed) optimal.
   unchanged in nature (Tasks were already covered) and acceptable
   given the alternative (two parallel key managements with worse
   ergonomics).
+
+### ADR-0015 — Boot-time `gh` / `glab` authentication (2026-05-11)
+
+**Status**: Accepted.
+
+**Context**. Several flows need the GitHub / GitLab CLIs to be
+ready to use without bespoke per-task wiring:
+
+- The push pipeline (PR/MR opening, soon).
+- Agents in the chat that shell out via `fs_cli__run_command`
+  (e.g. `gh pr view 42`, `glab mr list`).
+- Manual `docker exec` operator workflows.
+
+Until now both CLIs were installed in the image but unauthenticated.
+Every caller had to inject a `GH_TOKEN` / `GITLAB_TOKEN` env var on
+the fly, which (a) leaked the token to argv-readers inside the
+container, (b) required each Task to bind a `TaskSecret` even for
+read-only operations, and (c) made the chat surface unusable for
+GitHub/GitLab queries without a dedicated MCP wrapper.
+
+The Secret Manager (ADR-0014) already holds the same PATs the push
+pipeline uses. Reusing them at boot is one DB read + one stdin
+pipe per CLI.
+
+**Decision**:
+
+1. Add `src/lib/git-cli/bootstrap.ts` exposing
+   `bootstrapGitCliAuth()`. Reads `GH_TOKEN`, `GH_HOST`,
+   `GITLAB_TOKEN`, `GITLAB_HOST` from the `Secret` table.
+2. Hook it into `src/instrumentation.ts` **before** the scheduler
+   so the first scheduled push pipeline already sees an
+   authenticated CLI.
+3. Tokens are piped on stdin to `gh auth login --with-token` and
+   `glab auth login --stdin`. Argv stays free of secrets.
+4. Each decrypted token is registered with the log-buffer
+   redactor before invoking the CLI.
+5. Missing token Secret → silent skip. Missing host Secret → fall
+   back to `github.com` / `gitlab.com`. Bootstrap never throws.
+6. v1 is stateless: no volume, the CLIs are re-authenticated on
+   every boot.
+
+**Consequences**:
+
+- New operator setup step: create `GH_TOKEN` / `GITLAB_TOKEN`
+  (and host overrides as needed) in `/settings/secrets`, then
+  restart the container.
+- The chat surface gains usable `gh` / `glab` commands without a
+  new MCP server (`fs_cli__run_command` is already exposed to dev
+  agents). For less-privileged future agents, a dedicated
+  allow-listed MCP wrapper remains a v2 option.
+- The push pipeline’s credential helper path (ADR-0014) is
+  untouched. Unifying `gh auth setup-git` with the existing
+  helper is intentionally deferred.
+- A single host per CLI in v1. Multi-host (`github.com` +
+  `github.ecritel.com` simultaneously) is a v2 deferred to first
+  concrete demand.
+- Container restart is required to pick up a `GH_TOKEN` rotation;
+  the instrumentation hook does not hot-reload.
+- New file under `src/lib/git-cli/`. No schema change. No new
+  dependency.

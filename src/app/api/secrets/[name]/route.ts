@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { errMessage, errCode } from '@/lib/errors';
 import {
   deleteSecret,
+  renameSecret,
   updateSecretDescription,
   updateSecretValue,
 } from '@/lib/secrets/repo';
@@ -19,14 +20,24 @@ import { badRequest, conflict, notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
+// PUT accepts any subset of {name, value, description}. `name` is
+// a rename and propagates via Prisma's onUpdate: Cascade to every
+// TaskSecret / McpServerSecret binding. Order of application below
+// is: value (privileged rotation), then description, then rename
+// last — so a partial failure on rename does not leave a half-
+// rotated secret in an inconsistent state.
 const UpdateSchema = z
   .object({
+    name: z.string().min(2).max(64).optional(),
     value: z.string().min(1).optional(),
     description: z.string().max(256).nullable().optional(),
   })
-  .refine((d) => d.value !== undefined || d.description !== undefined, {
-    message: 'At least one of value/description must be provided',
-  });
+  .refine(
+    (d) => d.name !== undefined || d.value !== undefined || d.description !== undefined,
+    {
+      message: 'At least one of name/value/description must be provided',
+    },
+  );
 
 export async function PUT(
   req: Request,
@@ -56,10 +67,19 @@ export async function PUT(
     if (parsed.data.description !== undefined) {
       await updateSecretDescription(name, parsed.data.description);
     }
-    return NextResponse.json({ ok: true });
+    if (parsed.data.name !== undefined && parsed.data.name !== name) {
+      await renameSecret(name, parsed.data.name);
+    }
+    return NextResponse.json({ ok: true, name: parsed.data.name ?? name });
   } catch (e: unknown) {
     if (errCode(e) === 'P2025') {
       return notFound(`Secret "${name}" not found`);
+    }
+    // Unique-constraint on the new name during a rename.
+    if (errCode(e) === 'P2002') {
+      return conflict(
+        `A secret named "${parsed.data.name ?? name}" already exists.`,
+      );
     }
     return NextResponse.json(
       { error: (errMessage(e) || 'Failed to update secret') },

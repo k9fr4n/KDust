@@ -16,7 +16,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { KeyRound, Plus, RefreshCcw, Trash2, X } from 'lucide-react';
+import { KeyRound, Pencil, Plus, RefreshCcw, Trash2, X } from 'lucide-react';
 
 export interface SecretDtoSerialized {
   id: number;
@@ -33,6 +33,7 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [rotating, setRotating] = useState<string | null>(null); // secret name being rotated
+  const [editing, setEditing] = useState<string | null>(null); // secret name being renamed / re-described
   const [, startTransition] = useTransition();
 
   async function onCreate(form: FormData) {
@@ -53,6 +54,27 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
       return;
     }
     setCreating(false);
+    startTransition(() => router.refresh());
+  }
+
+  async function onEdit(oldName: string, newName: string, description: string | null) {
+    setError(null);
+    // Only send fields that actually change so a no-op submit is a
+    // no-op on the server too. `description` is sent unconditionally
+    // because clearing it (null) is a legitimate edit.
+    const payload: { name?: string; description?: string | null } = { description };
+    if (newName !== oldName) payload.name = newName;
+    const res = await fetch(`/api/secrets/${encodeURIComponent(oldName)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setError(j.error ?? `HTTP ${res.status}`);
+      return;
+    }
+    setEditing(null);
     startTransition(() => router.refresh());
   }
 
@@ -217,6 +239,62 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
                     {s.description}
                   </p>
                 )}
+                {editing === s.name && (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const f = new FormData(e.currentTarget);
+                      const newName = String(f.get('name') ?? '').trim();
+                      const desc = String(f.get('description') ?? '').trim();
+                      void onEdit(s.name, newName, desc || null);
+                    }}
+                    className="mt-3 space-y-2"
+                  >
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <label className="block text-xs">
+                        <span className="block font-medium mb-1">Name</span>
+                        <input
+                          name="name"
+                          required
+                          defaultValue={s.name}
+                          autoFocus
+                          pattern="[A-Za-z][A-Za-z0-9_\-]{1,63}"
+                          title="2–64 chars, start with a letter, only A-Z, a-z, 0-9, underscore or dash."
+                          className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5 font-mono text-xs"
+                        />
+                      </label>
+                      <label className="block text-xs">
+                        <span className="block font-medium mb-1">Description</span>
+                        <input
+                          name="description"
+                          maxLength={256}
+                          defaultValue={s.description ?? ''}
+                          className="w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5 text-xs"
+                        />
+                      </label>
+                    </div>
+                    {s.boundTaskCount > 0 && (
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        Renaming will propagate to {s.boundTaskCount} task binding{s.boundTaskCount === 1 ? '' : 's'}. Code that looks up this secret by hard-coded name (e.g. push pipeline or git-cli bootstrap) must be updated separately.
+                      </p>
+                    )}
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setEditing(null)}
+                        className="px-2 py-1 text-xs text-slate-600 dark:text-slate-400"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="rounded-md bg-brand-600 hover:bg-brand-700 text-white px-2 py-1 text-xs font-medium"
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </form>
+                )}
                 {rotating === s.name && (
                   <form
                     onSubmit={(e) => {
@@ -256,7 +334,20 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button
-                  onClick={() => setRotating(rotating === s.name ? null : s.name)}
+                  onClick={() => {
+                    setRotating(null);
+                    setEditing(editing === s.name ? null : s.name);
+                  }}
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  title="Rename or change description"
+                >
+                  <Pencil size={12} /> Edit
+                </button>
+                <button
+                  onClick={() => {
+                    setEditing(null);
+                    setRotating(rotating === s.name ? null : s.name);
+                  }}
                   className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40"
                   title="Replace the value"
                 >

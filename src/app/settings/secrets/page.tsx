@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { listSecrets } from '@/lib/secrets/repo';
 import { SecretsEditor } from './SecretsEditor';
+import { GitCliStatus } from './GitCliStatus';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,7 @@ export default async function SecretsPage() {
           API and never reach the agent’s prompt.
         </p>
       </header>
+      <GitCliStatus />
       <SecretsEditor initial={secrets.map((s) => ({
         ...s,
         createdAt: s.createdAt.toISOString(),

@@ -528,7 +528,12 @@ function ChatPageInner({
           setGatewayServerId(gwRes.value.j.serverId);
         } else {
           setGatewayServerId(null);
-          console.warn('[chat] gateway MCP ensure failed; catalog tools unavailable');
+          // Distinguish "no whitelisted tools" (legitimate skip,
+          // silent) from an actual ensure failure (warn).
+          const skipped =
+            gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.skipped;
+          if (!skipped)
+            console.warn('[chat] gateway MCP ensure failed; catalog tools unavailable');
         }
       } else {
         setMcpServerId(null);
@@ -666,7 +671,10 @@ function ChatPageInner({
           if (gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.serverId) {
             setGatewayServerId(gwRes.value.j.serverId);
           } else {
-            console.warn('[chat] gateway MCP ensure failed at mount; chat will run without gateway tools');
+            const skipped =
+              gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.skipped;
+            if (!skipped)
+              console.warn('[chat] gateway MCP ensure failed at mount; chat will run without gateway tools');
           }
         }
       })

@@ -128,6 +128,39 @@ export async function updateSecretDescription(
 }
 
 /**
+ * Rename a secret. Prisma's default `onUpdate: Cascade` on the
+ * Secret <- TaskSecret and Secret <- McpServerSecret foreign keys
+ * propagates the new name to every dependent row in a single
+ * statement, so binding integrity is preserved.
+ *
+ * No-op when `oldName === newName`. Throws if `newName` already
+ * exists (unique constraint) or if `oldName` does not exist.
+ *
+ * Note for operators: secret names used by hard-coded lookups
+ * (e.g. `GH_TOKEN` in src/lib/git-cli/bootstrap.ts) WILL break
+ * after a rename. Rename only secrets you reference by their
+ * `TaskSecret` binding.
+ */
+export async function renameSecret(
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  validateSecretName(oldName);
+  validateSecretName(newName);
+  if (oldName === newName) return;
+  // The update is atomic; the FK cascade is guaranteed by Prisma
+  // schema defaults. Wrapped in a transaction so a future addition
+  // of post-update side-effects keeps the same all-or-nothing
+  // semantics.
+  await db.$transaction(async (tx) => {
+    await tx.secret.update({
+      where: { name: oldName },
+      data: { name: newName },
+    });
+  });
+}
+
+/**
  * Delete a secret. Refuses if bindings exist and `force` is false.
  * When `force=true`, drops bindings first — any tasks that referenced
  * the secret will SILENTLY LOSE the env on their next run, so callers

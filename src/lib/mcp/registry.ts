@@ -308,12 +308,19 @@ export async function releaseCommandRunnerServer(runId: string): Promise<void> {
 /*  Dust, mirroring the fs-cli pattern.                                       */
 /* -------------------------------------------------------------------------- */
 
-export async function getGatewayServerId(projectFsPath: string): Promise<string> {
+export async function getGatewayServerId(
+  projectFsPath: string,
+): Promise<string | null> {
   const existing = gatewayCache.get(projectFsPath);
   if (existing) {
     try {
       const handle = await existing;
       if (handle.serverId) return handle.serverId;
+      // Cached "no-tools" sentinel: drop it so a whitelist update
+      // is picked up on the next ensure call (cheap: one small DB
+      // query). Without this, operators would have to force-evict
+      // after enabling tools for a project.
+      gatewayCache.delete(projectFsPath);
     } catch {
       gatewayCache.delete(projectFsPath);
     }
@@ -335,7 +342,7 @@ export async function releaseGatewayServer(projectFsPath: string): Promise<void>
   if (!entry) return;
   try {
     const handle = await entry;
-    await handle.transport.close().catch(() => {});
+    await handle.transport?.close().catch(() => {});
   } catch {
     /* ignore */
   }

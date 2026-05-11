@@ -57,9 +57,18 @@ import { errMessage } from '../errors';
 
 export interface GatewayProxyHandle {
   projectFsPath: string;
-  serverId: string;
-  server: McpServer;
-  transport: DustMcpServerTransport;
+  /**
+   * Dust-side MCP server id. `null` when the project has zero
+   * whitelisted gateway tools — in that case no proxy McpServer
+   * is instantiated and no SSE transport is opened, to avoid
+   * holding an idle connection that would emit periodic
+   * reconnect noise (Franck 2026-05-11).
+   */
+  serverId: string | null;
+  server: McpServer | null;
+  transport: DustMcpServerTransport | null;
+  /** Reason for a null serverId, for upstream API responses. */
+  skipped?: 'no-tools';
 }
 
 type ServerWithTransport = McpServer & { __transport?: DustMcpServerTransport };
@@ -158,13 +167,32 @@ export async function startGatewayProxy(
   const dust = await getDustClient();
   if (!dust) throw new Error('Dust client not available (login required)');
 
+  const allowed = await resolveAllowedToolNames(projectFsPath);
+
+  // Short-circuit when this project has no whitelisted gateway
+  // tools: a proxy registered with zero tools still opens a
+  // long-lived SSE transport to Dust that periodically reconnects
+  // (~5 min idle timeout), spamming logs with "SSE connection
+  // error". Skip the registration entirely. Franck 2026-05-11.
+  if (allowed.size === 0) {
+    console.log(
+      `[mcp/gateway-proxy] project="${projectFsPath}" no tools whitelisted — skipping proxy registration`,
+    );
+    return {
+      projectFsPath,
+      serverId: null,
+      server: null,
+      transport: null,
+      skipped: 'no-tools',
+    };
+  }
+
   const tools = await listGatewayTools().catch((e) => {
     console.warn(
       `[mcp/gateway-proxy] listGatewayTools failed for project="${projectFsPath}": ${errMessage(e)} — starting empty proxy`,
     );
     return [];
   });
-  const allowed = await resolveAllowedToolNames(projectFsPath);
 
   // Declare the `tools` capability up-front so a project with zero
   // whitelisted tools still answers tools/list with [] cleanly,
@@ -254,8 +282,22 @@ export async function startGatewayProxy(
     );
     transport.onerror = (err: unknown) => {
       const msg =
-        err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-      if (!msg || /No activity within \d+ milliseconds/i.test(msg)) return;
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : '';
+      // Filter known idle/reconnect noise. Dust closes the SSE
+      // after its idle window and the SDK reconnects on the next
+      // tool call; logging each drop adds zero signal and floods
+      // the log buffer (Franck 2026-05-11).
+      if (
+        !msg ||
+        /No activity within \d+ milliseconds|SSE connection error|terminated|fetch failed|ECONNRESET|socket hang up/i.test(
+          msg,
+        )
+      )
+        return;
       console.warn(
         `[mcp/gateway-proxy] transport error project="${projectFsPath}": ${msg}`,
       );

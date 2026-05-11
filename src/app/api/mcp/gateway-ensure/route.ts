@@ -45,6 +45,20 @@ export async function POST(req: Request) {
       await invalidateGatewayClient();
     }
     const serverId = await getGatewayServerId(projectFsPath);
+    if (serverId === null) {
+      // Project has no whitelisted gateway tools — no proxy was
+      // registered. Surfacing a distinct shape lets the client
+      // skip adding a non-existent serverId to mcpServerIds and
+      // avoid the misleading "ensure failed" warning.
+      console.log(
+        `[api/mcp/gateway-ensure] no-tools project="${projectFsPath}" — skipped`,
+      );
+      return NextResponse.json({
+        serverId: null,
+        projectFsPath,
+        skipped: 'no-tools',
+      });
+    }
     console.log(
       `[api/mcp/gateway-ensure] serverId=${serverId} project="${projectFsPath}"`,
     );

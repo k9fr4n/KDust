@@ -57,9 +57,19 @@ export async function getGatewayClient(): Promise<GatewayHandle> {
       { capabilities: {} },
     );
     transport.onerror = (err) => {
-      console.warn(
-        `[mcp/gateway-client] transport error url=${url}: ${err?.message ?? err}`,
-      );
+      const msg = err?.message ?? String(err ?? '');
+      // The gateway / undici close the idle GET stream every few
+      // minutes; the SDK reconnects on the next request. Don't
+      // log those structural drops — they carry no signal and
+      // were flooding the log buffer (Franck 2026-05-11).
+      if (
+        !msg ||
+        /terminated|SSE stream disconnected|fetch failed|ECONNRESET|socket hang up|aborted/i.test(
+          msg,
+        )
+      )
+        return;
+      console.warn(`[mcp/gateway-client] transport error url=${url}: ${msg}`);
     };
     await client.connect(transport);
     console.log(`[mcp/gateway-client] connected url=${url}`);

@@ -58,6 +58,35 @@ import { resolveRunTimeoutMs } from '../timeout';
 import { registerActiveRun, unregisterActiveRun } from '../registry';
 import type { NotifyFn } from '../notify';
 
+/**
+ * Format a Date in the given IANA timezone as
+ * "YYYY-MM-DD HH:mm:ss <tz>". Uses the `sv-SE` locale because it
+ * produces an ISO-like ordering with `-` and `:` separators
+ * (en-CA / en-GB give similar but slightly different shapes;
+ * sv-SE is the established "ISO-ish locale" trick).
+ *
+ * Falls back to `toISOString()` if `Intl.DateTimeFormat` throws on
+ * an invalid timezone — defensive against a future hand-edited row
+ * slipping through validation.
+ */
+function formatLocalTimestamp(d: Date, tz: string): string {
+  try {
+    const s = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(d);
+    return `${s} ${tz}`;
+  } catch {
+    return d.toISOString();
+  }
+}
+
 export interface RunAgentArgs {
   /** TaskRun id used for live-flush updates and abort registry. */
   runId: string;
@@ -80,6 +109,14 @@ export interface RunAgentArgs {
     // Per-task wall-clock cap; null = inherit AppConfig default.
     maxRuntimeMs: number | null;
     commandRunnerEnabled: boolean;
+    /**
+     * IANA timezone of the task (Task.timezone, NOT NULL, default
+     * "Europe/Paris"). Used to format the human-facing timestamp
+     * embedded in the Dust conversation title — `toISOString()`
+     * was misleading because it always rendered UTC even though
+     * the schedule and the user's mental model are local.
+     */
+    timezone: string;
   };
   /** Effective prompt: opts.promptOverride ?? job.prompt. */
   effectivePrompt: string;
@@ -122,7 +159,14 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
   // (Franck 2026-04-21 11:44): the marker was redundant — KDust
   // conversations are already filterable by their origin=cli tag
   // and the noise polluted the Dust conversation list.
-  const convTitle = `${job.name} @ ${new Date().toISOString()}`;
+  //
+  // Timestamp formatted in the task's local timezone (Franck
+  // 2026-05-11): `toISOString()` rendered UTC, which contradicted
+  // both the schedule (interpreted in Task.timezone) and the
+  // user's mental model. `sv-SE` locale yields an ISO-like
+  // "YYYY-MM-DD HH:mm:ss" shape; we suffix the IANA name to keep
+  // the title self-describing across multi-TZ deployments.
+  const convTitle = `${job.name} @ ${formatLocalTimestamp(new Date(), job.timezone)}`;
   // Enrich the prompt with the KDust automation-context footer when
   // pushEnabled is true. When false, send the prompt as-is (see
   // buildAutomationPrompt above). Per Franck 2026-04-19 00:36.

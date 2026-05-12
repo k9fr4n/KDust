@@ -1812,7 +1812,7 @@ function ChatPageInner({
 
           {streamedText && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-base bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 break-words min-w-0 overflow-hidden">
+              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-[15px] bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 break-words min-w-0 overflow-hidden">
                 <MessageMarkdown tone="agent">{streamedText}</MessageMarkdown>
                 <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
               </div>

@@ -464,12 +464,22 @@ export async function runTask(
     // ADR-0008), command-runner (when commandRunnerEnabled).
     // Each registration's failure mode is identical: warn-and-
     // continue, never abort.
+    // ADR-0016: pre-fetch skill bindings here so setup-mcp stays
+    // DB-free. Empty result = skills MCP server not registered at
+    // all for this run.
+    const taskSkillRows = await db.taskSkill.findMany({
+      where: { taskId: job.id },
+      select: { skillName: true },
+    });
+    const taskSkills = taskSkillRows.map((r) => r.skillName);
+
     const mcpServerIds = await runSetupMcp({
       projectFsPath,
       runId: run.id,
       job: {
         commandRunnerEnabled: job.commandRunnerEnabled,
       },
+      taskSkills,
       setPhase,
     });
 

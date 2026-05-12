@@ -27,6 +27,13 @@
 //      per task via job.commandRunnerEnabled. Lazily imported
 //      so the runtime cost is paid only by tasks that need it.
 //
+//   4. skills (Franck 2026-05-12, ADR-0016). Registered ONLY when
+//      the task has at least one TaskSkill binding. The bindings
+//      are passed in via `taskSkills` (caller pre-fetched them so
+//      this phase stays DB-free); the server enforces a strict
+//      allow-list. If the list is empty, the server is not
+//      registered at all so the agent sees no skills for that run.
+//
 // Failure model:
 //   Each registration is wrapped in its own try/catch — a failure
 //   on the optional servers must not prevent the others from
@@ -53,6 +60,13 @@ export interface SetupMcpArgs {
   job: {
     commandRunnerEnabled: boolean;
   };
+  /**
+   * Names of skills bound to this Task (TaskSkill.skillName values).
+   * Pre-fetched by the caller so this phase stays DB-free. Empty
+   * array (or omitted) means the skills server is NOT registered
+   * for this run. ADR-0016.
+   */
+  taskSkills?: ReadonlyArray<string>;
   /** Phase setter bound to this TaskRun. */
   setPhase: (phase: RunPhase, message: string) => Promise<unknown>;
 }
@@ -66,7 +80,7 @@ export interface SetupMcpArgs {
 export async function runSetupMcp(
   args: SetupMcpArgs,
 ): Promise<string[] | null> {
-  const { projectFsPath, runId, job, setPhase } = args;
+  const { projectFsPath, runId, job, taskSkills, setPhase } = args;
   await setPhase('mcp', 'Registering fs-cli MCP server');
   let mcpServerIds: string[] | null = null;
 
@@ -105,6 +119,23 @@ export async function runSetupMcp(
       console.log(`[cron] command-runner serverId=${crId}`);
     } catch (e) {
       console.warn(`[cron] command-runner register failed: ${(e as Error).message}`);
+    }
+  }
+
+  // skills (Franck 2026-05-12, ADR-0016). Registered ONLY when the
+  // Task has at least one TaskSkill binding. The server enforces
+  // the allow-list at every tool call. Lazily imported so tasks
+  // without skills pay no startup cost.
+  if (taskSkills && taskSkills.length > 0) {
+    try {
+      const { getSkillsServerId } = await import('../../../mcp/registry');
+      const skId = await getSkillsServerId(runId, projectFsPath, taskSkills);
+      mcpServerIds = [...(mcpServerIds ?? []), skId];
+      console.log(
+        `[cron] skills serverId=${skId} allowed=[${taskSkills.join(',')}]`,
+      );
+    } catch (e) {
+      console.warn(`[cron] skills register failed: ${(e as Error).message}`);
     }
   }
 

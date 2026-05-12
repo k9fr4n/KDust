@@ -34,18 +34,21 @@ vi.mock('../../../../mcp/registry', () => ({
   getFsServerId: vi.fn(),
   getTaskRunnerServerId: vi.fn(),
   getCommandRunnerServerId: vi.fn(),
+  getSkillsServerId: vi.fn(),
 }));
 
 import {
   getFsServerId,
   getTaskRunnerServerId,
   getCommandRunnerServerId,
+  getSkillsServerId,
 } from '../../../../mcp/registry';
 import { runSetupMcp } from '../setup-mcp';
 
 const mockedGetFs = getFsServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetTr = getTaskRunnerServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCr = getCommandRunnerServerId as unknown as ReturnType<typeof vi.fn>;
+const mockedGetSk = getSkillsServerId as unknown as ReturnType<typeof vi.fn>;
 
 function makeArgs(overrides: Partial<Parameters<typeof runSetupMcp>[0]> = {}) {
   const setPhase = vi.fn().mockResolvedValue(undefined);
@@ -66,6 +69,7 @@ describe('runSetupMcp', () => {
     mockedGetFs.mockReset();
     mockedGetTr.mockReset();
     mockedGetCr.mockReset();
+    mockedGetSk.mockReset();
   });
 
   // --- happy paths --------------------------------------------------------
@@ -98,6 +102,58 @@ describe('runSetupMcp', () => {
     // shape across runs.
     expect(r).toEqual(['fs_id', 'tr_id', 'cr_id']);
     expect(mockedGetCr).toHaveBeenCalledWith('run_42', 'clients/acme/web');
+  });
+
+  // --- skills (ADR-0016) --------------------------------------------------
+
+  it('does NOT register skills when taskSkills is empty/omitted', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    const { args } = makeArgs();
+    const r = await runSetupMcp(args);
+    expect(r).toEqual(['fs_id', 'tr_id']);
+    expect(mockedGetSk).not.toHaveBeenCalled();
+  });
+
+  it('registers skills with allow-list when taskSkills is non-empty', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    const { args } = makeArgs({
+      taskSkills: ['caesar-cipher', 'seo-audit'],
+    });
+    const r = await runSetupMcp(args);
+    // Order: fs, task-runner, command-runner, skills.
+    expect(r).toEqual(['fs_id', 'tr_id', 'sk_id']);
+    expect(mockedGetSk).toHaveBeenCalledWith(
+      'run_42',
+      'clients/acme/web',
+      ['caesar-cipher', 'seo-audit'],
+    );
+  });
+
+  it('registers skills AFTER command-runner when both are active', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetCr.mockResolvedValueOnce('cr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    const { args } = makeArgs({
+      job: { commandRunnerEnabled: true },
+      taskSkills: ['caesar-cipher'],
+    });
+    const r = await runSetupMcp(args);
+    expect(r).toEqual(['fs_id', 'tr_id', 'cr_id', 'sk_id']);
+  });
+
+  it('skills failure is non-fatal (run proceeds without skills)', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockRejectedValueOnce(new Error('skills registry down'));
+    const { args } = makeArgs({
+      taskSkills: ['caesar-cipher'],
+    });
+    const r = await runSetupMcp(args);
+    expect(r).toEqual(['fs_id', 'tr_id']);
   });
 
   // --- failure isolation --------------------------------------------------

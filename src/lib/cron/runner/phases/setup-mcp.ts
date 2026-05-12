@@ -27,6 +27,14 @@
 //      per task via job.commandRunnerEnabled. Lazily imported
 //      so the runtime cost is paid only by tasks that need it.
 //
+//   4. skills (Franck 2026-05-12, ADR-0016). Always registered.
+//      The skills catalogue is filesystem-first (under git review
+//      in /app/skills) and the agent picks what it needs via the
+//      `list_skills` tool description; there is no per-Task
+//      allow-list. Pattern is symmetric to fs-cli and
+//      task-runner. Failure is non-fatal: the run proceeds
+//      without the skills tool surface.
+//
 // Failure model:
 //   Each registration is wrapped in its own try/catch — a failure
 //   on the optional servers must not prevent the others from
@@ -106,6 +114,20 @@ export async function runSetupMcp(
     } catch (e) {
       console.warn(`[cron] command-runner register failed: ${(e as Error).message}`);
     }
+  }
+
+  // skills (Franck 2026-05-12, ADR-0016). Always registered, like
+  // fs-cli and task-runner. The skills catalogue lives on disk
+  // under /app/skills (filesystem-first, under git review); the
+  // agent picks the right one via list_skills + read_skill.
+  // Failure is non-fatal.
+  try {
+    const { getSkillsServerId } = await import('../../../mcp/registry');
+    const skId = await getSkillsServerId(runId, projectFsPath);
+    mcpServerIds = [...(mcpServerIds ?? []), skId];
+    console.log(`[cron] skills serverId=${skId}`);
+  } catch (e) {
+    console.warn(`[cron] skills register failed: ${(e as Error).message}`);
   }
 
   return mcpServerIds;

@@ -34,18 +34,21 @@ vi.mock('../../../../mcp/registry', () => ({
   getFsServerId: vi.fn(),
   getTaskRunnerServerId: vi.fn(),
   getCommandRunnerServerId: vi.fn(),
+  getSkillsServerId: vi.fn(),
 }));
 
 import {
   getFsServerId,
   getTaskRunnerServerId,
   getCommandRunnerServerId,
+  getSkillsServerId,
 } from '../../../../mcp/registry';
 import { runSetupMcp } from '../setup-mcp';
 
 const mockedGetFs = getFsServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetTr = getTaskRunnerServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCr = getCommandRunnerServerId as unknown as ReturnType<typeof vi.fn>;
+const mockedGetSk = getSkillsServerId as unknown as ReturnType<typeof vi.fn>;
 
 function makeArgs(overrides: Partial<Parameters<typeof runSetupMcp>[0]> = {}) {
   const setPhase = vi.fn().mockResolvedValue(undefined);
@@ -66,6 +69,12 @@ describe('runSetupMcp', () => {
     mockedGetFs.mockReset();
     mockedGetTr.mockReset();
     mockedGetCr.mockReset();
+    mockedGetSk.mockReset();
+    // ADR-0016: skills is always registered. Default to a
+    // rejection so legacy tests that don't care about skills see
+    // its (non-fatal) failure and assert on the same array shape
+    // as before. Tests that DO care override per-call.
+    mockedGetSk.mockRejectedValue(new Error('skills mock not configured'));
   });
 
   // --- happy paths --------------------------------------------------------
@@ -98,6 +107,38 @@ describe('runSetupMcp', () => {
     // shape across runs.
     expect(r).toEqual(['fs_id', 'tr_id', 'cr_id']);
     expect(mockedGetCr).toHaveBeenCalledWith('run_42', 'clients/acme/web');
+  });
+
+  // --- skills (ADR-0016) --------------------------------------------------
+
+  it('always registers skills (no per-task gating)', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    const { args } = makeArgs();
+    const r = await runSetupMcp(args);
+    // Order: fs, task-runner, skills (command-runner skipped by default).
+    expect(r).toEqual(['fs_id', 'tr_id', 'sk_id']);
+    expect(mockedGetSk).toHaveBeenCalledWith('run_42', 'clients/acme/web');
+  });
+
+  it('registers skills AFTER command-runner when both are active', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetCr.mockResolvedValueOnce('cr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    const { args } = makeArgs({ job: { commandRunnerEnabled: true } });
+    const r = await runSetupMcp(args);
+    expect(r).toEqual(['fs_id', 'tr_id', 'cr_id', 'sk_id']);
+  });
+
+  it('skills failure is non-fatal (run proceeds without skills)', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockRejectedValueOnce(new Error('skills registry down'));
+    const { args } = makeArgs();
+    const r = await runSetupMcp(args);
+    expect(r).toEqual(['fs_id', 'tr_id']);
   });
 
   // --- failure isolation --------------------------------------------------

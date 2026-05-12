@@ -36,6 +36,12 @@ services:
     volumes:
       - ./data:/data
       - ./projects:/projects
+      # Skills library (Franck 2026-05-12, ADR-0016).
+      # Filesystem-first reusable agent capabilities. Bound
+      # read-only: agents can list / read / execute scripts under
+      # /app/skills/<name>/ but cannot mutate the catalogue.
+      # Authoring happens host-side via git in ./skills/.
+      - ./skills:/app/skills:ro
       # Clefs SSH de l'hôte en read-only. L'entrypoint les copie ensuite
       # dans /home/kdust/.ssh avec les bonnes perms / ownership.
       - ${HOME}/.ssh:/host-ssh:ro

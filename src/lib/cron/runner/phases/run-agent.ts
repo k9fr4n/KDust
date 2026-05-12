@@ -154,6 +154,13 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
     notify,
   } = args;
 
+  // ADR-0016: skill discovery is uniform across task and chat
+  // mode -- the agent calls list_skills via the skills MCP server
+  // (registered by setup-mcp when TaskSkill has any binding).
+  // No catalogue injection in the prompt; the tool description on
+  // list_skills is what cues the agent to call it. Matches the
+  // existing task-runner pattern (list_tasks).
+
   await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
   // Conversation title shown in the Dust UI. No "[cron]" prefix
   // (Franck 2026-04-21 11:44): the marker was redundant — KDust

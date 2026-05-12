@@ -1549,3 +1549,157 @@ pipe per CLI.
   the instrumentation hook does not hot-reload.
 - New file under `src/lib/git-cli/`. No schema change. No new
   dependency.
+
+### ADR-0016 — Skills library (2026-05-12)
+
+**Status**: Proposed.
+
+**Context**. KDust agents repeatedly need the same domain-specific
+know-how: "how do I encrypt with Caesar cipher", "how do I run a
+SEO audit on a static site", "how do I draft a Teams release
+note". Today this knowledge is duplicated across Task prompts,
+agent system messages, and operator notes. There is no reusable
+unit, no progressive disclosure, no way to ship a capability
+("here is a script that does X, here is the markdown that
+explains when to use it") as a single artifact.
+
+Anthropic's "Agent Skills" pattern (also adopted by skills.sh)
+solves this with a filesystem layout: one directory per skill,
+each containing a `SKILL.md` with frontmatter (`name`,
+`description`) plus a body and optional `references/` and
+`scripts/` sub-folders. The agent discovers skills via a tool
+catalogue, drills down into the body when relevant, reads
+references on demand, and executes scripts when needed.
+
+Three implementation shapes were considered:
+
+1. **Dust-only** — inject the catalogue + full bodies into the
+   prompt; expose resources via the existing `fs` MCP server
+   extended with a second read-only root; reuse `command-runner`
+   for script execution. Smaller code footprint (~210 LOC), but
+   dispersed across the prompt builder, `fs-tools.ts`, and
+   `command-runner`; no script execution in `/chat` because
+   `command-runner` is task-scoped by design; modifies a shared
+   `fs` module so any regression blast-radius is large.
+
+2. **Hybrid** — inject the catalogue, extend `fs` for resources,
+   add a single MCP tool for execution. Splits the skill domain
+   across two MCP kinds and one prompt hook.
+
+3. **Dedicated `skills` MCP server** — one new server kind exposing
+   four tools (`list_skills`, `read_skill`, `read_skill_resource`,
+   `run_skill_script`). The skill domain lives in one module, the
+   blast-radius of any change is confined, and the script
+   execution path is available identically in `/chat` and in
+   TaskRuns. Discovery is delegated to `list_skills` (no
+   system-prompt injection), mirroring the existing `list_tasks`
+   pattern in `task-runner`.
+
+Option 3 is more code (~260 LOC) than option 1 (~210 LOC) but
+follows the established "one domain = one MCP server" rule
+already applied by `fs`, `task-runner`, and `command-runner`.
+
+**Decision**:
+
+1. Skills are filesystem artifacts under `KDust/skills/<name>/`,
+   bind-mounted read-only into the container at `/app/skills`
+   via `docker-compose.yml` (`./skills:/app/skills:ro`). The
+   target path is a hard-coded constant `SKILLS_DIR` in
+   `src/lib/skills/repo.ts` — no environment variable, the
+   layout is part of the contract.
+2. Each skill directory contains a `SKILL.md` with YAML
+   frontmatter (`name`, `description`, both required). Optional
+   `references/*.md` and `scripts/*` sub-folders are free-form;
+   any executable path is fair game, no whitelist in
+   frontmatter. Frontmatter is parsed by a hand-rolled minimal
+   parser in `repo.ts` to avoid adding `gray-matter` as a
+   dependency.
+3. Skill names are constrained to `/^[a-z0-9][a-z0-9-]{1,63}$/`
+   and equal the directory name. Validated in `repo.ts` and at
+   the API boundary.
+4. A new MCP server kind `skills` is added with scope `chat`
+   (so it is attached to `/chat` sessions and to TaskRuns via
+   `setup-mcp` phase, mirroring `fs` and `task-runner`). It
+   exposes four tools:
+   - `list_skills` (readonly) — returns `[{name, description}]`.
+   - `read_skill` (readonly) — returns the body of `SKILL.md`
+     stripped of its frontmatter.
+   - `read_skill_resource` (readonly) — returns the contents of
+     a file under the skill directory. The `path` argument is
+     resolved via `realpath` and must stay inside the skill
+     directory; `..`, absolute paths, and symlinks escaping the
+     skill root are rejected.
+   - `run_skill_script` (shell exec) — spawns a child process
+     with `shell:false`, `cwd` forced to the skill directory,
+     a 30 s timeout, `stdout`/`stderr` capped at 1 MB each, env
+     restricted to a `PATH` passthrough plus task-resolved
+     secrets (same path as `command-runner`). The agent passes
+     `command: string[]` (not a free string) and an optional
+     `stdin`. Output is run through the secret redactor before
+     being returned. Each call is logged via `logMcpCall`.
+5. **No binding model.** Skills are global. The `skills` MCP
+   server is always registered — for every `/chat` session and
+   every TaskRun, exactly like `fs-cli` and `task-runner`. There
+   is no `TaskSkill` table, no `skillsEnabled` column, no
+   per-Task allow-list. Rationale: the catalogue lives in
+   `KDust/skills/` under git review, so the on-disk presence IS
+   the authorization, and the sandbox controls on
+   `run_skill_script` (forced `cwd`, no shell, 30s timeout,
+   output cap, redact, log) provide the defense-in-depth that
+   a whitelist would have added. If fine-grained scoping turns
+   out to be needed, it can be added later additively.
+6. **Discovery**: agents learn about skills by calling
+   `list_skills`. There is no catalogue injection in the prompt,
+   neither in task nor in chat mode. The tool description on
+   `list_skills` is engineered to cue the agent to call it
+   ("ALWAYS call list_skills near the start of a task..."). This
+   matches the existing `list_tasks` pattern in `task-runner`.
+7. **Filesystem mount**: `./skills:/app/skills:ro` added to
+   `docker-compose.yml` (and the prod variant). The dev
+   workflow is "create a folder under `KDust/skills/`,
+   container picks it up at next request" — no rebuild
+   required for content changes. A rebuild **is** required for
+   the Dockerfile change below.
+8. **Dockerfile**: `python3`, `python3-pip`, `python3-venv`
+   added to the `runner` stage so skill scripts written in
+   Python can run out of the box. No pip install at image build
+   time; each skill is responsible for its own `scripts/.venv`
+   if it needs Python deps.
+9. **No UI**: skills are managed entirely on disk via git. A
+   future `/skills` read-only browser page may be added; no
+   Task form change is needed because there is nothing to bind.
+
+**Consequences**:
+
+- New filesystem dependency: the host must bind a `./skills/`
+  directory next to `docker-compose.yml`. The repo ships a
+  `KDust/skills/` folder with one example skill
+  (`caesar-cipher`) and a README so the layout is
+  self-documenting.
+- New image size: `python3` + `pip` + `venv` adds ~50 MB to the
+  runner stage. Rebuild required at first deploy.
+- No schema change: option 3 drops the `TaskSkill` table that
+  was originally planned (and prototyped on branch
+  `feat/skills-library` before being reverted in the same
+  branch). Zero migration footprint.
+- New shell-exec surface: `run_skill_script` is a fourth
+  shell-exec path in KDust (after `fs.run_command`,
+  `command-runner.run_command`, and the push pipeline). It is
+  the most restricted of the four (forced `cwd`, `shell:false`,
+  no whitelist needed because the skill directory is the
+  whitelist). Secrets are resolved through the same path as
+  `command-runner` and redacted on output.
+- Token cost: zero, because nothing is injected in the prompt.
+  The agent pays the cost of one `list_skills` call when it
+  decides to look — same trade-off as `list_tasks`.
+- The Dust agent must learn to call `list_skills` and
+  `read_skill` when relevant. If the agent ignores the
+  catalogue, the feature is dormant — no harm done.
+- No new top-level dependency. No change to
+  `instrumentation.ts`. Container restart is required only
+  because the Dockerfile and `docker-compose.yml` change.
+- `command-runner` is unchanged. The two shell-exec servers
+  coexist: `command-runner` for free-form shell in a TaskRun,
+  `skills.run_skill_script` for invoking a skill's script
+  with the skill directory as cwd and the skill's documented
+  semantics.

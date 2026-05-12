@@ -6,6 +6,7 @@ node_modules
 .env.local
 data
 projects
+skills
 Dockerfile
 docker-compose.yml
 *.md

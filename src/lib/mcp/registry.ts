@@ -2,6 +2,7 @@ import { startFsServer, type FsServerHandle } from './fs-server';
 import { startTaskRunnerServer, type TaskRunnerHandle } from './task-runner-server';
 import { startCommandRunnerServer, type CommandRunnerHandle } from './command-runner-server';
 import { startGatewayProxy, type GatewayProxyHandle } from './gateway-proxy';
+import { startSkillsServer, type SkillsServerHandle } from './skills-server';
 
 // Module-level singleton (survives across requests in a given node process)
 const g = globalThis as unknown as {
@@ -9,6 +10,8 @@ const g = globalThis as unknown as {
   __kdustTaskRunnerMcp?: Map<string, Promise<TaskRunnerHandle>>;
   __kdustCommandRunnerMcp?: Map<string, Promise<CommandRunnerHandle>>;
   __kdustGatewayMcp?: Map<string, Promise<GatewayProxyHandle>>;
+  __kdustSkillsMcp?: Map<string, Promise<SkillsServerHandle>>;
+  __kdustChatSkillsMcp?: Map<string, Promise<SkillsServerHandle>>;
   __kdustMcpLastUsed?: Map<string, number>;
   __kdustFsSweeper?: NodeJS.Timeout;
 };
@@ -16,11 +19,15 @@ if (!g.__kdustMcp) g.__kdustMcp = new Map();
 if (!g.__kdustTaskRunnerMcp) g.__kdustTaskRunnerMcp = new Map();
 if (!g.__kdustCommandRunnerMcp) g.__kdustCommandRunnerMcp = new Map();
 if (!g.__kdustGatewayMcp) g.__kdustGatewayMcp = new Map();
+if (!g.__kdustSkillsMcp) g.__kdustSkillsMcp = new Map();
+if (!g.__kdustChatSkillsMcp) g.__kdustChatSkillsMcp = new Map();
 if (!g.__kdustMcpLastUsed) g.__kdustMcpLastUsed = new Map();
 const cache = g.__kdustMcp!;
 const taskRunnerCache = g.__kdustTaskRunnerMcp!;
 const commandRunnerCache = g.__kdustCommandRunnerMcp!;
 const gatewayCache = g.__kdustGatewayMcp!;
+const skillsCache = g.__kdustSkillsMcp!;
+const chatSkillsCache = g.__kdustChatSkillsMcp!;
 const lastUsedByProject = g.__kdustMcpLastUsed!;
 
 // ---------------------------------------------------------------------------
@@ -349,3 +356,88 @@ export async function releaseGatewayServer(projectFsPath: string): Promise<void>
 }
 
 export const invalidateGatewayServer = releaseGatewayServer;
+
+/* -------------------------------------------------------------------------- */
+/*  skills MCP server registry (Franck 2026-05-12, ADR-0016).                 */
+/*                                                                            */
+/*  Two caches in the same shape as task-runner:                              */
+/*    - skillsCache         keyed per TaskRun.id (task mode, with             */
+/*                          allowedSkills filter computed from TaskSkill).    */
+/*    - chatSkillsCache     keyed per project name (chat mode, no filter).    */
+/*                                                                            */
+/*  Task handles are released by the cron runner's finally block; chat       */
+/*  handles are not auto-swept (cheap, no allow-list memory). The auth-      */
+/*  failure path in skills-server.ts onerror calls back into these release   */
+/*  functions to drop a dead handle so the next ensure call re-registers     */
+/*  with a fresh Dust access token.                                          */
+/* -------------------------------------------------------------------------- */
+
+export async function getSkillsServerId(
+  runId: string,
+  projectName: string,
+): Promise<string> {
+  const existing = skillsCache.get(runId);
+  if (existing) {
+    try {
+      const handle = await existing;
+      if (handle.serverId) return handle.serverId;
+    } catch {
+      skillsCache.delete(runId);
+    }
+  }
+  const p = startSkillsServer({ runId, projectName });
+  skillsCache.set(runId, p);
+  try {
+    const handle = await p;
+    return handle.serverId;
+  } catch (e) {
+    skillsCache.delete(runId);
+    throw e;
+  }
+}
+
+export async function releaseSkillsServer(runId: string): Promise<void> {
+  const entry = skillsCache.get(runId);
+  skillsCache.delete(runId);
+  if (!entry) return;
+  try {
+    const handle = await entry;
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function getChatSkillsServerId(projectName: string): Promise<string> {
+  const existing = chatSkillsCache.get(projectName);
+  if (existing) {
+    try {
+      const handle = await existing;
+      if (handle.serverId) return handle.serverId;
+    } catch {
+      chatSkillsCache.delete(projectName);
+    }
+  }
+  // runId = null  -> chat mode (no per-run secret resolution).
+  const p = startSkillsServer({ runId: null, projectName });
+  chatSkillsCache.set(projectName, p);
+  try {
+    const handle = await p;
+    return handle.serverId;
+  } catch (e) {
+    chatSkillsCache.delete(projectName);
+    throw e;
+  }
+}
+
+export async function releaseChatSkillsServer(projectName: string): Promise<void> {
+  const entry = chatSkillsCache.get(projectName);
+  chatSkillsCache.delete(projectName);
+  if (!entry) return;
+  try {
+    const handle = await entry;
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}

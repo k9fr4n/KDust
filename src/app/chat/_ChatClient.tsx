@@ -259,6 +259,13 @@ function ChatPageInner({
   // wait_for_run from chat. null when no project is active or the
   // ensure call failed (chat then degrades to fs-cli only).
   const [taskRunnerServerId, setTaskRunnerServerId] = useState<string | null>(null);
+  // Skills MCP serverId (Franck 2026-05-12, ADR-0016). Same
+  // lifecycle as task-runner: ensured in parallel on project
+  // change, included in mcpServerIds at message-send, null when
+  // no project or ensure failed (chat then degrades to the other
+  // MCPs only -- list_skills/read_skill/run_skill_script become
+  // unavailable but list_tasks etc. keep working).
+  const [skillsServerId, setSkillsServerId] = useState<string | null>(null);
   // Docker MCP gateway proxy serverId (Franck 2026-05-10, ADR-0012).
   // null when no project is active, the gateway is unreachable, or
   // the project has no whitelisted tools — chat degrades gracefully
@@ -490,7 +497,7 @@ function ChatPageInner({
       // Franck 2026-04-25 11:31.
       if (convProject) {
         setMcpStatus('starting');
-        const [fsRes, trRes, gwRes] = await Promise.allSettled([
+        const [fsRes, trRes, gwRes, skRes] = await Promise.allSettled([
           fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -505,6 +512,11 @@ function ChatPageInner({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectFsPath: convProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/skills-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: convProject }),
           }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         ]);
         if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
@@ -535,11 +547,21 @@ function ChatPageInner({
           if (!skipped)
             console.warn('[chat] gateway MCP ensure failed; catalog tools unavailable');
         }
+        // Skills MCP failure is non-fatal: chat still works with
+        // the other MCPs alone, just no list_skills / read_skill /
+        // run_skill_script in this session.
+        if (skRes.status === 'fulfilled' && skRes.value.ok && skRes.value.j.serverId) {
+          setSkillsServerId(skRes.value.j.serverId);
+        } else {
+          setSkillsServerId(null);
+          console.warn('[chat] skills MCP ensure failed; skills unavailable');
+        }
       } else {
         setMcpServerId(null);
         setMcpStatus('idle');
         setTaskRunnerServerId(null);
         setGatewayServerId(null);
+        setSkillsServerId(null);
       }
     }
   };
@@ -635,7 +657,7 @@ function ChatPageInner({
           setMcpStatus('starting');
           // Mount-time parallel ensure of both MCPs. Same rationale
           // as the project-change handler above. Franck 2026-04-25 11:31.
-          const [fsRes, trRes, gwRes] = await Promise.allSettled([
+          const [fsRes, trRes, gwRes, skRes] = await Promise.allSettled([
             fetch('/api/mcp/ensure', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -650,6 +672,11 @@ function ChatPageInner({
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ projectFsPath: name }),
+            }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+            fetch('/api/mcp/skills-ensure', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectName: name }),
             }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
           ]);
           if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
@@ -675,6 +702,11 @@ function ChatPageInner({
               gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.skipped;
             if (!skipped)
               console.warn('[chat] gateway MCP ensure failed at mount; chat will run without gateway tools');
+          }
+          if (skRes.status === 'fulfilled' && skRes.value.ok && skRes.value.j.serverId) {
+            setSkillsServerId(skRes.value.j.serverId);
+          } else {
+            console.warn('[chat] skills MCP ensure failed at mount; chat will run without skill tools');
           }
         }
       })
@@ -995,12 +1027,13 @@ function ChatPageInner({
     let effectiveMcpServerId: string | null = mcpServerId;
     let effectiveTaskRunnerServerId: string | null = taskRunnerServerId;
     let effectiveGatewayServerId: string | null = gatewayServerId;
+    let effectiveSkillsServerId: string | null = skillsServerId;
     if (currentProject) {
       // Re-ensure all MCPs in parallel just before sending so a
       // serverId that Dust evicted server-side is refreshed before
       // we hit the 403 path. Franck 2026-04-25 11:31.
       try {
-        const [fsRes, trRes, gwRes] = await Promise.allSettled([
+        const [fsRes, trRes, gwRes, skRes] = await Promise.allSettled([
           fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1016,6 +1049,11 @@ function ChatPageInner({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectFsPath: currentProject }),
           }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/skills-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: currentProject }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         ]);
         if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
           effectiveMcpServerId = fsRes.value.j.serverId;
@@ -1030,6 +1068,11 @@ function ChatPageInner({
           effectiveGatewayServerId = gwRes.value.j.serverId;
           if (gwRes.value.j.serverId !== gatewayServerId)
             setGatewayServerId(gwRes.value.j.serverId);
+        }
+        if (skRes.status === 'fulfilled' && skRes.value.ok && skRes.value.j.serverId) {
+          effectiveSkillsServerId = skRes.value.j.serverId;
+          if (skRes.value.j.serverId !== skillsServerId)
+            setSkillsServerId(skRes.value.j.serverId);
         }
       } catch {
         // Non-fatal \u2014 fall through to the send attempt and let the
@@ -1047,6 +1090,7 @@ function ChatPageInner({
         effectiveMcpServerId,
         effectiveTaskRunnerServerId,
         effectiveGatewayServerId,
+        effectiveSkillsServerId,
       ].filter((x): x is string => !!x);
 
     // Small helper: detects the misleading 403 Dust sends when a
@@ -1079,7 +1123,7 @@ function ChatPageInner({
       // forcing both is cheap). Franck 2026-04-25 11:31.
       console.warn('[chat] Dust rejected MCP serverId; re-ensuring all MCPs and retrying once');
       try {
-        const [fsRes, trRes, gwRes] = await Promise.allSettled([
+        const [fsRes, trRes, gwRes, skRes] = await Promise.allSettled([
           fetch('/api/mcp/ensure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1095,6 +1139,11 @@ function ChatPageInner({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectFsPath: currentProject, force: true }),
           }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
+          fetch('/api/mcp/skills-ensure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: currentProject, force: true }),
+          }).then((r) => r.json().then((j) => ({ ok: r.ok, j }))),
         ]);
         if (fsRes.status === 'fulfilled' && fsRes.value.ok && fsRes.value.j.serverId) {
           effectiveMcpServerId = fsRes.value.j.serverId;
@@ -1107,6 +1156,10 @@ function ChatPageInner({
         if (gwRes.status === 'fulfilled' && gwRes.value.ok && gwRes.value.j.serverId) {
           effectiveGatewayServerId = gwRes.value.j.serverId;
           setGatewayServerId(gwRes.value.j.serverId);
+        }
+        if (skRes.status === 'fulfilled' && skRes.value.ok && skRes.value.j.serverId) {
+          effectiveSkillsServerId = skRes.value.j.serverId;
+          setSkillsServerId(skRes.value.j.serverId);
         }
       } catch {
         /* swallow \u2014 retry regardless, worst case same error */
@@ -1529,6 +1582,7 @@ function ChatPageInner({
                 }
                 if (id === 'task-runner') return taskRunnerServerId ? 'ready' : 'inactive';
                 if (id === 'mcp-gateway') return gatewayServerId ? 'ready' : 'inactive';
+                if (id === 'skills') return skillsServerId ? 'ready' : 'inactive';
                 return 'inactive';
               };
 

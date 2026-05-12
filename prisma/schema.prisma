@@ -465,6 +465,15 @@ model Task {
   // docs/task-attachments.md.
   attachments    TaskAttachment[]
 
+  // --- Task skills (Franck 2026-05-12, ADR-0016) ---
+  // Binds the Task to one or more skills defined on disk under
+  // /app/skills/<name>. The runner's setup-mcp phase reads this
+  // list to compute the `allowedSkills` filter passed to the
+  // skills MCP server. A binding with no on-disk match shows up
+  // as a dangling reference in the UI and is filtered out at
+  // runtime. See docs/skills.md.
+  skills         TaskSkill[]
+
   @@map("CronJob")
 }
 
@@ -488,6 +497,38 @@ model TaskAttachment {
   task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
+}
+
+// Task skills (Franck 2026-05-12, ADR-0016).
+//
+// Binds a Task to one or more skills defined on disk under
+// /app/skills/<skillName>. `skillName` is a free-text reference
+// to the filesystem entry — there is no Skill model and no FK
+// integrity: the filesystem is the source of truth. A skill that
+// disappears from disk shows up as a dangling reference in the
+// UI and is silently filtered out at runtime by the skills MCP
+// server (see src/lib/mcp/skills-server.ts).
+//
+// Cascade delete drops the row when the parent Task is removed.
+// No relation to a Secret/SshIdentity — skills are public content.
+//
+// Runtime filter rule (ADR-0016):
+//   - >=1 row for a TaskRun  -> skills server starts with
+//     allowedSkills = [...] (strict filter on all 4 tools).
+//   - 0  rows for a TaskRun  -> skills server NOT registered at
+//     all for that run.
+//   - /chat                  -> all skills on disk, no filter.
+//
+// See docs/skills.md.
+model TaskSkill {
+  id        String   @id @default(cuid())
+  taskId    String
+  skillName String
+  createdAt DateTime @default(now())
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, skillName])
+  @@index([skillName])
 }
 
 // Renamed CronRun -> TaskRun in v2. Underlying SQL table kept as

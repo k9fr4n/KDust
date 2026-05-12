@@ -1620,12 +1620,21 @@ function ChatPageInner({
                     z-50 to stay above the conv list and the message
                     area. Right-aligned (`right-0`) because the icon
                     sits in the right cluster of the header.
-                    Width widened (w-80) to fit the tools list of the
+                    Width widened (w-96) to fit the tools list of the
                     task-runner MCP without truncation.
+                    Franck 2026-05-13: pointer-events-auto so the
+                    user can move INTO the panel and scroll the
+                    tools list when it overflows max-h. The previous
+                    `mt-1` gap was removed because a 4px gap between
+                    the icon and the panel breaks group-hover when
+                    the cursor traverses it; we use `pt-1` via a
+                    transparent top spacer (the panel itself is
+                    flush against the icon, padding handles the
+                    visual gap).
                   */}
                   <div
                     role="tooltip"
-                    className="pointer-events-none absolute right-0 top-full mt-1 z-50 w-80 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto"
+                    className="pointer-events-auto absolute right-0 top-full z-50 w-96 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto"
                   >
                     <p className="font-semibold text-slate-800 dark:text-slate-100">
                       MCP tools{mcpCatalog === null ? ' (loading\u2026)' : ''}

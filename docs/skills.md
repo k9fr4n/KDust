@@ -102,8 +102,10 @@ that has at least one `TaskSkill` binding (see filtering below).
 
 ## Auto-injection of the catalogue
 
-At the start of every `/chat` send and every TaskRun's
-`run-agent` phase, the runner prepends a block to the prompt:
+**Task mode** — at the start of every TaskRun's `run-agent` phase,
+the runner prepends a block to `effectivePrompt` listing only the
+bound skills (the `TaskSkill` allow-list intersected with the
+on-disk catalogue):
 
 ```
 ## Available skills
@@ -113,7 +115,19 @@ At the start of every `/chat` send and every TaskRun's
 
 Only `name: description` is injected — not the body. The agent is
 expected to call `read_skill` when a skill looks relevant. That is
-the "progressive disclosure" pattern.
+the "progressive disclosure" pattern. If `TaskSkill` is empty for
+the task, no block is injected and the `skills` MCP server is not
+registered at all.
+
+**Chat mode** — **no auto-injection.** The agent learns about the
+skills the same way it learns about Tasks: by calling the relevant
+MCP tool, here `list_skills`. The tool description on
+`list_skills` ("Return the catalogue of skills available to this
+agent ...") is what cues the agent to call it when the user asks
+for capabilities. This matches the existing task-runner pattern
+where agents discover Tasks via `list_tasks` rather than via a
+system-prompt dump, and avoids bloating every new chat with a
+catalogue the user may never need.
 
 ## Binding skills to a Task
 

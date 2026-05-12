@@ -120,6 +120,14 @@ export interface RunAgentArgs {
   };
   /** Effective prompt: opts.promptOverride ?? job.prompt. */
   effectivePrompt: string;
+  /**
+   * Skill names bound to this Task (TaskSkill.skillName). Used to
+   * auto-inject a `## Available skills` catalogue block at the
+   * head of effectivePrompt before buildAutomationPrompt wraps it.
+   * Empty array (or omitted) -> no injection (the prompt stays
+   * bit-identical to the pre-ADR-0016 behaviour). ADR-0016.
+   */
+  taskSkills?: ReadonlyArray<string>;
   /** Resolved policy (B1/B2 applied) — fed to buildAutomationPrompt. */
   policy: ResolvedBranchPolicy;
   /** Project fsPath, stored on Conversation.projectName. */
@@ -144,7 +152,8 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
   const {
     runId,
     job,
-    effectivePrompt,
+    effectivePrompt: rawEffectivePrompt,
+    taskSkills,
     policy,
     projectFsPath,
     project,
@@ -153,6 +162,35 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
     setPhase,
     notify,
   } = args;
+
+  // ADR-0016: auto-inject the skills catalogue at the head of the
+  // effective prompt when the task has at least one binding. Only
+  // name+description are injected; full SKILL.md bodies remain
+  // progressive-disclosure via the `read_skill` MCP tool. The
+  // block is intersected with the on-disk catalogue, so dangling
+  // bindings (skill removed from disk after the task was
+  // configured) are silently dropped from the injection but do
+  // NOT crash the run. When taskSkills is empty or no bindings
+  // match on disk, the catalogue block resolves to '' and
+  // effectivePrompt stays bit-identical to the legacy behaviour.
+  let effectivePrompt = rawEffectivePrompt;
+  if (taskSkills && taskSkills.length > 0) {
+    try {
+      const { buildSkillsCatalogueForContext } = await import(
+        '../../../skills/prompt'
+      );
+      const block = await buildSkillsCatalogueForContext(taskSkills);
+      if (block) effectivePrompt = block + '\n' + rawEffectivePrompt;
+    } catch (e) {
+      // Catalogue injection is best-effort: a broken /app/skills
+      // mount must not prevent the agent from running. The skills
+      // MCP server would also be down in that case (registered in
+      // setup-mcp), so the agent just runs without skills.
+      console.warn(
+        `[cron] skills catalogue injection failed: ${(e as Error).message}`,
+      );
+    }
+  }
 
   await setPhase('agent', `Agent ${job.agentName ?? job.agentSId} is thinking…`);
   // Conversation title shown in the Dust UI. No "[cron]" prefix

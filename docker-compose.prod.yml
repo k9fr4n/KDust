@@ -44,6 +44,9 @@ services:
     volumes:
       - ./data:/data
       - ./projects:/projects
+      # Skills library (Franck 2026-05-12, ADR-0016). See
+      # docker-compose.yml for rationale; same RO bind in prod.
+      - ./skills:/app/skills:ro
       # Clefs SSH de l'hôte (read-only, copiées par l'entrypoint)
       - ${HOME}/.ssh:/host-ssh:ro
       # Socket ssh-agent (optionnel)

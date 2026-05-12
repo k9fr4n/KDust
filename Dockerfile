@@ -40,6 +40,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl ca-certificates tini git openssh-client gosu curl gnupg rsync jq \
     ripgrep unzip xz-utils make \
+    # python3 stack (Franck 2026-05-12, ADR-0016).
+    # Provides a working Python runtime to skills whose
+    # `scripts/` are written in Python. No pip install at image
+    # build time; each skill is responsible for its own
+    # `scripts/.venv` if it needs deps. python3-venv pulls
+    # ensurepip; python3-pip lets a skill bootstrap its own venv.
+    python3 python3-pip python3-venv \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
   && chmod a+r /etc/apt/keyrings/docker.asc \

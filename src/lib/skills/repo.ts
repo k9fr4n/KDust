@@ -33,11 +33,22 @@ export const SKILLS_DIR: string = (() => {
 })();
 
 // ---------------------------------------------------------------
-// Skill name validation. The name equals the directory name AND
-// is used as a key in the TaskSkill table AND as a tool argument
-// across all 4 skills MCP tools. Keep it filesystem-safe and
-// URL-safe.
-const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+// Skill name validation.
+//
+// Skills can be organised in a directory tree. A skill's name
+// is its relative path from SKILLS_DIR with `/` as separator:
+//
+//   skills/caesar-cipher/                  -> "caesar-cipher"
+//   skills/ecritel/seo/lighthouse-audit/   -> "ecritel/seo/lighthouse-audit"
+//
+// Each segment is kebab-case (matches the original regex). Max
+// depth is capped to keep paths sane and the recursive walker
+// bounded under adversarial input. The per-segment regex makes
+// the whole path filesystem-safe and URL-safe (no '..', no
+// leading dot, no traversal).
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}(?:\/[a-z0-9][a-z0-9-]{1,63}){0,4}$/;
+const SEGMENT_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+export const SKILL_MAX_DEPTH = 5;
 
 export function isValidSkillName(name: unknown): name is string {
   return typeof name === 'string' && SKILL_NAME_RE.test(name);
@@ -103,15 +114,40 @@ function parseFrontmatter(text: string): ParsedSkillFile {
 
   if (!kv.name) throw new Error('SKILL.md frontmatter is missing `name`.');
   if (!kv.description) throw new Error('SKILL.md frontmatter is missing `description`.');
-  if (!isValidSkillName(kv.name)) {
+  // The frontmatter `name` must be a SINGLE kebab-case segment
+  // (the skill's leaf identifier). This matches the Anthropic
+  // Skill / Hashicorp plugin-2-skill convention. The full
+  // path-derived exposed name is computed by the walker; the
+  // leaf is what the author declares.
+  if (!SEGMENT_RE.test(kv.name)) {
     throw new Error(
-      `SKILL.md frontmatter "name" is invalid: ${JSON.stringify(kv.name)}`,
+      `SKILL.md frontmatter "name" must be a single kebab-case segment, ` +
+        `got ${JSON.stringify(kv.name)}.`,
     );
   }
   return {
     frontmatter: { name: kv.name, description: kv.description },
     body,
   };
+}
+
+// ---------------------------------------------------------------
+// Path containment helper. Ensures an already-realpath'd
+// absolute path lies strictly inside SKILLS_DIR. Defeats a
+// symlink at any level pointing outside the catalogue.
+// SKILLS_DIR itself is realpath'd once and cached.
+let _realSkillsDir: string | null = null;
+async function realSkillsDir(): Promise<string> {
+  if (_realSkillsDir) return _realSkillsDir;
+  _realSkillsDir = await fsp.realpath(SKILLS_DIR);
+  return _realSkillsDir;
+}
+
+async function assertUnderSkillsDir(realAbsPath: string): Promise<void> {
+  const root = await realSkillsDir();
+  if (realAbsPath !== root && !realAbsPath.startsWith(root + path.sep)) {
+    throw new Error(`Path escapes skills directory: ${realAbsPath}`);
+  }
 }
 
 // ---------------------------------------------------------------
@@ -122,64 +158,191 @@ export interface SkillSummary {
   description: string;
 }
 
-async function readSkillFile(name: string): Promise<ParsedSkillFile> {
-  assertValidSkillName(name);
-  const filePath = path.join(SKILLS_DIR, name, 'SKILL.md');
-  let text: string;
+/** Internal: pairing of exposed (agent-facing) name and on-disk path. */
+interface SkillEntry {
+  /** Agent-facing name. Path-derived, with literal `skills/`
+   *  category segments stripped (Hashicorp plugin-2-skill
+   *  convention). Examples:
+   *    "caesar-cipher"
+   *    "terraform/code-generation/azure-verified-modules"     */
+  exposedName: string;
+  /** Relative on-disk path from SKILLS_DIR, with `skills/`
+   *  segments kept literal. Used to read SKILL.md and to act
+   *  as the cwd for run_skill_script. */
+  diskPath: string;
+}
+
+// ---------------------------------------------------------------
+// Recursive skill directory walker.
+//
+// Rule (ADR-0016 nesting, option A + 2026-05-13 transparent
+// `skills/` segment):
+//   - A directory is a SKILL when it contains SKILL.md, a
+//     CATEGORY otherwise. When a SKILL is found we yield its
+//     entry and STOP descending: any further SKILL.md below
+//     is ignored (forbids nested skills under a parent skill).
+//   - A category-style directory named literally `skills` is
+//     TRANSPARENT in the exposed name: it is part of the disk
+//     path but skipped from the agent-facing identifier. This
+//     keeps Hashicorp plugin-2-skill / Anthropic skill trees
+//     readable to the agent (e.g. exposed name
+//     "terraform/code-generation/azure-verified-modules"
+//     for disk path
+//     "terraform/code-generation/skills/azure-verified-modules").
+//   - The transparency applies ONLY when the `skills` directory
+//     is itself a category (no SKILL.md inside): if someone
+//     puts a SKILL.md directly in a folder literally named
+//     `skills`, it becomes a real skill with that segment in
+//     its exposed name. Unambiguous.
+
+async function* walkSkillEntries(
+  absDir: string,
+  diskPrefix: string,
+  exposedPrefix: string,
+  depth: number,
+): AsyncGenerator<SkillEntry> {
+  if (depth > SKILL_MAX_DEPTH) return;
+  let entries: import('node:fs').Dirent[];
   try {
-    text = await fsp.readFile(filePath, 'utf-8');
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') {
-      throw new Error(`Skill not found: ${name}`);
-    }
-    throw e;
+    entries = await fsp.readdir(absDir, { withFileTypes: true });
+  } catch {
+    return;
   }
-  const parsed = parseFrontmatter(text);
-  if (parsed.frontmatter.name !== name) {
-    throw new Error(
-      `SKILL.md frontmatter name (${parsed.frontmatter.name}) does not match ` +
-        `directory name (${name}).`,
+  // This directory IS a skill: stop, do not descend.
+  if (entries.some((e) => e.isFile() && e.name === 'SKILL.md')) {
+    if (diskPrefix) {
+      yield { exposedName: exposedPrefix || diskPrefix, diskPath: diskPrefix };
+    }
+    return;
+  }
+  // Category: descend. `skills` segments are transparent in the
+  // exposed name but kept in the disk path.
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    if (!SEGMENT_RE.test(ent.name)) continue;
+    const nextDisk = diskPrefix ? diskPrefix + '/' + ent.name : ent.name;
+    const nextExposed =
+      ent.name === 'skills'
+        ? exposedPrefix
+        : exposedPrefix
+        ? exposedPrefix + '/' + ent.name
+        : ent.name;
+    yield* walkSkillEntries(
+      path.join(absDir, ent.name),
+      nextDisk,
+      nextExposed,
+      depth + 1,
     );
   }
-  return parsed;
 }
 
 /**
- * Scan SKILLS_DIR and return a summary entry for every valid
- * skill directory. Invalid entries (bad name, missing or broken
- * SKILL.md, frontmatter/directory mismatch) are silently
- * skipped — the goal is to never let a malformed skill take the
- * whole catalogue down.
+ * Find the SkillEntry whose exposed name matches `name`. Returns
+ * null if not found. Walks SKILLS_DIR each call; the walk is
+ * shallow (a few dozen dirents) so no caching for now.
+ */
+async function findSkillEntry(name: string): Promise<SkillEntry | null> {
+  assertValidSkillName(name);
+  for await (const e of walkSkillEntries(SKILLS_DIR, '', '', 0)) {
+    if (e.exposedName === name) return e;
+  }
+  return null;
+}
+
+async function readSkillFile(
+  exposedName: string,
+): Promise<ParsedSkillFile & { entry: SkillEntry }> {
+  assertValidSkillName(exposedName);
+  const entry = await findSkillEntry(exposedName);
+  if (!entry) throw new Error(`Skill not found: ${exposedName}`);
+
+  const skillDir = path.join(SKILLS_DIR, entry.diskPath);
+  let realDir: string;
+  try {
+    realDir = await fsp.realpath(skillDir);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new Error(`Skill not found: ${exposedName}`);
+    }
+    throw e;
+  }
+  await assertUnderSkillsDir(realDir);
+  const filePath = path.join(realDir, 'SKILL.md');
+  const text = await fsp.readFile(filePath, 'utf-8');
+  const parsed = parseFrontmatter(text);
+
+  // The frontmatter `name` is a single segment (the leaf
+  // identifier). Validate it matches the LEAF of the exposed
+  // name. This catches typos in the directory name vs the
+  // frontmatter while remaining compatible with the Hashicorp
+  // plugin-2-skill convention (frontmatter holds the leaf, not
+  // the full hierarchical path).
+  const leaf = exposedName.includes('/')
+    ? exposedName.slice(exposedName.lastIndexOf('/') + 1)
+    : exposedName;
+  if (parsed.frontmatter.name !== leaf) {
+    throw new Error(
+      `SKILL.md frontmatter name (${parsed.frontmatter.name}) does not match ` +
+        `the directory leaf (${leaf}) of exposed name "${exposedName}".`,
+    );
+  }
+  return { ...parsed, entry };
+}
+
+/**
+ * Scan SKILLS_DIR recursively and return a summary entry for
+ * every valid skill directory. Skills are identified by the
+ * presence of SKILL.md; nesting under a parent skill is
+ * forbidden (the walker stops descending). A literal `skills/`
+ * category segment is transparent in the exposed name (see the
+ * walker docs). Invalid entries (bad name, missing or broken
+ * SKILL.md, frontmatter/leaf mismatch) are silently skipped so
+ * a malformed skill never takes the whole catalogue down.
  */
 export async function listSkills(): Promise<SkillSummary[]> {
-  let entries: import('node:fs').Dirent[];
+  const out: SkillSummary[] = [];
   try {
-    entries = await fsp.readdir(SKILLS_DIR, { withFileTypes: true });
+    for await (const entry of walkSkillEntries(SKILLS_DIR, '', '', 0)) {
+      try {
+        // Validate frontmatter leaf match and pull description.
+        const parsed = await readSkillFileFromEntry(entry);
+        out.push({
+          name: entry.exposedName,
+          description: parsed.frontmatter.description,
+        });
+      } catch {
+        continue;
+      }
+    }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return [];
     throw e;
   }
-  const out: SkillSummary[] = [];
-  for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
-    if (!isValidSkillName(ent.name)) continue;
-    try {
-      const parsed = await readSkillFile(ent.name);
-      out.push({
-        name: parsed.frontmatter.name,
-        description: parsed.frontmatter.description,
-      });
-    } catch {
-      // Broken skill — skip, do not poison the catalogue. The UI
-      // surfaces dangling references via the TaskSkill diff; the
-      // operator can fix the file and reload.
-      continue;
-    }
-  }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
+}
+
+/** Internal: read + validate SKILL.md from an already-walked entry. */
+async function readSkillFileFromEntry(
+  entry: SkillEntry,
+): Promise<ParsedSkillFile> {
+  const skillDir = path.join(SKILLS_DIR, entry.diskPath);
+  const realDir = await fsp.realpath(skillDir);
+  await assertUnderSkillsDir(realDir);
+  const text = await fsp.readFile(path.join(realDir, 'SKILL.md'), 'utf-8');
+  const parsed = parseFrontmatter(text);
+  const leaf = entry.exposedName.includes('/')
+    ? entry.exposedName.slice(entry.exposedName.lastIndexOf('/') + 1)
+    : entry.exposedName;
+  if (parsed.frontmatter.name !== leaf) {
+    throw new Error(
+      `SKILL.md frontmatter name (${parsed.frontmatter.name}) does not match ` +
+        `directory leaf (${leaf}).`,
+    );
+  }
+  return parsed;
 }
 
 /**
@@ -214,7 +377,9 @@ export async function resolveSkillPath(
   if (path.isAbsolute(relPath)) {
     throw new Error('Skill resource path must be relative.');
   }
-  const skillDir = path.join(SKILLS_DIR, name);
+  const entry = await findSkillEntry(name);
+  if (!entry) throw new Error(`Skill not found: ${name}`);
+  const skillDir = path.join(SKILLS_DIR, entry.diskPath);
   // Resolve real paths to defeat symlink escapes.
   let realSkillDir: string;
   try {
@@ -222,7 +387,8 @@ export async function resolveSkillPath(
   } catch {
     throw new Error(`Skill not found: ${name}`);
   }
-  const candidate = path.resolve(skillDir, relPath);
+  await assertUnderSkillsDir(realSkillDir);
+  const candidate = path.resolve(realSkillDir, relPath);
   let realCandidate: string;
   try {
     realCandidate = await fsp.realpath(candidate);
@@ -266,9 +432,12 @@ export async function readSkillResource(
  */
 export async function getSkillCwd(name: string): Promise<string> {
   assertValidSkillName(name);
-  const dir = path.join(SKILLS_DIR, name);
+  const entry = await findSkillEntry(name);
+  if (!entry) throw new Error(`Skill not found: ${name}`);
+  const dir = path.join(SKILLS_DIR, entry.diskPath);
   try {
     const real = await fsp.realpath(dir);
+    await assertUnderSkillsDir(real);
     const stat = await fsp.stat(real);
     if (!stat.isDirectory()) {
       throw new Error(`Skill is not a directory: ${name}`);

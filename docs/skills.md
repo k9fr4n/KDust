@@ -28,17 +28,52 @@ layout is part of the contract.
 ```
 KDust/skills/
   README.md                    (human-facing index, optional)
-  caesar-cipher/               (one folder = one skill)
+  caesar-cipher/               (flat skill at root)
     SKILL.md                   (required: frontmatter + body)
     references/                (optional: any markdown notes)
       alphabet.md
     scripts/                   (optional: any executable)
       encrypt.sh
       decrypt.sh
+  ecritel/                     (category — no SKILL.md)
+    seo/                       (sub-category)
+      lighthouse-audit/        (nested skill)
+        SKILL.md
+  terraform/                   (Hashicorp plugin-2-skill tree)
+    code-generation/
+      skills/                  (TRANSPARENT in exposed name)
+        azure-verified-modules/
+          SKILL.md
 ```
 
-Skill names must match `/^[a-z0-9][a-z0-9-]{1,63}$/` and equal the
-directory name.
+### Exposed name = path-derived
+
+The agent-facing name of a skill is its filesystem path relative
+to `SKILLS_DIR`, with `/` as separator. Examples:
+
+| Disk path                                                          | Exposed name (agent-facing)                         |
+|--------------------------------------------------------------------|-----------------------------------------------------|
+| `caesar-cipher/SKILL.md`                                           | `caesar-cipher`                                     |
+| `ecritel/seo/lighthouse-audit/SKILL.md`                            | `ecritel/seo/lighthouse-audit`                      |
+| `terraform/code-generation/skills/azure-verified-modules/SKILL.md` | `terraform/code-generation/azure-verified-modules`  |
+
+A category-style directory named literally **`skills`** is
+**transparent** in the exposed name — it is kept on disk (so
+Hashicorp `plugin-2-skill` / Anthropic skill catalogues drop in
+unchanged) but skipped from the agent-facing identifier. The
+transparency applies only when the `skills` directory is a pure
+category: if a `SKILL.md` is placed directly inside a folder
+literally named `skills`, that folder IS a skill and `skills`
+becomes a real segment of the exposed name.
+
+### Naming rules
+
+- Each path segment matches `/^[a-z0-9][a-z0-9-]{1,63}$/`
+  (kebab-case, 2–64 chars). No `..`, no leading dot.
+- Max depth: 5 segments on disk (cap enforced by the walker).
+- A folder is a SKILL iff it contains `SKILL.md`. Nesting skills
+  under a skill is forbidden — the walker stops descending at
+  any `SKILL.md` it finds.
 
 ## `SKILL.md` shape
 
@@ -64,7 +99,7 @@ Required frontmatter fields:
 
 | Key | Type | Constraint |
 |---|---|---|
-| `name` | string | must equal the directory name |
+| `name` | string | the LEAF segment only (single kebab-case word, no `/`). Must equal the directory name; the full hierarchical path is computed by the walker, not declared in the frontmatter. |
 | `description` | string | one short sentence shown in the catalogue |
 
 No `executables:` whitelist — the agent may run any file under

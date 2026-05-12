@@ -289,10 +289,10 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
           <div
             className={
               (isUser
-                ? 'px-3 py-2 rounded-2xl rounded-br-sm text-sm bg-blue-600 text-white shadow-sm'
+                ? 'px-3 py-2 rounded-2xl rounded-br-sm text-base bg-blue-600 text-white shadow-sm'
                 : role === 'system'
-                  ? 'px-3 py-2 rounded-2xl text-sm bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
-                  : 'px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
+                  ? 'px-3 py-2 rounded-2xl text-base bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
+                  : 'px-3 py-2 rounded-2xl rounded-bl-sm text-base bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
               // [overflow-wrap:anywhere] is more aggressive than
               // break-words: it can break inside an otherwise
               // unbreakable token (long URL, hash, base64) so very

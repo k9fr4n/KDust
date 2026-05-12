@@ -271,7 +271,7 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
           // Tables: give them a subtle border + header shade.
           table: ({ children: c }) => (
             <div className="overflow-x-auto my-2">
-              <table className="text-xs border-collapse border border-slate-300 dark:border-slate-700">
+              <table className="text-sm border-collapse border border-slate-300 dark:border-slate-700">
                 {c}
               </table>
             </div>

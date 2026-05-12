@@ -204,9 +204,15 @@ export async function startSkillsServer(
     'list_skills',
     {
       description:
-        `Return the catalogue of skills available to this agent ` +
-        `as an array of { name, description }. Call read_skill(name) ` +
-        `to load the full SKILL.md body before invoking any script.` +
+        'Return the catalogue of skills available to this agent as ' +
+        'an array of { name, description }. Skills are reusable, ' +
+        'pre-built procedures that can replace dozens of low-level ' +
+        'steps (encryption helpers, audits, release-note drafters, ' +
+        '...). ALWAYS call list_skills near the start of a task or ' +
+        'a new conversation when you are not already certain which ' +
+        'skills apply: a 1-line catalogue lookup is much cheaper ' +
+        'than reinventing a procedure. Then call read_skill(name) ' +
+        'to load the full SKILL.md body before invoking any script.' +
         allowedDescription,
       inputSchema: {},
     },

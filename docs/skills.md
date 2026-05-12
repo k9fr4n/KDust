@@ -100,34 +100,34 @@ that has at least one `TaskSkill` binding (see filtering below).
   `{ ok: false, exitCode, stdout, stderr }` so the agent can
   react.
 
-## Auto-injection of the catalogue
+## Discovery: `list_skills`, not auto-injection
 
-**Task mode** — at the start of every TaskRun's `run-agent` phase,
-the runner prepends a block to `effectivePrompt` listing only the
-bound skills (the `TaskSkill` allow-list intersected with the
-on-disk catalogue):
+Both `/chat` and TaskRuns discover skills the same way: the agent
+calls `list_skills`. **There is no system-prompt injection** —
+neither in task mode nor in chat mode. The tool description on
+`list_skills` is engineered to cue the agent to call it near the
+start of any work it picks up:
 
-```
-## Available skills
-- caesar-cipher: Encrypt or decrypt a message with a Caesar shift cipher.
-- seo-audit: Run a Lighthouse-style audit on a static site.
-```
+> Skills are reusable, pre-built procedures that can replace
+> dozens of low-level steps (...). ALWAYS call list_skills near
+> the start of a task or a new conversation when you are not
+> already certain which skills apply.
 
-Only `name: description` is injected — not the body. The agent is
-expected to call `read_skill` when a skill looks relevant. That is
-the "progressive disclosure" pattern. If `TaskSkill` is empty for
-the task, no block is injected and the `skills` MCP server is not
-registered at all.
+This matches the existing task-runner pattern (agents discover
+Tasks via `list_tasks` rather than via a system-prompt dump), and
+yields three benefits:
 
-**Chat mode** — **no auto-injection.** The agent learns about the
-skills the same way it learns about Tasks: by calling the relevant
-MCP tool, here `list_skills`. The tool description on
-`list_skills` ("Return the catalogue of skills available to this
-agent ...") is what cues the agent to call it when the user asks
-for capabilities. This matches the existing task-runner pattern
-where agents discover Tasks via `list_tasks` rather than via a
-system-prompt dump, and avoids bloating every new chat with a
-catalogue the user may never need.
+- One discovery path, identical across task and chat mode.
+- Zero token overhead for tasks/chats that never call a skill.
+- Progressive disclosure: the agent loads only the SKILL.md
+  bodies it actually needs (`read_skill`), never the whole
+  catalogue body.
+
+For autonomous TaskRuns where the agent might forget to call
+`list_skills`, prefer phrasing the task prompt with a soft hint
+(e.g. *"Use available KDust skills if any apply."*). The
+`TaskSkill` bindings are still required for the server to be
+registered at all in that run.
 
 ## Binding skills to a Task
 

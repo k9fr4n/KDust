@@ -492,7 +492,6 @@ export async function runTask(
       runId: run.id,
       job,
       effectivePrompt,
-      taskSkills,
       policy,
       projectFsPath,
       project,

@@ -93,4 +93,22 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
       { name: 'run_command', description: 'Spawn a shell command in the run cwd, with run-scoped env injection.' },
     ],
   },
+  {
+    // ADR-0016 (2026-05-12): KDust skills library. Filesystem-first
+    // capabilities under /app/skills/<name>/SKILL.md, exposed via
+    // four tools. In /chat the server is always attached with no
+    // filter. In TaskRuns it is attached only when the Task has at
+    // least one TaskSkill binding, and tools enforce that allow-list.
+    id: 'skills',
+    name: 'skills',
+    description:
+      'Reusable agent skills (SKILL.md + scripts + references) discovered, read and executed via four tools. Filtered by TaskSkill bindings in task mode; unfiltered in chat mode.',
+    scope: 'chat',
+    tools: [
+      { name: 'list_skills',         description: 'List the catalogue of available skills (name + description).' },
+      { name: 'read_skill',          description: 'Return the body of SKILL.md (frontmatter stripped).' },
+      { name: 'read_skill_resource', description: 'Read a file under the skill directory; sandboxed.' },
+      { name: 'run_skill_script',    description: 'Execute a script with cwd=skill dir; shell:false, 30s default timeout, secrets+redact.' },
+    ],
+  },
 ];

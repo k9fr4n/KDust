@@ -70,6 +70,11 @@ describe('runSetupMcp', () => {
     mockedGetTr.mockReset();
     mockedGetCr.mockReset();
     mockedGetSk.mockReset();
+    // ADR-0016: skills is always registered. Default to a
+    // rejection so legacy tests that don't care about skills see
+    // its (non-fatal) failure and assert on the same array shape
+    // as before. Tests that DO care override per-call.
+    mockedGetSk.mockRejectedValue(new Error('skills mock not configured'));
   });
 
   // --- happy paths --------------------------------------------------------
@@ -106,30 +111,15 @@ describe('runSetupMcp', () => {
 
   // --- skills (ADR-0016) --------------------------------------------------
 
-  it('does NOT register skills when taskSkills is empty/omitted', async () => {
-    mockedGetFs.mockResolvedValueOnce('fs_id');
-    mockedGetTr.mockResolvedValueOnce('tr_id');
-    const { args } = makeArgs();
-    const r = await runSetupMcp(args);
-    expect(r).toEqual(['fs_id', 'tr_id']);
-    expect(mockedGetSk).not.toHaveBeenCalled();
-  });
-
-  it('registers skills with allow-list when taskSkills is non-empty', async () => {
+  it('always registers skills (no per-task gating)', async () => {
     mockedGetFs.mockResolvedValueOnce('fs_id');
     mockedGetTr.mockResolvedValueOnce('tr_id');
     mockedGetSk.mockResolvedValueOnce('sk_id');
-    const { args } = makeArgs({
-      taskSkills: ['caesar-cipher', 'seo-audit'],
-    });
+    const { args } = makeArgs();
     const r = await runSetupMcp(args);
-    // Order: fs, task-runner, command-runner, skills.
+    // Order: fs, task-runner, skills (command-runner skipped by default).
     expect(r).toEqual(['fs_id', 'tr_id', 'sk_id']);
-    expect(mockedGetSk).toHaveBeenCalledWith(
-      'run_42',
-      'clients/acme/web',
-      ['caesar-cipher', 'seo-audit'],
-    );
+    expect(mockedGetSk).toHaveBeenCalledWith('run_42', 'clients/acme/web');
   });
 
   it('registers skills AFTER command-runner when both are active', async () => {
@@ -137,10 +127,7 @@ describe('runSetupMcp', () => {
     mockedGetTr.mockResolvedValueOnce('tr_id');
     mockedGetCr.mockResolvedValueOnce('cr_id');
     mockedGetSk.mockResolvedValueOnce('sk_id');
-    const { args } = makeArgs({
-      job: { commandRunnerEnabled: true },
-      taskSkills: ['caesar-cipher'],
-    });
+    const { args } = makeArgs({ job: { commandRunnerEnabled: true } });
     const r = await runSetupMcp(args);
     expect(r).toEqual(['fs_id', 'tr_id', 'cr_id', 'sk_id']);
   });
@@ -149,9 +136,7 @@ describe('runSetupMcp', () => {
     mockedGetFs.mockResolvedValueOnce('fs_id');
     mockedGetTr.mockResolvedValueOnce('tr_id');
     mockedGetSk.mockRejectedValueOnce(new Error('skills registry down'));
-    const { args } = makeArgs({
-      taskSkills: ['caesar-cipher'],
-    });
+    const { args } = makeArgs();
     const r = await runSetupMcp(args);
     expect(r).toEqual(['fs_id', 'tr_id']);
   });

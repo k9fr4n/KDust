@@ -375,7 +375,6 @@ export const invalidateGatewayServer = releaseGatewayServer;
 export async function getSkillsServerId(
   runId: string,
   projectName: string,
-  allowedSkills: ReadonlyArray<string>,
 ): Promise<string> {
   const existing = skillsCache.get(runId);
   if (existing) {
@@ -386,7 +385,7 @@ export async function getSkillsServerId(
       skillsCache.delete(runId);
     }
   }
-  const p = startSkillsServer({ runId, projectName, allowedSkills });
+  const p = startSkillsServer({ runId, projectName });
   skillsCache.set(runId, p);
   try {
     const handle = await p;
@@ -419,8 +418,8 @@ export async function getChatSkillsServerId(projectName: string): Promise<string
       chatSkillsCache.delete(projectName);
     }
   }
-  // runId = null  -> chat mode; allowedSkills = null -> no filter
-  const p = startSkillsServer({ runId: null, projectName, allowedSkills: null });
+  // runId = null  -> chat mode (no per-run secret resolution).
+  const p = startSkillsServer({ runId: null, projectName });
   chatSkillsCache.set(projectName, p);
   try {
     const handle = await p;

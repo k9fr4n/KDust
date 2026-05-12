@@ -73,8 +73,9 @@ No `executables:` whitelist — the agent may run any file under
 ## Runtime: the `skills` MCP server
 
 A dedicated MCP server kind exposes four tools to the agent. The
-server is attached to every `/chat` session and to every TaskRun
-that has at least one `TaskSkill` binding (see filtering below).
+server is always attached — both to every `/chat` session and to
+every TaskRun, exactly like `fs-cli` and `task-runner`. There is
+no per-Task allow-list (see "Binding model" below).
 
 | Tool | Side-effect | Purpose |
 |---|---|---|
@@ -125,28 +126,33 @@ yields three benefits:
 
 For autonomous TaskRuns where the agent might forget to call
 `list_skills`, prefer phrasing the task prompt with a soft hint
-(e.g. *"Use available KDust skills if any apply."*). The
-`TaskSkill` bindings are still required for the server to be
-registered at all in that run.
+(e.g. *"Use available KDust skills if any apply."*).
 
-## Binding skills to a Task
+## Binding model: there is none
 
-Each Task can declare which skills it has access to via the
-`<TaskSkills>` block in the Task form (next to
-`<TaskSecretBindings>` and `<TaskAttachments>`). The selection is
-persisted in the `TaskSkill` table.
-
-Filtering rule:
+The skills catalogue is global. Every `/chat` and every TaskRun
+sees the full list returned by `list_skills`. The agent picks the
+right skill based on the `description` field.
 
 | Context | Visible skills |
 |---|---|
-| `/chat` | **all** skills on disk (no binding concept in chat) |
-| TaskRun with ≥1 `TaskSkill` | **only** the bound skills (strict filter on all four tools) |
-| TaskRun with 0 `TaskSkill` | the `skills` server is **not registered at all** |
+| `/chat` | **all** skills on disk |
+| TaskRun (any) | **all** skills on disk |
 
-A `TaskSkill.skillName` that no longer exists on disk shows up as
-a dangling reference in the UI and is silently filtered out at
-runtime (no error).
+Rationale (ADR-0016 option 3):
+
+- The catalogue lives in `KDust/skills/` under git review — every
+  skill is authored deliberately by the operator. The on-disk
+  presence IS the authorization.
+- Symmetric with the other "catalogue-style" KDust MCP servers
+  (`fs-cli`, `task-runner`): none of them filter per Task either.
+- One less table, one less migration, one less UI form. If
+  fine-grained per-Task allow-listing turns out to be needed, it
+  can be added later additively (a `TaskSkill` table again).
+
+The sandbox controls on `run_skill_script` (cwd forced to skill
+dir, no shell, 30s timeout, output cap, redact, log) provide the
+defense-in-depth that a per-Task whitelist would have added.
 
 ## Adding a new skill
 
@@ -157,8 +163,7 @@ runtime (no error).
    `references/`. Make scripts executable (`chmod +x`).
 4. Commit and push. Container picks up the change at the next
    request — no rebuild required (the mount is live).
-5. (optional) Bind the skill to one or more Tasks via the Task
-   form.
+
 
 ## Limitations and non-goals (v1)
 
@@ -166,7 +171,8 @@ runtime (no error).
   via git. A future v2 may add a `/skills` page.
 - No import from `skills.sh` / GitHub. Manual `git clone` inside
   `KDust/skills/` works today.
-- No scoping per project. Skills are global. If a skill should
-  only be available to one Task, bind it to that Task only.
+- No scoping per project or per Task. Skills are global. If
+  per-Task allow-listing is needed later, see the "Binding model"
+  section above for the additive path.
 - No secret references inside `SKILL.md` — frontmatter and body
   are not redacted. Keep skills publishable as-is.

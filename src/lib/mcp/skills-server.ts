@@ -63,16 +63,10 @@ export interface SkillsServerHandle {
 }
 
 export interface StartSkillsServerInput {
-  /** null in chat mode, set in task mode. */
+  /** null in chat mode, set in task mode (for secret resolution). */
   runId: string | null;
   /** Used for logs only. Skills are global, not project-scoped. */
   projectName: string;
-  /**
-   * Strict allow-list of skill names. Null/undefined = no filter
-   * (chat mode). When set, tools reject any skill outside this
-   * array, INCLUDING list_skills which filters its output.
-   */
-  allowedSkills?: ReadonlyArray<string> | null;
 }
 
 // ---------------------------------------------------------------
@@ -121,28 +115,20 @@ function asJson(payload: unknown, isError = false) {
 }
 
 /**
- * Check that a skill name is valid AND (when allowedSkills is
- * non-null) in the allow-list. Returns a tool-result error
- * object when the check fails, or null on success.
+ * Validate a skill name (filesystem-safe, kebab-case). Returns a
+ * tool-result error object when invalid, or null on success.
+ *
+ * ADR-0016 option 3: there is no per-task allow-list. The skills
+ * catalogue is global (under git review on disk), the agent picks
+ * what it needs via list_skills + read_skill. This function only
+ * rejects malformed names.
  */
-function checkAllowed(
+function checkSkillName(
   skill: string,
-  allowed: ReadonlyArray<string> | null | undefined,
 ): { content: Array<{ type: 'text'; text: string }>; isError: true } | null {
   if (!isValidSkillName(skill)) {
     return asJson(
       { status: 'error', error: `invalid skill name: ${JSON.stringify(skill)}` },
-      true,
-    ) as { content: Array<{ type: 'text'; text: string }>; isError: true };
-  }
-  if (allowed && !allowed.includes(skill)) {
-    return asJson(
-      {
-        status: 'forbidden',
-        error:
-          `skill ${JSON.stringify(skill)} is not bound to this task. ` +
-          `Bind it via the Task form, or call list_skills to see what is available.`,
-      },
       true,
     ) as { content: Array<{ type: 'text'; text: string }>; isError: true };
   }
@@ -157,12 +143,6 @@ export async function startSkillsServer(
   input: StartSkillsServerInput,
 ): Promise<SkillsServerHandle> {
   const { runId, projectName } = input;
-  const allowedSkills =
-    input.allowedSkills && input.allowedSkills.length > 0
-      ? Array.from(input.allowedSkills)
-      : input.allowedSkills === null || input.allowedSkills === undefined
-      ? null
-      : []; // explicit empty array = strict empty allow-list (everything denied)
 
   const dust = await getDustClient();
   if (!dust) throw new Error('Dust client not available (login required)');
@@ -191,10 +171,6 @@ export async function startSkillsServer(
     }
   }
 
-  const allowedDescription = allowedSkills
-    ? ` Bound skills for this task: ${allowedSkills.join(', ') || '(none)'}.`
-    : ' All on-disk skills are visible (chat mode).';
-
   const server = new McpServer({ name: 'skills', version: '0.1.0' });
 
   // -------------------------------------------------------------
@@ -212,8 +188,7 @@ export async function startSkillsServer(
         'a new conversation when you are not already certain which ' +
         'skills apply: a 1-line catalogue lookup is much cheaper ' +
         'than reinventing a procedure. Then call read_skill(name) ' +
-        'to load the full SKILL.md body before invoking any script.' +
-        allowedDescription,
+        'to load the full SKILL.md body before invoking any script.',
       inputSchema: {},
     },
     async () => {
@@ -236,10 +211,7 @@ export async function startSkillsServer(
         });
         return asJson({ status: 'error', error: errMessage(e) }, true);
       }
-      const filtered = allowedSkills
-        ? entries.filter((e) => allowedSkills.includes(e.name))
-        : entries;
-      const payload = { skills: filtered };
+      const payload = { skills: entries };
       const text = JSON.stringify(payload, null, 2);
       logMcpCall({
         runId: runId ?? null,
@@ -273,7 +245,7 @@ export async function startSkillsServer(
     async (args) => {
       const toolStart = Date.now();
       const requestBytes = byteLen(args);
-      const denied = checkAllowed(args.name, allowedSkills);
+      const denied = checkSkillName(args.name);
       if (denied) {
         logMcpCall({
           runId: runId ?? null,
@@ -284,7 +256,7 @@ export async function startSkillsServer(
           responseBytes: byteLen(denied.content[0].text),
           durationMs: Date.now() - toolStart,
           success: false,
-          errorCode: 'forbidden',
+          errorCode: 'invalid_name',
         });
         return denied;
       }
@@ -340,7 +312,7 @@ export async function startSkillsServer(
     async (args) => {
       const toolStart = Date.now();
       const requestBytes = byteLen(args);
-      const denied = checkAllowed(args.name, allowedSkills);
+      const denied = checkSkillName(args.name);
       if (denied) {
         logMcpCall({
           runId: runId ?? null,
@@ -351,7 +323,7 @@ export async function startSkillsServer(
           responseBytes: byteLen(denied.content[0].text),
           durationMs: Date.now() - toolStart,
           success: false,
-          errorCode: 'forbidden',
+          errorCode: 'invalid_name',
         });
         return denied;
       }
@@ -426,7 +398,7 @@ export async function startSkillsServer(
     async (args) => {
       const toolStart = Date.now();
       const requestBytes = byteLen(args);
-      const denied = checkAllowed(args.skill, allowedSkills);
+      const denied = checkSkillName(args.skill);
       if (denied) {
         logMcpCall({
           runId: runId ?? null,
@@ -437,7 +409,7 @@ export async function startSkillsServer(
           responseBytes: byteLen(denied.content[0].text),
           durationMs: Date.now() - toolStart,
           success: false,
-          errorCode: 'forbidden',
+          errorCode: 'invalid_name',
         });
         return denied;
       }
@@ -590,8 +562,7 @@ export async function startSkillsServer(
       dust.client,
       (id: string) => {
         console.log(
-          `[mcp/skills] registered for ${runId ? `runId=${runId}` : `chat project=\"${projectName}\"`} ` +
-            `allowed=${allowedSkills ? `[${allowedSkills.join(',')}]` : '(all)'} serverId=${id}`,
+          `[mcp/skills] registered for ${runId ? `runId=${runId}` : `chat project=\"${projectName}\"`} serverId=${id}`,
         );
         resolve(id);
       },

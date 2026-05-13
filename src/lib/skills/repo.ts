@@ -86,6 +86,13 @@ export function assertValidSkillName(name: unknown): asserts name is string {
 export interface SkillFrontmatter {
   name: string;
   description: string;
+  /**
+   * Optional `when_to_use` hint, mirrors the dust-cli Agent
+   * Skill convention. Surfaced in the agent-facing catalogue
+   * embedded in the MCP tool descriptions so the model can
+   * pick a skill proactively (2026-05-13, catalog-in-description).
+   */
+  whenToUse?: string;
   // future fields can be tolerated (parser ignores unknown keys)
 }
 
@@ -207,8 +214,12 @@ function parseFrontmatter(text: string): ParsedSkillFile {
         `got ${JSON.stringify(kv.name)}.`,
     );
   }
+  const whenToUse =
+    typeof kv.when_to_use === 'string' && kv.when_to_use.trim() !== ''
+      ? kv.when_to_use
+      : undefined;
   return {
-    frontmatter: { name: kv.name, description: kv.description },
+    frontmatter: { name: kv.name, description: kv.description, whenToUse },
     body,
   };
 }
@@ -238,6 +249,13 @@ async function assertUnderSkillsDir(realAbsPath: string): Promise<void> {
 export interface SkillSummary {
   name: string;
   description: string;
+  /**
+   * Optional `when_to_use` hint from SKILL.md frontmatter. When
+   * present, the catalogue-in-description block surfaces it so
+   * the agent can match user intent to a skill without first
+   * having to call read_skill (2026-05-13).
+   */
+  whenToUse?: string;
 }
 
 /** Internal: pairing of exposed (agent-facing) name and on-disk path. */
@@ -392,6 +410,7 @@ export async function listSkills(): Promise<SkillSummary[]> {
         out.push({
           name: entry.exposedName,
           description: parsed.frontmatter.description,
+          whenToUse: parsed.frontmatter.whenToUse,
         });
       } catch (err) {
         // Malformed skill: keep the catalogue alive, but log a

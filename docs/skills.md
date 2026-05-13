@@ -173,32 +173,56 @@ no per-Task allow-list (see "Binding model" below).
   `{ ok: false, exitCode, stdout, stderr }` so the agent can
   react.
 
-## Discovery: `list_skills`, not auto-injection
+## Discovery: catalogue embedded in tool descriptions
 
-Both `/chat` and TaskRuns discover skills the same way: the agent
-calls `list_skills`. **There is no system-prompt injection** —
-neither in task mode nor in chat mode. The tool description on
-`list_skills` is engineered to cue the agent to call it near the
-start of any work it picks up:
+Both `/chat` and TaskRuns discover skills the same way: the
+catalogue is **embedded directly in the `description` of the
+`list_skills` and `read_skill` MCP tools**. Every time the model
+inspects the tool list, it sees both the tool surface AND the
+concrete `{ name: description, when_to_use }` of every available
+skill. No system-prompt injection is performed.
 
-> Skills are reusable, pre-built procedures that can replace
-> dozens of low-level steps (...). ALWAYS call list_skills near
-> the start of a task or a new conversation when you are not
-> already certain which skills apply.
+This mirrors the dust-tt/dust-cli `list_agent_skills` pattern and
+replaces the original ADR-0016 "static description + agent must
+call it spontaneously" approach, which in practice never fired in
+`/chat` mode (see the ADR-0016 amendment in `README.md`,
+2026-05-13).
 
-This matches the existing task-runner pattern (agents discover
-Tasks via `list_tasks` rather than via a system-prompt dump), and
-yields three benefits:
+### Snapshot lifecycle
 
-- One discovery path, identical across task and chat mode.
-- Zero token overhead for tasks/chats that never call a skill.
-- Progressive disclosure: the agent loads only the SKILL.md
-  bodies it actually needs (`read_skill`), never the whole
-  catalogue body.
+The catalogue snapshot is taken **once at MCP server startup**
+(`startSkillsServer()` calls `await listSkills()` and freezes the
+result for the lifetime of the handle):
 
-For autonomous TaskRuns where the agent might forget to call
-`list_skills`, prefer phrasing the task prompt with a soft hint
-(e.g. *"Use available KDust skills if any apply."*).
+| Mode | Handle lifetime | Refresh trigger |
+|---|---|---|
+| `/chat` | per-project (cached in `chatSkillsCache`) | `POST /api/mcp/skills-ensure?force=true` or container restart |
+| TaskRun | per-run (cached in `skillsCache`) | next run (each run gets a fresh handle) |
+
+Adding a new skill on disk therefore **does not** appear in an
+existing `/chat` session automatically — evict the handle to
+refresh. TaskRuns always see the latest catalogue.
+
+### Authoring tip: `when_to_use`
+
+`SKILL.md` frontmatter accepts an optional `when_to_use` field
+that surfaces in the catalogue block:
+
+```yaml
+---
+name: caesar-cipher
+description: Caesar cipher encrypt / decrypt helper.
+when_to_use: |
+  Use when the user asks to encrypt or decrypt a short string
+  with a Caesar shift, or mentions a "ROT-N" style cipher.
+---
+```
+
+Treat `when_to_use` as the **agent's trigger condition**: keep it
+short, action-oriented, and oriented toward user intent rather
+than the skill's internals. It is the primary signal the model
+uses to pick a skill proactively, without having to call
+`read_skill` first.
 
 ## Binding model: there is none
 

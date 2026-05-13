@@ -1703,3 +1703,46 @@ already applied by `fs`, `task-runner`, and `command-runner`.
   `skills.run_skill_script` for invoking a skill's script
   with the skill directory as cwd and the skill's documented
   semantics.
+
+**Amendment — 2026-05-13 (catalogue-in-description)**.
+
+Decision (6) above (discovery via a static `list_skills` tool
+description prompting the agent to "ALWAYS call list_skills near
+the start of a task") proved insufficient in practice: in `/chat`
+mode the Dust agent rarely calls `list_skills` proactively, so
+the `when_to_use` hints carried by individual `SKILL.md` files
+never reach the model and the catalogue stays dormant. The
+dust-tt/dust-cli implementation solves the same problem by
+embedding the catalogue snapshot directly inside the tool
+`description` (its `list_agent_skills` / `read_agent_skill`
+tools).
+
+We adopt the same approach:
+
+1. `SkillFrontmatter` and `SkillSummary` gain an optional
+   `whenToUse` field, populated from the `when_to_use:` YAML key
+   in `SKILL.md` frontmatter (already tolerated by the parser).
+2. `startSkillsServer()` snapshots the catalogue once via
+   `await listSkills()` at server start. The snapshot is frozen
+   for the lifetime of the MCP handle; operators force a refresh
+   via `POST /api/mcp/skills-ensure?force=true` or a container
+   restart. Acceptable tradeoff: the catalogue is git-versioned
+   and changes are operator-driven.
+3. The descriptions of `list_skills` and `read_skill` are built
+   by `buildListSkillsDescription(entries)` /
+   `buildReadSkillDescription(entries)` — base prompt + a
+   disambiguation disclaimer ("DIFFERENT from Dust's native
+   `skill_management__enable_skill`") + a compact catalogue
+   block (`- name: description\n    when_to_use: ...`).
+4. The original "system-prompt injection" hook envisioned by
+   decision (6) is explicitly abandoned. The catalogue is a
+   property of the **tools**, not the **prompt** — same
+   architectural placement as `list_tasks` in `task-runner`, and
+   it survives long conversations without context-window
+   truncation risk.
+
+No schema change, no migration. Container restart (or skills
+handle eviction) required to pick up the change. The token cost
+is shifted from "one tool call per session" to "a one-time bump
+in the tools listing description" — a few hundred tokens for a
+catalogue of ~20 skills, paid once per MCP server registration.

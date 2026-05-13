@@ -102,8 +102,45 @@ Required frontmatter fields:
 | `name` | string | the LEAF segment only (single kebab-case word, no `/`). Must equal the directory name; the full hierarchical path is computed by the walker, not declared in the frontmatter. |
 | `description` | string | one short sentence shown in the catalogue |
 
+### Multi-line values
+
+The frontmatter parser supports YAML block scalars for any field
+(2026-05-13). This matters in practice for long descriptions
+copied from Anthropic or third-party catalogues — no need to
+flatten them to a single line.
+
+| Style | Behaviour |
+|---|---|
+| `description: \|`  | **Literal** — newlines preserved as-is. |
+| `description: >`   | **Folded** — consecutive content lines joined with a space; a blank line becomes a single newline (paragraph break). |
+| `description: \|-` / `>-` | Same as above, trailing newlines stripped (default). |
+| `description: \|+` / `>+` | Same as above, a single trailing newline kept. |
+
+The block ends at the first non-blank line indented less than the
+block's base indent (= the indent of its first content line) —
+i.e. when YAML returns to a top-level key. Example:
+
+```yaml
+---
+name: caesar-cipher
+description: |
+  Encrypt or decrypt a message with a Caesar shift cipher.
+  Use this skill when the user asks for a Caesar shift, ROT-N,
+  or "shift each letter by N" transform.
+---
+```
+
+### Other rules
+
 No `executables:` whitelist — the agent may run any file under
 `scripts/`. The skill directory itself is the whitelist.
+
+A skill whose `SKILL.md` cannot be parsed (missing frontmatter,
+leaf/name mismatch, malformed block scalar) is **skipped** by
+`list_skills` so a single broken skill never takes the catalogue
+down. A `[skills] Skipping malformed skill ...` warning is
+emitted via `console.warn` (captured by the in-app log buffer
+with secret redaction) so the author can diagnose it.
 
 ## Runtime: the `skills` MCP server
 

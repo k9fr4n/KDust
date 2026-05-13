@@ -28,13 +28,14 @@ layout is part of the contract.
 ```
 KDust/skills/
   README.md                    (human-facing index, optional)
-  caesar-cipher/               (flat skill at root)
-    SKILL.md                   (required: frontmatter + body)
-    references/                (optional: any markdown notes)
-      alphabet.md
-    scripts/                   (optional: any executable)
-      encrypt.sh
-      decrypt.sh
+  kdust/                       (curated catalogue — visible by default)
+    my-skill/
+      SKILL.md                 (required: frontmatter + body)
+      references/              (optional)
+      scripts/                 (optional)
+  anthropics/                  (third-party catalogue — hidden by default)
+    artifacts-builder/
+      SKILL.md
   ecritel/                     (category — no SKILL.md)
     seo/                       (sub-category)
       lighthouse-audit/        (nested skill)
@@ -53,7 +54,8 @@ to `SKILLS_DIR`, with `/` as separator. Examples:
 
 | Disk path                                                          | Exposed name (agent-facing)                         |
 |--------------------------------------------------------------------|-----------------------------------------------------|
-| `caesar-cipher/SKILL.md`                                           | `caesar-cipher`                                     |
+| `kdust/my-skill/SKILL.md`                                          | `kdust/my-skill`                                    |
+| `anthropics/artifacts-builder/SKILL.md`                            | `anthropics/artifacts-builder`                      |
 | `ecritel/seo/lighthouse-audit/SKILL.md`                            | `ecritel/seo/lighthouse-audit`                      |
 | `terraform/code-generation/skills/azure-verified-modules/SKILL.md` | `terraform/code-generation/azure-verified-modules`  |
 
@@ -82,17 +84,18 @@ body.
 
 ```markdown
 ---
-name: caesar-cipher
-description: Encrypt or decrypt a message with a Caesar shift cipher.
+name: my-skill
+description: One short sentence shown in the catalogue.
+when_to_use: |
+  Short trigger condition the agent matches against user intent.
+  Optional but strongly recommended for default-visible skills.
 ---
 
-# Caesar cipher
+# My skill
 
-Use this skill when the user asks to encrypt or decrypt a short
-string with a fixed shift. Call `scripts/encrypt.sh <shift> <text>`
-or `scripts/decrypt.sh <shift> <text>` via `run_skill_script`.
-
-See `references/alphabet.md` for the full charset table.
+Body of the skill: when to use it, how to call its scripts, what
+references to read first. The agent loads this on demand via
+`read_skill('kdust/my-skill')`.
 ```
 
 Required frontmatter fields:
@@ -122,11 +125,12 @@ i.e. when YAML returns to a top-level key. Example:
 
 ```yaml
 ---
-name: caesar-cipher
+name: my-skill
 description: |
-  Encrypt or decrypt a message with a Caesar shift cipher.
-  Use this skill when the user asks for a Caesar shift, ROT-N,
-  or "shift each letter by N" transform.
+  First sentence shown in the catalogue, with extra context
+  that would not fit on a single line. The folded form (`>`)
+  joins consecutive lines with spaces; the literal form (`|`)
+  keeps the line breaks verbatim.
 ---
 ```
 
@@ -210,11 +214,11 @@ that surfaces in the catalogue block:
 
 ```yaml
 ---
-name: caesar-cipher
-description: Caesar cipher encrypt / decrypt helper.
+name: release-notes
+description: Draft a Teams-friendly release note from a git range.
 when_to_use: |
-  Use when the user asks to encrypt or decrypt a short string
-  with a Caesar shift, or mentions a "ROT-N" style cipher.
+  Use when the user asks to summarise commits between two refs,
+  draft a release note, or generate a changelog blurb.
 ---
 ```
 
@@ -223,6 +227,31 @@ short, action-oriented, and oriented toward user intent rather
 than the skill's internals. It is the primary signal the model
 uses to pick a skill proactively, without having to call
 `read_skill` first.
+
+## Default scope: the `kdust/` prefix
+
+`list_skills` and the catalogue block embedded in the MCP tool
+descriptions are filtered to a **default scope** (env-driven,
+`KDUST_DEFAULT_SKILL_SCOPE`, default `kdust`). Only skills whose
+exposed name starts with that prefix (e.g. `kdust/my-skill`) are
+advertised to the agent by default.
+
+Hidden skills (`anthropics/...`, `ecritel/...`, anything not in
+the default scope) **remain on disk and are fully usable**:
+
+| Action | Behaviour with a hidden skill |
+|---|---|
+| `read_skill('anthropics/foo')` | ✅ works — any valid name on disk resolves. |
+| `run_skill_script({ skill: 'anthropics/foo', ... })` | ✅ works. |
+| `list_skills()` (no args) | ❌ hidden — only `kdust/*` is returned. |
+| `list_skills({ scope: 'all' })` | ✅ returns everything. |
+| `list_skills({ scope: 'anthropics' })` | ✅ returns the `anthropics/*` sub-tree. |
+
+The pattern intentionally lets large third-party catalogues
+(Anthropic, Microsoft, …) live next to KDust-curated skills
+without diluting the agent's attention. Operators name a hidden
+skill explicitly in the prompt or in the task description when
+they want it used, and the agent loads it on demand.
 
 ## Binding model: there is none
 

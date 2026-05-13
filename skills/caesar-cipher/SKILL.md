@@ -1,6 +1,11 @@
 ---
 name: caesar-cipher
 description: Encrypt or decrypt a message with a Caesar shift cipher.
+when_to_use: |
+  Use when the user asks to encrypt or decrypt a short string
+  with a Caesar shift, or mentions "ROT-N" / "shift cipher" with
+  a known shift value. Not suitable for unknown-shift brute
+  force.
 ---
 
 # Caesar cipher

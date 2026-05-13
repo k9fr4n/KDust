@@ -136,6 +136,76 @@ function checkSkillName(
 }
 
 // ---------------------------------------------------------------
+// Catalogue-in-description (2026-05-13, dust-cli pattern)
+// ---------------------------------------------------------------
+//
+// The Dust agent does not see KDust's filesystem skill catalogue
+// unless something surfaces it to the model. ADR-0016 originally
+// planned a system-prompt injection hook in /api/chat + the cron
+// run-agent phase; that hook was never wired (see commit history).
+// Instead we embed a compact catalogue snapshot directly inside
+// the `description` of the `list_skills` and `read_skill` MCP
+// tools — same approach as dust-tt/dust-cli's `list_agent_skills`.
+//
+// The model sees, at every tool-listing, "here is the tool AND
+// here is what's available", which makes proactive skill loading
+// based on the user's intent / `when_to_use` actually work. The
+// snapshot is taken once at server start and frozen for the life
+// of the handle; new skills appear after the handle is evicted
+// (POST /api/mcp/skills-ensure?force=true) or the container is
+// restarted. Acceptable tradeoff: the catalogue is git-versioned
+// and changes are operator-driven.
+//
+// A disambiguation disclaimer is repeated in each description to
+// prevent confusion with Dust's native `skill_management__enable_skill`
+// tool, which is an unrelated platform feature.
+
+const SKILLS_DISCLAIMER =
+  "These are KDust-local Agent Skills (filesystem-backed SKILL.md " +
+  "procedures under /app/skills/). They are DIFFERENT from Dust's " +
+  'native `skill_management__enable_skill` tool — do not confuse the ' +
+  'two. Call this tool whenever the user asks about your skills, ' +
+  'capabilities, or available procedures, OR when their request ' +
+  'matches one of the catalogued `when_to_use` hints below.';
+
+function formatCatalogueBlock(entries: SkillSummary[]): string {
+  if (entries.length === 0) {
+    return '\n\nNo local skills are currently installed under /app/skills/.';
+  }
+  const lines = entries.map((s) => {
+    const when = s.whenToUse
+      ? `\n    when_to_use: ${s.whenToUse.replace(/\s+/g, ' ').trim()}`
+      : '';
+    return `- ${s.name}: ${s.description}${when}`;
+  });
+  return (
+    `\n\nCurrently available KDust skills (pass the exact \`name\` to ` +
+    `\`read_skill\` to load the full SKILL.md body):\n${lines.join('\n')}`
+  );
+}
+
+function buildListSkillsDescription(entries: SkillSummary[]): string {
+  const base =
+    'Return the catalogue of skills available to this agent. Skills ' +
+    'are reusable, pre-built procedures (encryption helpers, audits, ' +
+    'release-note drafters, ...) that can replace dozens of low-level ' +
+    'steps. ALWAYS call list_skills near the start of a task or a new ' +
+    'conversation when you are not already certain which skills apply: ' +
+    'a 1-line catalogue lookup is much cheaper than reinventing a ' +
+    'procedure. Then call read_skill(name) to load the full SKILL.md ' +
+    'body before invoking any script.';
+  return `${base} ${SKILLS_DISCLAIMER}${formatCatalogueBlock(entries)}`;
+}
+
+function buildReadSkillDescription(entries: SkillSummary[]): string {
+  const base =
+    'Return the full body of a skill (SKILL.md with frontmatter ' +
+    'stripped). Load this BEFORE calling read_skill_resource or ' +
+    'run_skill_script for the skill.';
+  return `${base} ${SKILLS_DISCLAIMER}${formatCatalogueBlock(entries)}`;
+}
+
+// ---------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------
 
@@ -173,22 +243,29 @@ export async function startSkillsServer(
 
   const server = new McpServer({ name: 'skills', version: '0.1.0' });
 
+  // Snapshot the catalogue ONCE at server start so the two
+  // discovery tools can embed it in their descriptions. A failure
+  // here is non-fatal (empty catalogue, the tools still work and
+  // will report errors when called). Freezing the snapshot for
+  // the handle's lifetime keeps the tool description stable for
+  // the duration of a chat / task run; operators evict via
+  // POST /api/mcp/skills-ensure?force=true to pick up new skills.
+  let catalogueSnapshot: SkillSummary[] = [];
+  try {
+    catalogueSnapshot = await listSkills();
+  } catch (e: unknown) {
+    console.warn(
+      `[mcp/skills] catalogue snapshot failed at server start: ${errMessage(e)}`,
+    );
+  }
+
   // -------------------------------------------------------------
   // list_skills
   // -------------------------------------------------------------
   server.registerTool(
     'list_skills',
     {
-      description:
-        'Return the catalogue of skills available to this agent as ' +
-        'an array of { name, description }. Skills are reusable, ' +
-        'pre-built procedures that can replace dozens of low-level ' +
-        'steps (encryption helpers, audits, release-note drafters, ' +
-        '...). ALWAYS call list_skills near the start of a task or ' +
-        'a new conversation when you are not already certain which ' +
-        'skills apply: a 1-line catalogue lookup is much cheaper ' +
-        'than reinventing a procedure. Then call read_skill(name) ' +
-        'to load the full SKILL.md body before invoking any script.',
+      description: buildListSkillsDescription(catalogueSnapshot),
       inputSchema: {},
     },
     async () => {
@@ -234,10 +311,7 @@ export async function startSkillsServer(
   server.registerTool(
     'read_skill',
     {
-      description:
-        'Return the full body of a skill (SKILL.md with frontmatter ' +
-        'stripped). Load this BEFORE calling read_skill_resource or ' +
-        'run_skill_script for the skill.',
+      description: buildReadSkillDescription(catalogueSnapshot),
       inputSchema: {
         name: z.string().describe('Skill name (kebab-case, matches the directory under /app/skills/).'),
       },

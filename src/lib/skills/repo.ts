@@ -65,10 +65,23 @@ export function assertValidSkillName(name: unknown): asserts name is string {
 // ---------------------------------------------------------------
 // Frontmatter parser (hand-rolled, no gray-matter dep).
 //
-// Supports the subset we actually use: a leading `---` line,
-// one `key: value` per line, a closing `---` line, then the
-// body. Quoted values are unquoted; comments and multi-line
-// values are not supported (skills should not need them).
+// Supports the subset we actually use:
+//   - a leading `---` line, a closing `---` line, the body
+//     between them is markdown,
+//   - one `key: value` per line for inline scalars,
+//   - YAML block scalars `key: |` (literal — newlines kept) and
+//     `key: >` (folded — newlines become spaces, blank lines
+//     become a single newline), with optional chomping
+//     indicator `-` (strip trailing newlines, default) or `+`
+//     (keep a single trailing newline). The block ends at the
+//     first non-blank line indented LESS than the block's base
+//     indent (= the indent of the first content line). 2026-05-13.
+//   - quoted inline values are unquoted; `#` lines are comments.
+//
+// Anchored explicitly so the agent doesn't have to flatten
+// long `description: |` blocks to a single line when copying
+// SKILL.md files from Anthropic / Microsoft / third-party
+// catalogues.
 
 export interface SkillFrontmatter {
   name: string;
@@ -94,22 +107,91 @@ function parseFrontmatter(text: string): ParsedSkillFile {
   const body = lines.slice(end + 1).join('\n').replace(/^\n+/, '');
 
   const kv: Record<string, string> = {};
-  for (const raw of fmLines) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const m = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line);
+  let i = 0;
+  while (i < fmLines.length) {
+    const raw = fmLines[i];
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      i++;
+      continue;
+    }
+    const m = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(trimmed);
     if (!m) {
       throw new Error(`Invalid frontmatter line: ${JSON.stringify(raw)}`);
     }
+    const key = m[1];
     let value = m[2].trim();
-    // Strip surrounding quotes if present.
+
+    // YAML block scalar: `|` (literal) or `>` (folded), with
+    // optional chomping indicator (`-` strip / `+` keep
+    // trailing newlines; default = clip = strip then keep one).
+    // We treat default and `-` identically here (no trailing
+    // newline) — that's good enough for description text.
+    const blockMatch = /^([|>])([-+]?)\s*$/.exec(value);
+    if (blockMatch) {
+      const style = blockMatch[1]; // '|' or '>'
+      const chomp = blockMatch[2]; // '', '-', or '+'
+      i++;
+      const blockLines: string[] = [];
+      let baseIndent = -1;
+      while (i < fmLines.length) {
+        const bl = fmLines[i];
+        if (bl.trim() === '') {
+          blockLines.push('');
+          i++;
+          continue;
+        }
+        const indent = bl.length - bl.replace(/^[ \t]+/, '').length;
+        if (baseIndent < 0) {
+          if (indent === 0) break; // no indented content -> empty block
+          baseIndent = indent;
+        }
+        if (indent < baseIndent) break;
+        blockLines.push(bl.slice(baseIndent));
+        i++;
+      }
+      // Drop trailing blank lines collected by the lookahead
+      // that belong to the gap before the next key, not the
+      // block itself.
+      while (blockLines.length > 0 && blockLines[blockLines.length - 1] === '') {
+        blockLines.pop();
+      }
+      let joined: string;
+      if (style === '|') {
+        joined = blockLines.join('\n');
+      } else {
+        // Folded: consecutive non-empty lines joined with ' ';
+        // a blank line becomes a single newline (paragraph break).
+        const parts: string[] = [];
+        let buf: string[] = [];
+        for (const l of blockLines) {
+          if (l === '') {
+            if (buf.length) {
+              parts.push(buf.join(' '));
+              buf = [];
+            }
+            parts.push('');
+          } else {
+            buf.push(l);
+          }
+        }
+        if (buf.length) parts.push(buf.join(' '));
+        joined = parts.join('\n');
+      }
+      if (chomp === '+') joined += '\n';
+      kv[key] = joined;
+      continue; // i already advanced past the block
+    }
+
+    // Plain inline value: strip surrounding quotes if present.
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
     ) {
       value = value.slice(1, -1);
     }
-    kv[m[1]] = value;
+    kv[key] = value;
+    i++;
   }
 
   if (!kv.name) throw new Error('SKILL.md frontmatter is missing `name`.');
@@ -311,7 +393,16 @@ export async function listSkills(): Promise<SkillSummary[]> {
           name: entry.exposedName,
           description: parsed.frontmatter.description,
         });
-      } catch {
+      } catch (err) {
+        // Malformed skill: keep the catalogue alive, but log a
+        // warning so the author can diagnose it. console.warn is
+        // captured by src/lib/logs/buffer.ts (which redacts
+        // secrets) and propagates to docker logs. 2026-05-13.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[skills] Skipping malformed skill "${entry.exposedName}" ` +
+            `(${entry.diskPath}/SKILL.md): ${msg}`,
+        );
         continue;
       }
     }

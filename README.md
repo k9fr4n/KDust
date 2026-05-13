@@ -1672,10 +1672,11 @@ already applied by `fs`, `task-runner`, and `command-runner`.
 **Consequences**:
 
 - New filesystem dependency: the host must bind a `./skills/`
-  directory next to `docker-compose.yml`. The repo ships a
-  `KDust/skills/` folder with one example skill
-  (`caesar-cipher`) and a README so the layout is
-  self-documenting.
+  directory next to `docker-compose.yml`. The repo ships only a
+  `skills/README.md` documenting the layout — actual skill
+  content is operator-managed on the host (no working example
+  is bundled, the bind-mount makes shipping one in-repo
+  unnecessary, 2026-05-13).
 - New image size: `python3` + `pip` + `venv` adds ~50 MB to the
   runner stage. Rebuild required at first deploy.
 - No schema change: option 3 drops the `TaskSkill` table that
@@ -1746,3 +1747,36 @@ handle eviction) required to pick up the change. The token cost
 is shifted from "one tool call per session" to "a one-time bump
 in the tools listing description" — a few hundred tokens for a
 catalogue of ~20 skills, paid once per MCP server registration.
+
+**Amendment — 2026-05-13 (default scope)**.
+
+The catalogue-in-description approach above embeds every skill
+on disk by default. With operators expected to drop large
+third-party catalogues into `skills/` (Anthropic, Microsoft,
+…), the token bump would scale linearly and dilute the agent's
+attention. We introduce a **default scope filter**:
+
+1. New env constant `KDUST_DEFAULT_SKILL_SCOPE` (default
+   `kdust`). Only skills whose exposed name starts with the
+   prefix (e.g. `kdust/<name>`) are surfaced by default — both
+   in the embedded catalogue block of `list_skills` /
+   `read_skill` descriptions, and as the default return value
+   of `listSkills()`.
+2. `list_skills` gains an optional `scope: string` argument:
+   omit (or empty) → use the default; `"all"` → no filter;
+   any prefix (e.g. `"anthropics"`, `"ecritel/seo"`) → filter
+   by that sub-tree on demand.
+3. `read_skill`, `read_skill_resource`, `run_skill_script`
+   **remain unrestricted**: any valid name on disk resolves,
+   visible or not. The operator names a hidden skill
+   explicitly in the prompt and the agent loads it on demand.
+4. Decision (5) above ("the on-disk presence IS the
+   authorization") is unchanged. The scope is a **discovery**
+   filter, not an authorization gate.
+
+Consequence: the bundled `caesar-cipher/` example skill is
+removed from the repository — the `skills/` directory is
+host-mounted (`./skills:/app/skills:ro`), so operators
+populate it themselves and the repo no longer needs to ship a
+working example. `skills/README.md` is kept as the layout
+documentation.

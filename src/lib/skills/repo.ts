@@ -33,12 +33,40 @@ export const SKILLS_DIR: string = (() => {
 })();
 
 // ---------------------------------------------------------------
+// Default scope (2026-05-13).
+//
+// The skills catalogue may contain hundreds of third-party
+// SKILL.md files (Anthropic catalogue, Microsoft, etc.) once
+// the bind-mount points at a curated tree. Embedding ALL of
+// them in the MCP tool description would explode the token
+// cost and dilute the signal.
+//
+// Convention: only skills whose exposed name starts with the
+// configured DEFAULT_SCOPE prefix are surfaced by default in
+// list_skills() and in the catalogue block of the tool
+// descriptions. Everything else stays on disk and is fully
+// usable: the agent can still call read_skill / run_skill_script
+// on a hidden skill IF the operator names it explicitly (or
+// passes scope='all' / a custom prefix to list_skills).
+//
+// Override via env KDUST_DEFAULT_SKILL_SCOPE. Empty string
+// disables filtering (legacy behaviour). 'all' is a synonym.
+export const DEFAULT_SKILL_SCOPE: string =
+  process.env.KDUST_DEFAULT_SKILL_SCOPE ?? 'kdust';
+
+/** Returns true iff `name` is in the given scope. */
+export function isInScope(name: string, scope: string): boolean {
+  if (scope === '' || scope === 'all') return true;
+  return name === scope || name.startsWith(scope + '/');
+}
+
+// ---------------------------------------------------------------
 // Skill name validation.
 //
 // Skills can be organised in a directory tree. A skill's name
 // is its relative path from SKILLS_DIR with `/` as separator:
 //
-//   skills/caesar-cipher/                  -> "caesar-cipher"
+//   skills/kdust/release-notes/            -> "kdust/release-notes"
 //   skills/ecritel/seo/lighthouse-audit/   -> "ecritel/seo/lighthouse-audit"
 //
 // Each segment is kebab-case (matches the original regex). Max
@@ -263,7 +291,7 @@ interface SkillEntry {
   /** Agent-facing name. Path-derived, with literal `skills/`
    *  category segments stripped (Hashicorp plugin-2-skill
    *  convention). Examples:
-   *    "caesar-cipher"
+   *    "kdust/release-notes"
    *    "terraform/code-generation/azure-verified-modules"     */
   exposedName: string;
   /** Relative on-disk path from SKILLS_DIR, with `skills/`
@@ -400,10 +428,25 @@ async function readSkillFile(
  * SKILL.md, frontmatter/leaf mismatch) are silently skipped so
  * a malformed skill never takes the whole catalogue down.
  */
-export async function listSkills(): Promise<SkillSummary[]> {
+export interface ListSkillsOptions {
+  /**
+   * Scope filter (2026-05-13). When omitted, defaults to
+   * DEFAULT_SKILL_SCOPE (env-driven, currently `kdust`). Pass
+   * `'all'` (or `''`) to bypass the filter and list every
+   * skill on disk. Pass any custom prefix (e.g.
+   * `'anthropics'`, `'ecritel/seo'`) to scope by directory.
+   */
+  scope?: string;
+}
+
+export async function listSkills(
+  options: ListSkillsOptions = {},
+): Promise<SkillSummary[]> {
+  const scope = options.scope ?? DEFAULT_SKILL_SCOPE;
   const out: SkillSummary[] = [];
   try {
     for await (const entry of walkSkillEntries(SKILLS_DIR, '', '', 0)) {
+      if (!isInScope(entry.exposedName, scope)) continue;
       try {
         // Validate frontmatter leaf match and pull description.
         const parsed = await readSkillFileFromEntry(entry);

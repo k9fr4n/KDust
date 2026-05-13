@@ -47,6 +47,7 @@ import {
   readSkillResource,
   getSkillCwd,
   isValidSkillName,
+  DEFAULT_SKILL_SCOPE,
   type SkillSummary,
 } from '../skills/repo';
 
@@ -168,9 +169,26 @@ const SKILLS_DISCLAIMER =
   'capabilities, or available procedures, OR when their request ' +
   'matches one of the catalogued `when_to_use` hints below.';
 
+function scopeNoteForDescription(): string {
+  if (DEFAULT_SKILL_SCOPE === '' || DEFAULT_SKILL_SCOPE === 'all') return '';
+  return (
+    ` The list below is filtered to the default scope ` +
+    `\`${DEFAULT_SKILL_SCOPE}/*\` — additional skills may exist on ` +
+    `disk under other prefixes; call \`list_skills({ scope: "all" })\` ` +
+    'to see everything, or pass any prefix (e.g. ' +
+    '`{ scope: "anthropics" }`) to scope by category. ' +
+    '`read_skill` and `run_skill_script` accept ANY valid skill name, ' +
+    'visible or not, when invoked by name.'
+  );
+}
+
 function formatCatalogueBlock(entries: SkillSummary[]): string {
   if (entries.length === 0) {
-    return '\n\nNo local skills are currently installed under /app/skills/.';
+    return (
+      '\n\nNo skills currently match the default scope ' +
+      `\`${DEFAULT_SKILL_SCOPE}/*\`. Pass \`{ scope: "all" }\` to ` +
+      'list every skill on disk.'
+    );
   }
   const lines = entries.map((s) => {
     const when = s.whenToUse
@@ -194,14 +212,18 @@ function buildListSkillsDescription(entries: SkillSummary[]): string {
     'a 1-line catalogue lookup is much cheaper than reinventing a ' +
     'procedure. Then call read_skill(name) to load the full SKILL.md ' +
     'body before invoking any script.';
-  return `${base} ${SKILLS_DISCLAIMER}${formatCatalogueBlock(entries)}`;
+  return (
+    `${base} ${SKILLS_DISCLAIMER}${scopeNoteForDescription()}` +
+    `${formatCatalogueBlock(entries)}`
+  );
 }
 
 function buildReadSkillDescription(entries: SkillSummary[]): string {
   const base =
     'Return the full body of a skill (SKILL.md with frontmatter ' +
     'stripped). Load this BEFORE calling read_skill_resource or ' +
-    'run_skill_script for the skill.';
+    'run_skill_script for the skill. Accepts ANY valid skill name on ' +
+    'disk, including names outside the default scope shown below.';
   return `${base} ${SKILLS_DISCLAIMER}${formatCatalogueBlock(entries)}`;
 }
 
@@ -252,6 +274,9 @@ export async function startSkillsServer(
   // POST /api/mcp/skills-ensure?force=true to pick up new skills.
   let catalogueSnapshot: SkillSummary[] = [];
   try {
+    // Snapshot uses the default scope (e.g. `kdust/*`). Hidden
+    // skills are still callable by name via read_skill /
+    // run_skill_script — they are just not advertised here.
     catalogueSnapshot = await listSkills();
   } catch (e: unknown) {
     console.warn(
@@ -266,13 +291,27 @@ export async function startSkillsServer(
     'list_skills',
     {
       description: buildListSkillsDescription(catalogueSnapshot),
-      inputSchema: {},
+      inputSchema: {
+        scope: z
+          .string()
+          .optional()
+          .describe(
+            'Optional scope filter. Omit (or pass an empty string) ' +
+              'to use the default scope (currently ' +
+              `"${DEFAULT_SKILL_SCOPE}"). Pass "all" to list every ` +
+              'skill on disk. Pass any prefix (e.g. "anthropics", ' +
+              '"ecritel/seo") to scope by directory.',
+          ),
+      },
     },
-    async () => {
+    async (args) => {
       const toolStart = Date.now();
+      const requestBytes = byteLen(args ?? {});
       let entries: SkillSummary[] = [];
       try {
-        entries = await listSkills();
+        entries = await listSkills({
+          scope: typeof args?.scope === 'string' ? args.scope : undefined,
+        });
       } catch (e: unknown) {
         const text = JSON.stringify({ status: 'error', error: errMessage(e) });
         logMcpCall({
@@ -280,7 +319,7 @@ export async function startSkillsServer(
           server: 'skills',
           tool: 'list_skills',
           projectName,
-          requestBytes: 0,
+          requestBytes,
           responseBytes: byteLen(text),
           durationMs: Date.now() - toolStart,
           success: false,
@@ -295,7 +334,7 @@ export async function startSkillsServer(
         server: 'skills',
         tool: 'list_skills',
         projectName,
-        requestBytes: 0,
+        requestBytes,
         responseBytes: byteLen(text),
         durationMs: Date.now() - toolStart,
         success: true,

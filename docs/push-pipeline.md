@@ -79,6 +79,13 @@ another run of the **same task** is already `running`, this run is
 refused with `status='skipped'` — prevents pile-up when a cron
 period is shorter than the run duration.
 
+**Repo-less bypass (Franck 2026-05-14).** The lock exists *solely*
+to serialise mutations on a shared git working tree. Projects with
+`gitUrl=null` have no working tree to protect, so preflight skips
+the lock query entirely and parallel runs proceed unimpeded. This
+unblocks agent-only / no-repo projects where running several tasks
+in parallel is both safe and desirable.
+
 Successor dispatch (ADR-0009, 2026-05-05) is **deferred** to the end
 of the predecessor's success path: by the time the successor's
 preflight runs, the predecessor's `TaskRun.status` is already

@@ -324,8 +324,10 @@ top-level run (decoupled chain — no parent linkage).
 
 ## Concurrency model
 
-- Per-project mutex on every run: two writing tasks on the same
-  `projectPath` serialise. A successor enqueued via
+- Per-project mutex on every run **for projects with a git remote**:
+  two writing tasks on the same `projectPath` serialise. Projects
+  with `gitUrl=null` (agent-only / no-repo) bypass the lock entirely
+  — no working tree, no race. A successor enqueued via
   `enqueue_followup` is allowed to acquire the lock while its
   predecessor is still flagged `running` (the predecessor's id is
   passed as `predecessorRunId` and excluded from the lock check).

@@ -156,6 +156,8 @@ describe('runPreflight', () => {
 
   it('skips when a recent concurrent run exists for the same project (different job)', async () => {
     mockedFindTask.mockResolvedValueOnce(makeTask());
+    // Project has a git remote → lock is active.
+    mockedFindProject.mockResolvedValueOnce(makeProject());
     mockedFindRun.mockResolvedValueOnce({
       id: 'run_other',
       taskId: 'task_other',
@@ -168,6 +170,23 @@ describe('runPreflight', () => {
     const data = mockedCreateRun.mock.calls[0][0].data;
     expect(data.status).toBe('skipped');
     expect(data.output).toMatch(/sibling-job.*still running/);
+  });
+
+  it('LIFTS the concurrency lock for projects with no git remote (gitUrl=null)', async () => {
+    // Repo-less project → no working-tree mutation → parallel
+    // runs are safe → preflight must NOT even query for siblings
+    // and must NOT skip. (Franck 2026-05-14)
+    mockedFindTask.mockResolvedValueOnce(makeTask());
+    mockedFindProject.mockResolvedValueOnce(makeProject({ gitUrl: null }));
+    mockedCreateRun.mockResolvedValueOnce(stubCreatedRun('run_parallel'));
+    const r = await runPreflight('task_1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('expected ok');
+    expect(r.run.id).toBe('run_parallel');
+    // Critical: the concurrency lookup was skipped entirely —
+    // not just satisfied with no hit.
+    expect(mockedFindRun).not.toHaveBeenCalled();
+    expect(mockedUpdateRun).not.toHaveBeenCalled();
   });
 
   it('sweeps a stale concurrent run (>1h) and proceeds', async () => {

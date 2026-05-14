@@ -152,10 +152,40 @@ export async function runPreflight(
     return { ok: false, runId: errRow.id };
   }
 
+  // Fetch the parent project UP FRONT (Franck 2026-05-14): moved
+  // above the concurrency lock so we can short-circuit the lock for
+  // projects with no git remote (gitUrl is null). The lock exists
+  // SOLELY to serialise `git reset --hard` / checkout on a shared
+  // working tree — repo-less projects have no working-tree mutation
+  // and parallel runs are safe. Also feeds branch-policy resolution
+  // below; the second lookup that used to live there is gone.
+  //
+  // Phase 1 folder hierarchy (2026-04-27): effectiveProjectPath is
+  // the fsPath of the project (e.g. "clients/acme/webapp"), NOT the
+  // leaf name. Look up by fsPath; fall back to legacy `name` for
+  // tasks whose projectPath wasn't yet migrated by folder-migration
+  // (e.g. when the operator runs in dry-run mode and triggers a run
+  // before flipping to apply).
+  // #11 (2026-04-29): single query OR'd on (fsPath, name) instead of
+  // findUnique-then-findFirst. fsPath is the canonical key per ADR-0005;
+  // the name fallback only matters for legacy rows whose Phase 1 folder
+  // migration was deferred. Prisma compiles this to one SQL with
+  // an OR clause — same row-set, half the round-trips.
+  const project = await db.project.findFirst({
+    where: {
+      OR: [{ fsPath: effectiveProjectPath }, { name: effectiveProjectPath }],
+    },
+  });
+
   // [1] Concurrency lock ------------------------------------------------------
   // Scoped per **project directory**, not per job, because two jobs sharing
   // the same /projects/<path> would race on `git reset --hard` / branch
   // checkout and produce commits with mixed content.
+  //
+  // Skipped entirely when the project has no git remote (gitUrl null):
+  // no working tree mutation → no race → no need to serialise. This
+  // unblocks agent-only / repo-less projects that legitimately run
+  // multiple tasks in parallel. (Franck 2026-05-14)
   //
   // Stale detection: a run older than 1h with no completion signal is
   // considered crashed and is auto-marked failed so the next run can proceed.
@@ -189,18 +219,21 @@ export async function runPreflight(
   // same dir would never see each other (template Task.projectPath
   // is null). Pre-2026-04-29 rows lack the column → for them we
   // fall back to the task join so legacy in-flight runs still lock.
-  const concurrent = await db.taskRun.findFirst({
-    where: {
-      status: 'running',
-      OR: [
-        { projectPath: effectiveProjectPath },
-        { AND: [{ projectPath: null }, { task: { is: { projectPath: effectiveProjectPath } } }] },
-      ],
-      ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
-    },
-    orderBy: { startedAt: 'desc' },
-    include: { task: { select: { name: true } } },
-  });
+  const hasRepo = !!project?.gitUrl;
+  const concurrent = hasRepo
+    ? await db.taskRun.findFirst({
+        where: {
+          status: 'running',
+          OR: [
+            { projectPath: effectiveProjectPath },
+            { AND: [{ projectPath: null }, { task: { is: { projectPath: effectiveProjectPath } } }] },
+          ],
+          ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
+        },
+        orderBy: { startedAt: 'desc' },
+        include: { task: { select: { name: true } } },
+      })
+    : null;
   if (concurrent) {
     const ageMs = Date.now() - concurrent.startedAt.getTime();
     if (ageMs < 60 * 60 * 1000) {
@@ -231,27 +264,6 @@ export async function runPreflight(
       data: { status: 'failed', error: 'stale (no completion signal >1h)', finishedAt: new Date() },
     });
   }
-
-  // Fetch the parent project UP FRONT so we can resolve the branch
-  // policy (Phase 1, Franck 2026-04-19). Project is the source of
-  // truth for baseBranch/branchPrefix/protectedBranches; task rows
-  // carry nullable overrides only. resolveBranchPolicy merges both.
-  // Phase 1 folder hierarchy (2026-04-27): effectiveProjectPath is
-  // the fsPath of the project (e.g. "clients/acme/webapp"), NOT the
-  // leaf name. Look up by fsPath; fall back to legacy `name` for
-  // tasks whose projectPath wasn't yet migrated by folder-migration
-  // (e.g. when the operator runs in dry-run mode and triggers a run
-  // before flipping to apply).
-  // #11 (2026-04-29): single query OR'd on (fsPath, name) instead of
-  // findUnique-then-findFirst. fsPath is the canonical key per ADR-0005;
-  // the name fallback only matters for legacy rows whose Phase 1 folder
-  // migration was deferred. Prisma compiles this to one SQL with
-  // an OR clause — same row-set, half the round-trips.
-  const project = await db.project.findFirst({
-    where: {
-      OR: [{ fsPath: effectiveProjectPath }, { name: effectiveProjectPath }],
-    },
-  });
 
   // Fallback policy when no project row exists yet (edge case: legacy
   // tasks with a projectPath pointing nowhere). We still need defaults

@@ -200,6 +200,60 @@ export function parseGeneratedFiles(json: string | null | undefined): GeneratedF
 }
 
 /**
+ * Map a Dust contentType to a sensible file extension when the title
+ * Dust gave us has none. Kept narrow on purpose — only the formats
+ * we've actually seen agents produce. Falls back to `bin` rather
+ * than guessing wildly.
+ */
+const EXT_BY_CT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+  'image/bmp': 'bmp',
+  'application/pdf': 'pdf',
+  'application/json': 'json',
+  'application/xml': 'xml',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/csv': 'csv',
+  'text/html': 'html',
+  'text/css': 'css',
+  'text/javascript': 'js',
+  'text/typescript': 'ts',
+  'text/x-python': 'py',
+  'application/x-sh': 'sh',
+  'text/x-sh': 'sh',
+  'text/yaml': 'yaml',
+  'application/x-yaml': 'yaml',
+  'audio/mpeg': 'mp3',
+  'audio/wav': 'wav',
+  'audio/ogg': 'ogg',
+  'audio/webm': 'weba',
+  'audio/x-m4a': 'm4a',
+};
+
+/**
+ * Pick a download filename for an agent-generated file. Agents usually
+ * pick a sensible title ("chart.png") and we use it verbatim. When
+ * the title carries no extension we append one based on contentType,
+ * so the browser's "Save As" dialog never offers an extension-less
+ * `fil_xxx`. Final string is also sanitised to the same charset the
+ * server-side proxy accepts (see /api/files/[sId]).
+ */
+export function downloadName(f: { title: string; contentType: string; fileId: string }): string {
+  const baseRaw = f.title && f.title.trim().length > 0 ? f.title.trim() : f.fileId;
+  // Sanitise: keep letters, digits, common punctuation. Replace the
+  // rest with '_' so we still pass the server's allow-list regex.
+  const safeBase = baseRaw.replace(/[^A-Za-z0-9 _.()\-\u00C0-\u017F]/g, '_');
+  const hasExt = /\.[A-Za-z0-9]{1,8}$/.test(safeBase);
+  if (hasExt) return safeBase.slice(0, 200);
+  const ext = EXT_BY_CT[f.contentType] ?? 'bin';
+  return `${safeBase}.${ext}`.slice(0, 200);
+}
+
+/**
  * Format a byte-less file size hint — we don't get a size from Dust
  * for generated files, so we lean on the content type label.
  */
@@ -232,38 +286,58 @@ export function GeneratedFilesPanel({ files }: { files: GeneratedFile[] }) {
       {files.map((f) => {
         const isImage = f.contentType.startsWith('image/');
         const viewHref = `/api/files/${f.fileId}`;
-        const dlHref = `/api/files/${f.fileId}?download=1`;
+        const name = downloadName(f);
+        // The server uses `name` to set Content-Disposition, which
+        // overrides the <a download="..."> attribute — passing it
+        // is what gives us a proper extension in the Save dialog.
+        const dlHref = `/api/files/${f.fileId}?download=1&name=${encodeURIComponent(name)}`;
         if (isImage) {
           return (
-            <a
+            <div
               key={f.fileId}
-              href={viewHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`${f.title} — open original`}
-              className="block rounded-md overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500"
+              className="relative group rounded-md overflow-hidden border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-slate-400 dark:hover:border-slate-500"
             >
-              <img
-                src={viewHref}
-                alt={f.title}
-                loading="lazy"
-                className="block max-w-[240px] max-h-[240px] object-contain"
-              />
-            </a>
+              <a
+                href={viewHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`${f.title} — open original`}
+                className="block"
+              >
+                <img
+                  src={viewHref}
+                  alt={f.title}
+                  loading="lazy"
+                  className="block max-w-[240px] max-h-[240px] object-contain"
+                />
+              </a>
+              {/* Download button — distinct target from the viewer
+                  so the user can save the file with its proper
+                  filename (extension included) without right-click
+                  gymnastics. Always rendered; opacity ramps on
+                  hover/focus so the tile stays clean at rest. */}
+              <a
+                href={dlHref}
+                download={name}
+                title={`Download ${name}`}
+                aria-label={`Download ${name}`}
+                className="absolute top-1.5 right-1.5 inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-900/70 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+              >
+                <Download size={14} />
+              </a>
+            </div>
           );
         }
         return (
           <a
             key={f.fileId}
             href={dlHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            download={f.title}
-            title={f.snippet ? `${f.title}\n\n${f.snippet}` : f.title}
+            download={name}
+            title={f.snippet ? `${name}\n\n${f.snippet}` : name}
             className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-200"
           >
             <FileText size={14} className="text-blue-500 flex-none" />
-            <span className="truncate font-medium min-w-0">{f.title}</span>
+            <span className="truncate font-medium min-w-0">{name}</span>
             <span className="text-[10px] text-slate-400 dark:text-slate-500 flex-none uppercase">
               {shortContentType(f.contentType)}
             </span>

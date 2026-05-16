@@ -50,9 +50,32 @@ export async function GET(req: Request, ctx: Ctx) {
   // save.
   const url = new URL(req.url);
   const forceDownload = url.searchParams.get('download') === '1';
+  /**
+   * Optional caller-provided filename (Franck 2026-05-16). When the
+   * /chat surface shows an agent-generated file it knows the human
+   * title (e.g. "graph.png"); passing it here lets us forward the
+   * SAME name to the browser's "Save As" dialog instead of the
+   * opaque `fil_xxx` sId. Sanitised below — anything beyond a sane
+   * filename (path traversal, control chars, quotes) is rejected so
+   * the value can be safely embedded in `Content-Disposition`.
+   */
+  const rawName = url.searchParams.get('name');
   if (!/^fil_[A-Za-z0-9_-]+$/.test(sId)) {
     return badRequest('invalid_file_id');
   }
+  // Allow letters, digits, dot, dash, underscore, space, parentheses
+  // and common accents. Length cap = 200 chars (Windows MAX_PATH-ish).
+  // Anything else → ignored, we fall back to sId. We deliberately do
+  // NOT use encodeURIComponent here because Content-Disposition needs
+  // a literal filename; the regex IS the sanitiser.
+  const safeName =
+    rawName &&
+    rawName.length > 0 &&
+    rawName.length <= 200 &&
+    /^[A-Za-z0-9 _.()\-\u00C0-\u017F]+$/.test(rawName) &&
+    !rawName.includes('..')
+      ? rawName
+      : null;
 
   const d = await getDustClient();
   if (!d) return unauthorized('not_connected');
@@ -96,7 +119,8 @@ export async function GET(req: Request, ctx: Ctx) {
 
   const outHeaders: Record<string, string> = { 'content-type': contentType };
   if (forceDownload) {
-    outHeaders['content-disposition'] = `attachment; filename="${sId}"`;
+    const filename = safeName ?? sId;
+    outHeaders['content-disposition'] = `attachment; filename="${filename}"`;
   }
 
   const body = upstream.body;

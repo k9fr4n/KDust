@@ -39,6 +39,14 @@ export async function GET(
     // the client formats them identically to the live SSE path so
     // the displayed pills don't shift when reattaching.
     streamToolCalls: active?.toolCalls ?? [],
+    /**
+     * Raw JSON payload of the latest `generated_files` event (or
+     * null when the in-flight agent hasn't surfaced any file yet).
+     * The client parses it the same way it parses the SSE payload,
+     * so a passive observer renders the chips in sync with the
+     * tab driving the stream. (Franck 2026-05-16)
+     */
+    streamGeneratedFiles: active?.generatedFiles ?? null,
   });
 }
 

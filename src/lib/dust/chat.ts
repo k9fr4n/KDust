@@ -902,6 +902,49 @@ export async function streamAgentReply(
           'generatedFiles=',
           generatedFiles.length,
         );
+        // One-shot diagnostic dump (Franck 2026-05-16). When the
+        // agent invoked a `files__*` MCP tool but we captured ZERO
+        // generated files, log a slim view of agent_message_success
+        // so we can see where Dust actually carries the fileId for
+        // the built-in `files` MCP server. Auto-removed once the
+        // structure is identified.
+        if (generatedFiles.length === 0) {
+          const calledFilesTool = Array.from(toolNamesSet).some((t) =>
+            /^files?__/i.test(t),
+          );
+          if (calledFilesTool) {
+            try {
+              const dumpAction = (a: Record<string, unknown> | undefined) => {
+                if (!a) return null;
+                return {
+                  keys: Object.keys(a),
+                  functionCallName: a.functionCallName,
+                  toolName: a.toolName,
+                  internalMCPServerName: a.internalMCPServerName,
+                  generatedFiles: a.generatedFiles,
+                  output: a.output,
+                };
+              };
+              const m = ev.message as Record<string, unknown> | undefined;
+              console.log(
+                '[chat/stream:DIAG-FILES] no files captured but files__* called. message=',
+                JSON.stringify(
+                  {
+                    keys: m ? Object.keys(m) : null,
+                    generatedFiles: m?.generatedFiles,
+                    actions: Array.isArray(m?.actions)
+                      ? (m.actions as Record<string, unknown>[]).map(dumpAction)
+                      : null,
+                  },
+                  null,
+                  2,
+                ).slice(0, 20000),
+              );
+            } catch (e) {
+              console.log('[chat/stream:DIAG-FILES] dump failed:', e);
+            }
+          }
+        }
         onEvent('done', finalContent);
         return { content: finalContent, stats: buildStats() };
       }

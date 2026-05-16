@@ -28,9 +28,17 @@ type Props = {
   src: string;
   alt?: string;
   title?: string;
+  /**
+   * Optional download filename (Franck 2026-05-16). Set by the
+   * markdown component when the inline `fil_xxx` matches an
+   * entry in `Message.generatedFiles` — gives the browser's Save
+   * dialog a name with a proper extension instead of the bare
+   * `fil_xxx` sId.
+   */
+  downloadName?: string;
 };
 
-export function ChatImage({ src, alt, title }: Props) {
+export function ChatImage({ src, alt, title, downloadName }: Props) {
   const [open, setOpen] = useState(false);
 
   // Close on Escape when the lightbox is open.
@@ -49,8 +57,14 @@ export function ChatImage({ src, alt, title }: Props) {
   // src with a `download` attr — browsers will honour it when the
   // resource is same-origin or CORS-allowed.
   const downloadHref = src.startsWith('/api/files/')
-    ? `${src}${src.includes('?') ? '&' : '?'}download=1`
+    ? `${src}${src.includes('?') ? '&' : '?'}download=1${
+        downloadName ? `&name=${encodeURIComponent(downloadName)}` : ''
+      }`
     : src;
+  // Hint to the browser's Save As — server-side Content-Disposition
+  // takes precedence when present, but this is the fallback for
+  // external-origin images where the proxy isn't involved.
+  const dlAttr = downloadName ?? true;
 
   return (
     <>
@@ -87,7 +101,7 @@ export function ChatImage({ src, alt, title }: Props) {
             does not fire. */}
         <a
           href={downloadHref}
-          download
+          download={dlAttr}
           onClick={(e) => e.stopPropagation()}
           className="absolute top-1 right-1 inline-flex items-center justify-center w-7 h-7 rounded-md bg-black/55 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/75"
           title="Download"
@@ -113,7 +127,7 @@ export function ChatImage({ src, alt, title }: Props) {
           >
             <a
               href={downloadHref}
-              download
+              download={dlAttr}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-sm"
               title="Download"
             >

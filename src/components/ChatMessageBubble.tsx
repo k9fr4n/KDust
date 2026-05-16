@@ -321,7 +321,11 @@ export function GeneratedFilesPanel({ files }: { files: GeneratedFile[] }) {
                 download={name}
                 title={`Download ${name}`}
                 aria-label={`Download ${name}`}
-                className="absolute top-1.5 right-1.5 inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-900/70 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                // pointer-events-none while invisible (Franck
+                // 2026-05-16): otherwise an opacity-0 link still
+                // captures clicks on the image's top-right corner
+                // and silently hijacks the "open original" action.
+                className="absolute top-1.5 right-1.5 inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-900/70 text-white opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus:opacity-100 focus:pointer-events-auto transition-opacity"
               >
                 <Download size={14} />
               </a>
@@ -471,6 +475,28 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
     () => (role === 'agent' ? parseGeneratedFiles(generatedFilesJson) : []),
     [role, generatedFilesJson],
   );
+  /**
+   * fileId → desired download filename map (Franck 2026-05-16).
+   * Threaded into MessageMarkdown so inline `![](fil_xxx)` images
+   * get the same proper-extension Save dialog as the panel chips.
+   */
+  const fileNamesByFileId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const f of generatedFiles) m[f.fileId] = downloadName(f);
+    return m;
+  }, [generatedFiles]);
+  /**
+   * Panel-eligible files: the agent often inlines images as
+   * `![](fil_xxx)` in its markdown reply, and MessageMarkdown
+   * renders those via <ChatImage />. Showing the same file in the
+   * panel below would duplicate it. Substring match against the
+   * raw content is sufficient here because Dust fileIds are
+   * `fil_<base62>` with no collision-prone substrings.
+   */
+  const panelFiles = useMemo(() => {
+    if (generatedFiles.length === 0) return generatedFiles;
+    return generatedFiles.filter((f) => !content.includes(f.fileId));
+  }, [generatedFiles, content]);
   return (
     <Fragment>
       {showDay && createdAt && (
@@ -516,7 +542,10 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
             {role === 'system' ? (
               content
             ) : (
-              <MessageMarkdown tone={isUser ? 'user' : 'agent'}>
+              <MessageMarkdown
+                tone={isUser ? 'user' : 'agent'}
+                fileNamesByFileId={fileNamesByFileId}
+              >
                 {content}
               </MessageMarkdown>
             )}
@@ -525,8 +554,8 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
               2026-05-16). Rendered BELOW the bubble — keeps the
               visual flow "agent says X, attaches Y". Hidden when
               empty so non-file turns stay compact. */}
-          {generatedFiles.length > 0 && (
-            <GeneratedFilesPanel files={generatedFiles} />
+          {panelFiles.length > 0 && (
+            <GeneratedFilesPanel files={panelFiles} />
           )}
           {/* Metadata row (Franck 2026-04-23 15:31):
               - timestamp bumped 10px \u2192 11px (old was hard to read),

@@ -81,6 +81,13 @@ export async function GET(req: Request, ctx: Ctx) {
   if (!d) return unauthorized('not_connected');
 
   // Raw request so we can keep the stream + forward headers.
+  // `status` and `ok` are part of the SDK's DustResponse contract
+  // (index.d.ts line 15) — exposing them lets us surface 4xx/5xx
+  // upstream errors as proper API errors instead of streaming
+  // Dust's JSON error envelope verbatim (Franck 2026-05-16, after
+  // seeing files saved with `{"error":{"type":"invalid_request_error",
+  // "message":"The file use case is not supported by the API."}}`
+  // as their payload).
   const res = await (d.client as unknown as {
     request: (args: {
       method: 'GET';
@@ -91,6 +98,8 @@ export async function GET(req: Request, ctx: Ctx) {
       error?: { message: string };
       value?: {
         response: {
+          status: number;
+          ok: boolean;
           body: ReadableStream<Uint8Array> | string;
           headers?: Headers | Record<string, string>;
         };
@@ -110,6 +119,52 @@ export async function GET(req: Request, ctx: Ctx) {
   }
 
   const upstream = res.value!.response;
+
+  // Upstream HTTP error guard (Franck 2026-05-16). The SDK marks the
+  // Result as Ok as long as the request reached Dust — a 400/404/etc.
+  // with a JSON error envelope still flows through here. Without this
+  // check we'd stream `{"error":{"type":"invalid_request_error",
+  // "message":"The file use case is not supported by the API."}}` as
+  // the file body, which the browser then happily saves to disk. Buffer
+  // the small JSON, extract the message, return a proper API error.
+  if (!upstream.ok) {
+    let upstreamMsg = `upstream ${upstream.status}`;
+    try {
+      const body = upstream.body;
+      const raw =
+        typeof body === 'string' ? body : await new Response(body).text();
+      // Dust shape: { error: { type, message } } — fall back to raw on
+      // anything else (HTML 502, etc).
+      try {
+        const parsed = JSON.parse(raw) as {
+          error?: { message?: string; type?: string };
+        };
+        if (parsed?.error?.message) {
+          upstreamMsg =
+            parsed.error.type
+              ? `${parsed.error.type}: ${parsed.error.message}`
+              : parsed.error.message;
+        }
+      } catch {
+        // Non-JSON body — keep the raw snippet, capped.
+        upstreamMsg = raw.slice(0, 500) || upstreamMsg;
+      }
+    } catch {
+      // Body read failure — keep the status-only message.
+    }
+    console.error(
+      '[files] upstream returned non-2xx',
+      sId,
+      upstream.status,
+      upstreamMsg,
+    );
+    // 404 stays 404 (lets the UI hide the chip cleanly); everything
+    // else surfaces as 502 so a transient upstream blip doesn't get
+    // misinterpreted as a client mistake.
+    const proxyStatus = upstream.status === 404 ? 404 : 502;
+    return apiError(upstreamMsg, proxyStatus);
+  }
+
   const hdrs = upstream.headers;
   const contentType =
     (hdrs instanceof Headers

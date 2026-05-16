@@ -4,7 +4,13 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
-import { ChatMessageBubble, ToolInvocationsPanel } from '@/components/ChatMessageBubble';
+import {
+  ChatMessageBubble,
+  ToolInvocationsPanel,
+  GeneratedFilesPanel,
+  parseGeneratedFiles,
+  type GeneratedFile,
+} from '@/components/ChatMessageBubble';
 import {
   publishConvEvent,
   subscribeConvEvents,
@@ -62,6 +68,14 @@ type Msg = {
    * shallow compare still skips re-renders cleanly.
    */
   toolInvocations?: string | null;
+  /**
+   * Raw JSON blob from Message.generatedFiles (agent rows only).
+   * Surfaced from /api/conversation/:id so the bubble can render
+   * the same file chips Dust shows in its native UI. Kept as a
+   * string to preserve React.memo shallow-compare semantics on
+   * ChatMessageBubble. (Franck 2026-05-16)
+   */
+  generatedFiles?: string | null;
 };
 
 /**
@@ -248,6 +262,15 @@ function ChatPageInner({
     return null;
   };
   const [toolCalls, setToolCalls] = useState<Array<{ tool: string; params: unknown }>>([]);
+  /**
+   * Live generated-files list for the in-flight agent reply
+   * (Franck 2026-05-16). The server emits the FULL deduped list
+   * on every `generated_files` SSE event, so we simply replace
+   * the state on each frame — no merging required. Cleared on
+   * `done` (the persisted Message row then carries the same
+   * payload and the standard bubble takes over).
+   */
+  const [streamGeneratedFiles, setStreamGeneratedFiles] = useState<GeneratedFile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<string | null>(null);
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
@@ -462,10 +485,15 @@ function ChatPageInner({
               .filter((x: { tool: string; params: unknown } | null): x is { tool: string; params: unknown } => x !== null)
           : [],
       );
+      // Seed the live generated-files chips from the replay buffer
+      // so a tab joining mid-stream sees what the agent already
+      // surfaced. (Franck 2026-05-16)
+      setStreamGeneratedFiles(parseGeneratedFiles(j.streamGeneratedFiles ?? null));
     } else {
       setStreamedText('');
       setCotText('');
       setToolCalls([]);
+      setStreamGeneratedFiles([]);
     }
     // An open conversation \"owns\" the agent choice \u2014 beats project
     // default and beats list[0] fallback.
@@ -829,6 +857,7 @@ function ChatPageInner({
     setStreamedText('');
     setCotText('');
     setToolCalls([]);
+    setStreamGeneratedFiles([]);
     try {
       const r = await fetch(
         `/api/conversation/${convId}/stream?userMessageSId=${encodeURIComponent(userMessageSId)}`,
@@ -864,11 +893,16 @@ function ChatPageInner({
           else if (ev === 'tool_call') {
             const parsed = parseToolCallPayload(data);
             if (parsed) setToolCalls((arr) => [...arr, parsed]);
+          } else if (ev === 'generated_files') {
+            // Server already emits the full deduped JSON list each
+            // time, so we just replace — no reconciliation needed.
+            setStreamGeneratedFiles(parseGeneratedFiles(data));
           } else if (ev === 'error') setError(data);
           else if (ev === 'done') {
             setStreamedText('');
             setCotText('');
             setToolCalls([]);
+            setStreamGeneratedFiles([]);
             // reload conv from server (agent message now persisted)
             await loadConv(convId);
             await refreshConvs();
@@ -1778,6 +1812,7 @@ function ChatPageInner({
                   roleLabel={roleLabel}
                   showDay={showDay}
                   toolInvocationsJson={m.toolInvocations ?? null}
+                  generatedFilesJson={m.generatedFiles ?? null}
                 />
               );
             });
@@ -1815,6 +1850,18 @@ function ChatPageInner({
               <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-[15px] bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 break-words min-w-0 overflow-hidden">
                 <MessageMarkdown tone="agent">{streamedText}</MessageMarkdown>
                 <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
+              </div>
+            </div>
+          )}
+
+          {/* Live generated-files chips (Franck 2026-05-16). Shown
+              under the streaming bubble while the agent is still
+              replying, then handed off to the persisted-bubble
+              renderer when `done` fires (state cleared above). */}
+          {streamGeneratedFiles.length > 0 && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] w-full">
+                <GeneratedFilesPanel files={streamGeneratedFiles} />
               </div>
             </div>
           )}

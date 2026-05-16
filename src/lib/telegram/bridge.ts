@@ -39,6 +39,7 @@ import {
   postUserMessage,
   streamAgentReply,
   toolInvocationsToJson,
+  generatedFilesToJson,
 } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
 import { listProjects } from '@/lib/projects';
@@ -1758,6 +1759,7 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
         toolCalls: stats.toolCalls,
         toolNames: JSON.stringify(stats.toolNames),
         toolInvocations: toolInvocationsToJson(stats.toolInvocations),
+        generatedFiles: generatedFilesToJson(stats.generatedFiles),
         durationMs: stats.durationMs,
       },
     });

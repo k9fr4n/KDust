@@ -1,5 +1,9 @@
 import { db } from '@/lib/db';
-import { streamAgentReply, toolInvocationsToJson } from '@/lib/dust/chat';
+import {
+  streamAgentReply,
+  toolInvocationsToJson,
+  generatedFilesToJson,
+} from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
 import {
   markStreamStart,
@@ -8,6 +12,7 @@ import {
   appendStreamContent,
   appendStreamCot,
   appendStreamToolCall,
+  setStreamGeneratedFiles,
   isStreaming,
 } from '@/lib/chat/active-streams';
 
@@ -107,6 +112,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
               // (Franck 2026-04-25 19:45). Pills shown by the live
               // and passive consumers are then byte-identical.
               appendStreamToolCall(id, data);
+            } else if (kind === 'generated_files') {
+              // Mirror the latest full file list so a passive
+              // observer can render the chips in sync with the
+              // streaming bubble (Franck 2026-05-16). The payload is
+              // already the deduped JSON list — store as-is.
+              setStreamGeneratedFiles(id, data);
             } else if (kind === 'done') {
               // Swallow — re-emitted below once persistence is committed
               // AND the in-memory streaming flag is cleared, so the
@@ -133,6 +144,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             toolCalls: result.stats.toolCalls,
             toolNames: JSON.stringify(result.stats.toolNames),
             toolInvocations: toolInvocationsToJson(result.stats.toolInvocations),
+            generatedFiles: generatedFilesToJson(result.stats.generatedFiles),
             durationMs: result.stats.durationMs,
           },
         });

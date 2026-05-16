@@ -41,6 +41,14 @@ export type ActiveStream = {
    * what the original tab sees.
    */
   toolCalls: string[];
+  /**
+   * Generated-files replay buffer (Franck 2026-05-16). Stores the
+   * MOST RECENT JSON list emitted on a `generated_files` SSE event —
+   * the server already sends the full deduped list each time, so a
+   * passive client just needs the latest snapshot to render in sync
+   * with the live tab. Null until the agent surfaces any file.
+   */
+  generatedFiles: string | null;
 };
 
 const active = new Map<string, ActiveStream>();
@@ -52,6 +60,7 @@ export function markStreamStart(conversationId: string, userMessageSId: string) 
     contentBuffer: '',
     cotBuffer: '',
     toolCalls: [],
+    generatedFiles: null,
   });
 }
 
@@ -88,6 +97,18 @@ export function appendStreamCot(conversationId: string, chunk: string) {
 export function appendStreamToolCall(conversationId: string, payload: string) {
   const s = active.get(conversationId);
   if (s) s.toolCalls.push(payload);
+}
+
+/**
+ * Replace the generated-files replay snapshot. The server emits the
+ * full deduped JSON list on every `generated_files` SSE event, so a
+ * passive observer that joins late only needs the most recent
+ * payload — no per-event reconciliation. No-op when the conversation
+ * isn't currently registered as streaming.
+ */
+export function setStreamGeneratedFiles(conversationId: string, payload: string) {
+  const s = active.get(conversationId);
+  if (s) s.generatedFiles = payload;
 }
 
 export function markStreamAgentMessage(conversationId: string, agentMessageSId: string) {

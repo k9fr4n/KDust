@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { apiGet } from '@/lib/api/client';
 import { COMMANDS_LIVE_POLL_MS } from '@/lib/constants';
 
@@ -108,8 +109,9 @@ export function CommandsLive({
   const isLive = runStatus === 'running' || runStatus === 'pending';
   return (
     <section className="mb-6">
-      <details open={isLive}>
-        <summary className="cursor-pointer font-semibold mb-2 text-sm flex items-center gap-2 flex-wrap select-none">
+      <details open={isLive} className="group rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+        <summary className="cursor-pointer px-3 py-2 font-semibold text-sm flex items-center gap-2 flex-wrap select-none list-none">
+          <ChevronRight size={14} className="text-slate-400 transition-transform group-open:rotate-90 shrink-0" />
           <span>Commands ({commands.length})</span>
           {okCount > 0 && (
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold">
@@ -133,6 +135,7 @@ export function CommandsLive({
             </span>
           )}
         </summary>
+      <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800">
       {commands.length === 0 ? (
         <div className="text-xs text-slate-500 italic">
           Waiting for commands…
@@ -223,6 +226,7 @@ export function CommandsLive({
           })}
         </div>
       )}
+      </div>
       </details>
     </section>
   );

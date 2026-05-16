@@ -629,6 +629,101 @@ export async function streamAgentReply(
       onEvent('generated_files', generatedFilesToJson(generatedFiles) ?? '[]');
     }
   };
+
+  /**
+   * Fallback file-id extraction from an MCP action's `output[]` blocks
+   * (Franck 2026-05-16). Confirmed empirically on
+   * /chat/cmp851bk00000ok505j6xyex6: Dust's built-in `files` MCP
+   * server (the `files__create` flow) does NOT populate
+   * `action.generatedFiles` NOR `message.generatedFiles`. The only
+   * place the fileId surfaces in the stream is inside the action's
+   * `output` array, as either:
+   *   - a `resource_link` block:
+   *       { type: 'resource_link', uri: 'https://…/files/fil_xxx',
+   *         name: 'coucou.txt', mimeType: 'text/plain' }
+   *   - a `resource` block:
+   *       { type: 'resource', resource: { uri: '…/fil_xxx', mimeType, … } }
+   *   - rarely, a `text` block containing the canonical Dust prompt
+   *     "A file of type … with id fil_xxx was generated successfully".
+   *
+   * We pattern-match all three, dedupe through mergeFiles(), and
+   * derive title/contentType from whatever the block carries (with
+   * the same downloadName()-style "trust filename when present"
+   * heuristic as the renderer).
+   */
+  const FIL_ID_RE = /(fil_[A-Za-z0-9_-]+)/;
+  const extractFilesFromActionOutput = (
+    output:
+      | ReadonlyArray<Record<string, unknown> | null | undefined>
+      | null
+      | undefined,
+  ): void => {
+    if (!Array.isArray(output) || output.length === 0) return;
+    const harvested: AgentGeneratedFile[] = [];
+    for (const block of output) {
+      if (!block || typeof block !== 'object') continue;
+      const t = (block as { type?: unknown }).type;
+      if (t === 'resource_link') {
+        const b = block as {
+          uri?: unknown;
+          name?: unknown;
+          title?: unknown;
+          mimeType?: unknown;
+          description?: unknown;
+        };
+        const uri = typeof b.uri === 'string' ? b.uri : null;
+        if (!uri) continue;
+        const m = uri.match(FIL_ID_RE);
+        if (!m) continue;
+        harvested.push({
+          fileId: m[1],
+          title:
+            (typeof b.title === 'string' && b.title) ||
+            (typeof b.name === 'string' && b.name) ||
+            m[1],
+          contentType:
+            (typeof b.mimeType === 'string' && b.mimeType) ||
+            'application/octet-stream',
+          snippet: typeof b.description === 'string' ? b.description : null,
+        });
+      } else if (t === 'resource') {
+        const b = block as { resource?: Record<string, unknown> };
+        const r = b.resource;
+        if (!r) continue;
+        const uri = typeof r.uri === 'string' ? r.uri : null;
+        if (!uri) continue;
+        const m = uri.match(FIL_ID_RE);
+        if (!m) continue;
+        harvested.push({
+          fileId: m[1],
+          title:
+            (typeof (r as { title?: unknown }).title === 'string' &&
+              (r as { title: string }).title) ||
+            (typeof (r as { name?: unknown }).name === 'string' &&
+              (r as { name: string }).name) ||
+            m[1],
+          contentType:
+            (typeof r.mimeType === 'string' && r.mimeType) ||
+            'application/octet-stream',
+          snippet: null,
+        });
+      } else if (t === 'text') {
+        // Last-resort: parse the canonical Dust system-prompt text
+        // that announces a fileId to the agent.
+        const text = (block as { text?: unknown }).text;
+        if (typeof text !== 'string') continue;
+        const m = text.match(/A file of type ([^\s]+) with id (fil_[A-Za-z0-9_-]+)/);
+        if (!m) continue;
+        harvested.push({
+          fileId: m[2],
+          title: m[2],
+          contentType: m[1] || 'application/octet-stream',
+          snippet: null,
+        });
+      }
+    }
+    mergeFiles(harvested);
+  };
   // Dedupe across the two capture sources (Franck 2026-05-08): when a
   // workspace requires manual approval we get `tool_approve_execution`
   // (carries `actionId`); when auto-approval is on, only
@@ -767,6 +862,14 @@ export async function streamAgentReply(
         // Generated-files capture from action.generatedFiles
         // (one of three sources — see mergeFiles() above).
         mergeFiles(ev.action?.generatedFiles);
+        // Fallback: scan the MCP `output[]` for resource_link /
+        // resource / canonical-text blocks carrying a fileId. The
+        // built-in `files` MCP server only surfaces fileIds through
+        // this channel — see comment on extractFilesFromActionOutput.
+        extractFilesFromActionOutput(
+          (ev.action as { output?: Array<Record<string, unknown>> } | undefined)
+            ?.output,
+        );
         break;
       }
       case 'agent_message_success': {
@@ -780,6 +883,19 @@ export async function streamAgentReply(
           (ev.message as { generatedFiles?: AgentGeneratedFile[] } | undefined)
             ?.generatedFiles,
         );
+        // Final sweep across every action's output[] — same fallback
+        // as agent_action_success but for actions whose live event
+        // we may have missed (timing races, reconnect mid-stream).
+        const actions = (ev.message as { actions?: Array<Record<string, unknown>> } | undefined)
+          ?.actions;
+        if (Array.isArray(actions)) {
+          for (const a of actions) {
+            extractFilesFromActionOutput(
+              (a as { output?: Array<Record<string, unknown>> }).output,
+            );
+          }
+        }
+
         console.log(
           '[chat/stream] done. event counts:',
           Object.fromEntries(seenTypes.entries()),
@@ -796,6 +912,10 @@ export async function streamAgentReply(
         // identical to agent_action_success.action.
         const ev = handled as ToolNotificationShape;
         mergeFiles(ev.action?.generatedFiles);
+        extractFilesFromActionOutput(
+          (ev.action as { output?: Array<Record<string, unknown>> } | undefined)
+            ?.output,
+        );
         break;
       }
       case 'agent_error':

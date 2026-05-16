@@ -97,17 +97,42 @@ export function CommandsLive({
     return null;
   }
 
+  // Live-aggregated execution stats (Franck 2026-05-16). Surfaced
+  // in the summary so the operator can see ok/failed counts
+  // without expanding the (collapsed-by-default) section.
+  const okCount = commands.filter((c) => c.status === 'success').length;
+  const runningCount = commands.filter(
+    (c) => c.status === 'running' || c.status === 'pending',
+  ).length;
+  const failedCount = commands.length - okCount - runningCount;
+  const isLive = runStatus === 'running' || runStatus === 'pending';
   return (
     <section className="mb-6">
-      <h2 className="font-semibold mb-2 text-sm flex items-center gap-2">
-        Commands ({commands.length})
-        {(runStatus === 'running' || runStatus === 'pending') && (
-          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400 font-semibold">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
-            live
-          </span>
-        )}
-      </h2>
+      <details open={isLive}>
+        <summary className="cursor-pointer font-semibold mb-2 text-sm flex items-center gap-2 flex-wrap select-none">
+          <span>Commands ({commands.length})</span>
+          {okCount > 0 && (
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold">
+              ✓ {okCount} ok
+            </span>
+          )}
+          {failedCount > 0 && (
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 font-semibold">
+              ✗ {failedCount} failed
+            </span>
+          )}
+          {runningCount > 0 && (
+            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300 font-semibold">
+              ⏳ {runningCount} running
+            </span>
+          )}
+          {isLive && (
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400 font-semibold">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
+              live
+            </span>
+          )}
+        </summary>
       {commands.length === 0 ? (
         <div className="text-xs text-slate-500 italic">
           Waiting for commands…
@@ -198,6 +223,7 @@ export function CommandsLive({
           })}
         </div>
       )}
+      </details>
     </section>
   );
 }

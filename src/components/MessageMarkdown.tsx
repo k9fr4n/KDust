@@ -156,6 +156,15 @@ export interface MessageMarkdownProps {
    * Purely a styling hint — the markdown pipeline is the same.
    */
   tone?: 'user' | 'agent' | 'system';
+  /**
+   * Optional per-fileId download-name map (Franck 2026-05-16).
+   * When an inline `![](fil_xxx)` is rendered via <ChatImage />,
+   * the bubble passes this map so ChatImage can request the file
+   * via /api/files/:sId?download=1&name=<title-with-ext> instead
+   * of the extension-less fallback. Keys are bare fileIds (no
+   * URL prefix).
+   */
+  fileNamesByFileId?: Record<string, string>;
 }
 
 /**
@@ -167,7 +176,11 @@ export interface MessageMarkdownProps {
  * traversal entirely. Measured 10x-20x render-cost reduction on
  * 40-message windows with large code blocks (Franck 2026-04-20).
  */
-function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps) {
+function MessageMarkdownImpl({
+  children,
+  tone = 'agent',
+  fileNamesByFileId,
+}: MessageMarkdownProps) {
   const linkCls =
     tone === 'user'
       ? 'underline decoration-white/60 hover:decoration-white'
@@ -317,10 +330,29 @@ function MessageMarkdownImpl({ children, tone = 'agent' }: MessageMarkdownProps)
             // and rebuild via /api/files/... URLs without a fil_
             // id pass through (external http, data: URIs).
             const filMatch = src.match(/(?:^|\/)(fil_[A-Za-z0-9_-]+)(?:[?#].*)?$/);
-            const resolvedSrc = filMatch ? `/api/files/${filMatch[1]}` : src;
+            const fileId = filMatch?.[1];
+            const resolvedSrc = fileId ? `/api/files/${fileId}` : src;
+            // Match this inline image to a persisted generated file
+            // when we can — that's how we get a download filename
+            // with the correct extension (`chart.png` instead of
+            // `fil_xxx`). Falls back to the alt text when it ends
+            // in an extension (agents sometimes write
+            // `![chart.png](fil_xxx)`), otherwise undefined.
+            const altLooksLikeName =
+              typeof alt === 'string' && /\.[A-Za-z0-9]{1,8}$/.test(alt);
+            const downloadName =
+              (fileId && fileNamesByFileId?.[fileId]) ||
+              (altLooksLikeName ? alt : undefined);
             // <ChatImage /> handles the thumbnail + lightbox +
             // download UX. See src/components/ChatImage.tsx.
-            return <ChatImage src={resolvedSrc} alt={alt} title={title} />;
+            return (
+              <ChatImage
+                src={resolvedSrc}
+                alt={alt}
+                title={title}
+                downloadName={downloadName}
+              />
+            );
           },
         }}
       >

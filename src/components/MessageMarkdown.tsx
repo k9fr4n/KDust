@@ -56,7 +56,7 @@ import hljsNginx from 'highlight.js/lib/languages/nginx';
 import hljsPowershell from 'highlight.js/lib/languages/powershell';
 import hljsProperties from 'highlight.js/lib/languages/properties';
 import hljsYaml from 'highlight.js/lib/languages/yaml';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Download, FileText } from 'lucide-react';
 
 /**
  * CodeBlockWithCopy (Franck 2026-04-20 09:41).
@@ -247,17 +247,70 @@ function MessageMarkdownImpl({
           ],
         ]}
         components={{
-          a: ({ href, children: c, ...rest }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={linkCls}
-              {...rest}
-            >
-              {c}
-            </a>
-          ),
+          a: ({ href, children: c, ...rest }) => {
+            // Dust file link rewrite (Franck 2026-05-16). Agents
+            // surface non-image attachments as a plain markdown link
+            // — `[report.pdf](fil_xxx)` or `[…](https://dust.tt/.../files/fil_xxx)`
+            // — which by default opens an opaque Dust URL with no
+            // way to download from KDust. We intercept any href whose
+            // trailing path segment looks like `fil_<id>` and rewrite
+            // it through our authenticated proxy so the file is
+            // served from the same origin, with a proper filename in
+            // Content-Disposition.
+            //
+            // Rendered as a chip (icon + filename + Download glyph)
+            // rather than a bare underlined link so the affordance is
+            // obvious in historical conversations that have no
+            // GeneratedFilesPanel below the bubble.
+            const filMatch = href?.match(
+              /(?:^|\/)(fil_[A-Za-z0-9_-]+)(?:[?#].*)?$/,
+            );
+            if (filMatch && href) {
+              const fileId = filMatch[1];
+              // Extract the visible link text — that's the most
+              // reliable source for a human filename (e.g. the agent
+              // wrote `[report.pdf](fil_xxx)`).
+              const linkText = extractText(c).trim();
+              // Prefer the per-bubble fileNamesByFileId map (built
+              // from Message.generatedFiles, so it carries the
+              // server-side title + correct extension), fall back to
+              // the link text when it looks like a filename, else
+              // just the sId.
+              const mapped = fileNamesByFileId?.[fileId];
+              const looksLikeName =
+                linkText.length > 0 &&
+                /\.[A-Za-z0-9]{1,8}$/.test(linkText) &&
+                /^[A-Za-z0-9 _.()\-\u00C0-\u017F]+$/.test(linkText) &&
+                !linkText.includes('..');
+              const name = mapped ?? (looksLikeName ? linkText : fileId);
+              const dlHref = `/api/files/${fileId}?download=1&name=${encodeURIComponent(name)}`;
+              const display = linkText.length > 0 ? linkText : name;
+              return (
+                <a
+                  href={dlHref}
+                  download={name}
+                  title={`Download ${name}`}
+                  className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 my-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 no-underline align-middle"
+                  {...rest}
+                >
+                  <FileText size={14} className="text-blue-500 flex-none" />
+                  <span className="truncate font-medium min-w-0">{display}</span>
+                  <Download size={12} className="text-slate-400 flex-none" />
+                </a>
+              );
+            }
+            return (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={linkCls}
+                {...rest}
+              >
+                {c}
+              </a>
+            );
+          },
           // Inline <code> vs. fenced block <pre><code>: react-markdown v9
           // passes `inline` in a non-standard place. We detect a block
           // via the presence of a `language-*` className.

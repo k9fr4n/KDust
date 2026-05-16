@@ -79,11 +79,26 @@ type AgentActionSuccessShape = {
     generatedFiles?: AgentGeneratedFile[];
   };
 };
+/**
+ * Tool-notification event shape (Franck 2026-05-16). Dust emits
+ * `tool_notification` during long-running MCP tools to surface
+ * intermediate state — including `action.generatedFiles[]` when
+ * the tool has attached one or more files mid-execution. We only
+ * model the fields we consume; the full SDK type includes notice
+ * metadata we don't need here.
+ */
+type ToolNotificationShape = {
+  type: 'tool_notification';
+  messageId: string;
+  action?: { generatedFiles?: AgentGeneratedFile[] };
+};
+
 type HandledStreamEvent =
   | GenerationTokensEvent
   | ToolApproveExecutionEvent
   | AgentActionSuccessShape
   | AgentMessageSuccessEvent
+  | ToolNotificationShape
   | AgentErrorEvent
   | UserMessageErrorEvent;
 
@@ -561,6 +576,59 @@ export async function streamAgentReply(
   // explicit `hidden=true` entries.
   const generatedFiles: AgentGeneratedFile[] = [];
   const seenFileIds = new Set<string>();
+  /**
+   * Capture and dedupe generated files from any of the THREE Dust
+   * event sources that carry them (Franck 2026-05-16):
+   *
+   *   1. `agent_action_success.action.generatedFiles[]` — the
+   *      original path; populated for some MCP tool returns but
+   *      NOT for the built-in `files` MCP server (the one agents
+   *      use to create conversation attachments). Observed empty
+   *      on /chat/cmp84agv400049wi0sb6jtdny where files__create
+   *      registered a fil_xxx that never showed up here.
+   *   2. `tool_notification.action.generatedFiles[]` — emitted
+   *      progressively during long-running MCP tools.
+   *   3. `agent_message_success.message.generatedFiles[]` — the
+   *      AUTHORITATIVE final list at message completion. Always
+   *      present when the agent surfaced anything.
+   *
+   * Listening on all three gives us live updates AND a final
+   * authoritative fallback; the per-fileId dedupe handles the
+   * inevitable overlap. Hidden=true entries are dropped (Dust's
+   * convention for internal artifacts the UI shouldn't show).
+   */
+  const mergeFiles = (
+    incoming:
+      | ReadonlyArray<AgentGeneratedFile | null | undefined>
+      | null
+      | undefined,
+  ): void => {
+    if (!Array.isArray(incoming) || incoming.length === 0) return;
+    let added = false;
+    for (const f of incoming) {
+      if (!f || typeof f.fileId !== 'string') continue;
+      if (f.hidden) continue;
+      if (seenFileIds.has(f.fileId)) continue;
+      seenFileIds.add(f.fileId);
+      generatedFiles.push({
+        fileId: f.fileId,
+        title:
+          typeof f.title === 'string' && f.title.length > 0 ? f.title : f.fileId,
+        contentType:
+          typeof f.contentType === 'string' && f.contentType.length > 0
+            ? f.contentType
+            : 'application/octet-stream',
+        snippet: typeof f.snippet === 'string' ? f.snippet : null,
+      });
+      added = true;
+    }
+    if (added) {
+      // Emit the FULL deduped list so the client replaces its local
+      // state without reconciling deltas. JSON stays small (one row
+      // per file).
+      onEvent('generated_files', generatedFilesToJson(generatedFiles) ?? '[]');
+    }
+  };
   // Dedupe across the two capture sources (Franck 2026-05-08): when a
   // workspace requires manual approval we get `tool_approve_execution`
   // (carries `actionId`); when auto-approval is on, only
@@ -696,56 +764,39 @@ export async function streamAgentReply(
           toolInvocations.push({ tool: toolName, params });
           onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
         }
-        // Generated-files capture (Franck 2026-05-16). Independent of
-        // the action-id dedupe above: the SAME action can carry files
-        // even when its tool-call entry was first observed via
-        // `tool_approve_execution`. Dedupe per-fileId so passive
-        // observers see a stable list and image previews don't flicker
-        // (`<img src>` swap if the list rebuilds with the same URLs
-        // each tick). Hidden entries are dropped — Dust uses
-        // `hidden=true` for internal artifacts the user shouldn't see.
-        const files = Array.isArray(ev.action?.generatedFiles)
-          ? ev.action.generatedFiles
-          : [];
-        let added = false;
-        for (const f of files) {
-          if (!f || typeof f.fileId !== 'string') continue;
-          if (f.hidden) continue;
-          if (seenFileIds.has(f.fileId)) continue;
-          seenFileIds.add(f.fileId);
-          generatedFiles.push({
-            fileId: f.fileId,
-            title: typeof f.title === 'string' && f.title.length > 0
-              ? f.title
-              : f.fileId,
-            contentType:
-              typeof f.contentType === 'string' && f.contentType.length > 0
-                ? f.contentType
-                : 'application/octet-stream',
-            snippet: typeof f.snippet === 'string' ? f.snippet : null,
-          });
-          added = true;
-        }
-        if (added) {
-          // Emit the FULL deduped list each time so the client can
-          // replace its local state without reconciling deltas. Cheap
-          // because the JSON is small (one row per file).
-          onEvent(
-            'generated_files',
-            generatedFilesToJson(generatedFiles) ?? '[]',
-          );
-        }
+        // Generated-files capture from action.generatedFiles
+        // (one of three sources — see mergeFiles() above).
+        mergeFiles(ev.action?.generatedFiles);
         break;
       }
       case 'agent_message_success': {
         const ev = handled as AgentMessageSuccessEvent;
         if (ev.message?.content) finalContent = ev.message.content;
+        // Authoritative final list of generated files (Franck
+        // 2026-05-16). Catches everything `agent_action_success`
+        // missed — notably the built-in `files` MCP server which
+        // does not populate action.generatedFiles in our deployment.
+        mergeFiles(
+          (ev.message as { generatedFiles?: AgentGeneratedFile[] } | undefined)
+            ?.generatedFiles,
+        );
         console.log(
           '[chat/stream] done. event counts:',
           Object.fromEntries(seenTypes.entries()),
+          'generatedFiles=',
+          generatedFiles.length,
         );
         onEvent('done', finalContent);
         return { content: finalContent, stats: buildStats() };
+      }
+      case 'tool_notification': {
+        // Streaming variant that some long-running MCP tools use to
+        // surface files mid-execution (e.g. analysis tools that
+        // attach a partial report before finishing). Action shape is
+        // identical to agent_action_success.action.
+        const ev = handled as ToolNotificationShape;
+        mergeFiles(ev.action?.generatedFiles);
+        break;
       }
       case 'agent_error':
       case 'user_message_error': {

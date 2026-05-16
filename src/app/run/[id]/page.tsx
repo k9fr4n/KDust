@@ -37,6 +37,8 @@ import { OpenConversationLink } from '@/components/OpenConversationLink';
 import { RunDetailActions } from '@/components/RunDetailActions';
 import { ToolInvocationsPanel } from '@/components/ChatMessageBubble';
 import { parseToolInvocations } from '@/lib/tool-invocations';
+import { MessageMarkdown } from '@/components/MessageMarkdown';
+import { CopySourceButton } from '@/components/CopySourceButton';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
@@ -511,25 +513,160 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
         </section>
       )}
 
-      {/* Always-visible prelude (Franck 2026-05-09): the Prompt,
-          Input variables, and Commands sections used to live
-          inside the post-run branch only — operators couldn't
-          inspect the prompt or watch commands stream in while the
-          run was still in flight. Lifted above the running/done
-          split so they render from t=0:
-            - Prompt + Input variables: static, available the
-              moment the TaskRun row exists.
-            - CommandsLive: already self-polling at 2s; just needs
-              to be mounted regardless of run status. */}
+      {/* Run dashboard (Franck 2026-05-16). Stats grid + Git
+          metadata + Merge-back lifted above the running/done
+          split so the overview always sits at the top of the
+          page, even for in-flight runs. */}
+      <section className="mb-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        <Stat label="Duration" value={durationStr} hint="wall clock" mono />
+        <Stat label="Agent time" value={agentDurationStr} hint="Dust stream" mono />
+        <Stat label="Tool calls" value={totalToolCalls || null} />
+        <Stat label="Unique tools" value={toolFreq.size || null} />
+        <Stat label="Gen tokens" value={generationTokens} hint="stream events" />
+        <Stat label="Files changed" value={run.filesChanged} />
+        <Stat label="Lines +" value={run.linesAdded} hint="inserted" />
+        <Stat label="Lines −" value={run.linesRemoved} hint="deleted" />
+        <Stat label="Output size" value={run.output ? `${run.output.length.toLocaleString('fr-FR')} ch` : null} mono />
+        <Stat label="Phase reached" value={run.phase} mono />
+        {/* Base branch + provenance pill (B2/B3). */}
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">
+            Base branch
+          </div>
+          <div className="font-mono text-sm flex items-center gap-1.5 flex-wrap">
+            <span>{run.baseBranch ?? run.task?.baseBranch ?? '—'}</span>
+            {run.baseBranchSource === 'auto-inherit' && (
+              <span
+                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold"
+                title="B2: inherited from the parent orchestrator run's branch"
+              >
+                auto-inherit
+              </span>
+            )}
+            {run.baseBranchSource === 'explicit' && (
+              <span
+                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300 font-semibold"
+                title="Caller passed an explicit base_branch on run_task/dispatch_task"
+              >
+                explicit
+              </span>
+            )}
+          </div>
+        </div>
+        <Stat label="Agent" value={run.task?.agentName ?? run.task?.agentSId ?? null} mono />
+        <Stat label="Messages" value={conv ? conv.messages.length : null} hint="in conv" />
+        <Stat label="Conv sId" value={run.dustConversationSId ? run.dustConversationSId.slice(0, 10) : null} mono />
+      </section>
+
+      {(run.branch || run.commitSha) && (
+        <section className="mb-6 rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
+          <h2 className="text-xs uppercase tracking-wide text-slate-500 mb-2">Git</h2>
+          <div className="flex flex-wrap gap-4">
+            {run.branch && (
+              <span>
+                <span className="text-slate-500">🌿 Branch: </span>
+                {links?.branch ? (
+                  <a href={links.branch} target="_blank" rel="noreferrer" className="font-mono underline hover:text-brand-500">
+                    {run.branch}
+                  </a>
+                ) : (
+                  <span className="font-mono">{run.branch}</span>
+                )}
+              </span>
+            )}
+            {run.commitSha && (
+              <span>
+                <span className="text-slate-500">🔖 Commit: </span>
+                {links?.commit ? (
+                  <a href={links.commit} target="_blank" rel="noreferrer" className="font-mono underline hover:text-brand-500">
+                    {run.commitSha.slice(0, 10)}
+                  </a>
+                ) : (
+                  <span className="font-mono">{run.commitSha.slice(0, 10)}</span>
+                )}
+              </span>
+            )}
+            {run.prUrl && (
+              <span>
+                <span className="text-slate-500">✅ PR: </span>
+                <a href={run.prUrl} target="_blank" rel="noreferrer" className="underline hover:text-brand-500 font-mono">
+                  #{run.prNumber ?? '?'}
+                </a>
+                {run.prState && (
+                  <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                    run.prState === 'merged' ? 'bg-purple-200 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
+                    : run.prState === 'open' ? 'bg-green-200 text-green-800 dark:bg-green-900 dark:text-green-200'
+                    : run.prState === 'draft' ? 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    : run.prState === 'closed' ? 'bg-red-200 text-red-800 dark:bg-red-900 dark:text-red-200'
+                    : 'bg-amber-200 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+                  }`}>
+                    {run.prState}
+                  </span>
+                )}
+              </span>
+            )}
+            {!run.prUrl && run.prState === 'failed' && (
+              <span className="text-amber-600 text-xs">[WARN] auto-PR failed — check logs</span>
+            )}
+            {!run.prUrl && links?.newMr && run.status === 'success' && !run.dryRun && (
+              <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">
+                🚀 Open MR / PR
+              </a>
+            )}
+          </div>
+        </section>
+      )}
+
+      {run.mergeBackStatus && (
+        <section className="mb-6 rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
+          <h2 className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+            Merge-back into orchestrator branch
+          </h2>
+          <div className="flex items-start gap-2">
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wide font-semibold ${
+                run.mergeBackStatus === 'ff'
+                  ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
+                  : run.mergeBackStatus === 'skipped'
+                  ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                  : run.mergeBackStatus === 'refused'
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                  : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+              }`}
+            >
+              {run.mergeBackStatus === 'ff'
+                ? '✓ fast-forward'
+                : run.mergeBackStatus === 'skipped'
+                ? '— skipped'
+                : run.mergeBackStatus === 'refused'
+                ? '⚠ refused'
+                : '✗ failed'}
+            </span>
+            {run.mergeBackDetails && (
+              <span className="text-xs text-slate-600 dark:text-slate-400 flex-1">
+                {run.mergeBackDetails}
+              </span>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Always-visible prelude (Franck 2026-05-09 / 2026-05-16):
+          Prompt, Input variables and Commands are visible
+          regardless of run status. Text sections render via
+          <MessageMarkdown> (markdown / GFM / syntax highlighting)
+          with a <CopySourceButton> that copies the raw source
+          (not the rendered HTML). */}
       {run.task?.prompt && (
         <section className="mb-6">
           <details>
-            <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600">
-              Prompt ({run.task.prompt.length.toLocaleString('fr-FR')} chars)
+            <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600 flex items-center gap-2">
+              <span>Prompt ({run.task.prompt.length.toLocaleString('fr-FR')} chars)</span>
+              <CopySourceButton text={run.task.prompt} label="Copy prompt source" />
             </summary>
-            <pre className="mt-2 whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-xs max-h-80 overflow-auto">
-              {run.task.prompt}
-            </pre>
+            <div className="mt-2 rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">
+              <MessageMarkdown>{run.task.prompt}</MessageMarkdown>
+            </div>
           </details>
         </section>
       )}
@@ -537,12 +674,13 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
       {run.inputAppend && (
         <section className="mb-6">
           <details>
-            <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600">
-              Input variables ({run.inputAppend.length.toLocaleString('fr-FR')} chars)
+            <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600 flex items-center gap-2">
+              <span>Input variables ({run.inputAppend.length.toLocaleString('fr-FR')} chars)</span>
+              <CopySourceButton text={run.inputAppend} label="Copy input source" />
             </summary>
-            <pre className="mt-2 whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-xs max-h-80 overflow-auto">
-              {run.inputAppend}
-            </pre>
+            <div className="mt-2 rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">
+              <MessageMarkdown>{run.inputAppend}</MessageMarkdown>
+            </div>
             <p className="mt-1 text-[11px] text-slate-500">
               Replayed verbatim on rerun. Pass secrets via
               TaskSecret, not here.
@@ -596,161 +734,10 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
         />
       ) : (
         <>
-          {/* Stats grid — the big number dashboard */}
-          <section className="mb-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            <Stat label="Duration" value={durationStr} hint="wall clock" mono />
-            <Stat label="Agent time" value={agentDurationStr} hint="Dust stream" mono />
-            <Stat label="Tool calls" value={totalToolCalls || null} />
-            <Stat label="Unique tools" value={toolFreq.size || null} />
-            <Stat label="Gen tokens" value={generationTokens} hint="stream events" />
-            <Stat label="Files changed" value={run.filesChanged} />
-            <Stat label="Lines +" value={run.linesAdded} hint="inserted" />
-            <Stat label="Lines −" value={run.linesRemoved} hint="deleted" />
-            <Stat label="Output size" value={run.output ? `${run.output.length.toLocaleString('fr-FR')} ch` : null} mono />
-            <Stat label="Phase reached" value={run.phase} mono />
-            {/* Base branch + provenance pill (B2/B3, Franck
-                2026-04-24 20:47). When the run inherited its
-                base branch from a parent orchestrator or the
-                caller passed an explicit base_branch, surface
-                that here so operators understand why a child
-                isn't on the project default. */}
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">
-                Base branch
-              </div>
-              <div className="font-mono text-sm flex items-center gap-1.5 flex-wrap">
-                <span>{run.baseBranch ?? run.task?.baseBranch ?? '—'}</span>
-                {run.baseBranchSource === 'auto-inherit' && (
-                  <span
-                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold"
-                    title="B2: inherited from the parent orchestrator run's branch"
-                  >
-                    auto-inherit
-                  </span>
-                )}
-                {run.baseBranchSource === 'explicit' && (
-                  <span
-                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300 font-semibold"
-                    title="Caller passed an explicit base_branch on run_task/dispatch_task"
-                  >
-                    explicit
-                  </span>
-                )}
-              </div>
-            </div>
-            <Stat label="Agent" value={run.task?.agentName ?? run.task?.agentSId ?? null} mono />
-            <Stat label="Messages" value={conv ? conv.messages.length : null} hint="in conv" />
-            <Stat label="Conv sId" value={run.dustConversationSId ? run.dustConversationSId.slice(0, 10) : null} mono />
-          </section>
-
-          {/* Git metadata */}
-          {(run.branch || run.commitSha) && (
-            <section className="mb-6 rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
-              <h2 className="text-xs uppercase tracking-wide text-slate-500 mb-2">Git</h2>
-              <div className="flex flex-wrap gap-4">
-                {run.branch && (
-                  <span>
-                    <span className="text-slate-500">🌿 Branch: </span>
-                    {links?.branch ? (
-                      <a href={links.branch} target="_blank" rel="noreferrer" className="font-mono underline hover:text-brand-500">
-                        {run.branch}
-                      </a>
-                    ) : (
-                      <span className="font-mono">{run.branch}</span>
-                    )}
-                  </span>
-                )}
-                {run.commitSha && (
-                  <span>
-                    <span className="text-slate-500">🔖 Commit: </span>
-                    {links?.commit ? (
-                      <a href={links.commit} target="_blank" rel="noreferrer" className="font-mono underline hover:text-brand-500">
-                        {run.commitSha.slice(0, 10)}
-                      </a>
-                    ) : (
-                      <span className="font-mono">{run.commitSha.slice(0, 10)}</span>
-                    )}
-                  </span>
-                )}
-                {/* Phase 2: real PR opened by KDust \u2014 takes
-                    precedence over the generic compare-link. */}
-                {run.prUrl && (
-                  <span>
-                    <span className="text-slate-500">✅ PR: </span>
-                    <a href={run.prUrl} target="_blank" rel="noreferrer" className="underline hover:text-brand-500 font-mono">
-                      #{run.prNumber ?? '?'}
-                    </a>
-                    {run.prState && (
-                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
-                        run.prState === 'merged' ? 'bg-purple-200 text-purple-800 dark:bg-purple-900 dark:text-purple-200'
-                        : run.prState === 'open' ? 'bg-green-200 text-green-800 dark:bg-green-900 dark:text-green-200'
-                        : run.prState === 'draft' ? 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                        : run.prState === 'closed' ? 'bg-red-200 text-red-800 dark:bg-red-900 dark:text-red-200'
-                        : 'bg-amber-200 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
-                      }`}>
-                        {run.prState}
-                      </span>
-                    )}
-                  </span>
-                )}
-                {!run.prUrl && run.prState === 'failed' && (
-                  <span className="text-amber-600 text-xs">[WARN] auto-PR failed — check logs</span>
-                )}
-                {!run.prUrl && links?.newMr && run.status === 'success' && !run.dryRun && (
-                  <a href={links.newMr} target="_blank" rel="noreferrer" className="underline hover:text-brand-500">
-                    🚀 Open MR / PR
-                  </a>
-                )}
-              </div>
-            </section>
-          )}
-
-          {/* B3 merge-back indicator (Franck 2026-04-24 20:47).
-              Visible only when the run was dispatched with an
-              auto-merge target. Four possible statuses each mapped
-              to a distinct colour + explanation so operators can
-              tell success / no-op / refused / error apart without
-              clicking through. Refused is the most important case
-              to spot: the child's work landed on its own branch but
-              did NOT propagate to the orchestrator's branch, so the
-              agent likely needs to reconcile manually. */}
-          {run.mergeBackStatus && (
-            <section className="mb-6 rounded-md border border-slate-200 dark:border-slate-800 p-3 text-sm">
-              <h2 className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-                Merge-back into orchestrator branch
-              </h2>
-              <div className="flex items-start gap-2">
-                <span
-                  className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wide font-semibold ${
-                    run.mergeBackStatus === 'ff'
-                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
-                      : run.mergeBackStatus === 'skipped'
-                      ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                      : run.mergeBackStatus === 'refused'
-                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
-                      : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
-                  }`}
-                >
-                  {run.mergeBackStatus === 'ff'
-                    ? '✓ fast-forward'
-                    : run.mergeBackStatus === 'skipped'
-                    ? '— skipped'
-                    : run.mergeBackStatus === 'refused'
-                    ? '⚠ refused'
-                    : '✗ failed'}
-                </span>
-                {run.mergeBackDetails && (
-                  <span className="text-xs text-slate-600 dark:text-slate-400 flex-1">
-                    {run.mergeBackDetails}
-                  </span>
-                )}
-              </div>
-            </section>
-          )}
-
-          {/* Prompt + Input variables + CommandsLive moved above
-              the running/done split (Franck 2026-05-09) so they
-              are visible from t=0. See the prelude block above. */}
+          {/* Stats / Git metadata / Merge-back lifted to the page
+              prelude (Franck 2026-05-16) so the run dashboard
+              renders at the top from t=0, regardless of run
+              status. */}
 
           {/* Agent reasoning / chain-of-thought stream
               (Franck 2026-04-24 18:51). Dust streams reasoning
@@ -763,24 +750,30 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {run.thinkingOutput && (
             <section className="mb-6">
               <details className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-purple-800 dark:text-purple-300 select-none">
-                  🧠 Agent thinking ({run.thinkingOutput.length.toLocaleString('fr-FR')} chars)
+                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-purple-800 dark:text-purple-300 select-none flex items-center gap-2">
+                  <span>🧠 Agent thinking ({run.thinkingOutput.length.toLocaleString('fr-FR')} chars)</span>
+                  <CopySourceButton text={run.thinkingOutput} label="Copy thinking source" />
                 </summary>
-                <pre className="whitespace-pre-wrap px-3 py-2 border-t border-purple-200 dark:border-purple-900 text-xs max-h-[600px] overflow-auto">
-                  {run.thinkingOutput}
-                </pre>
+                <div className="px-3 py-2 border-t border-purple-200 dark:border-purple-900 text-sm">
+                  <MessageMarkdown>{run.thinkingOutput}</MessageMarkdown>
+                </div>
               </details>
             </section>
           )}
 
           {run.output && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm">
-                Agent output ({run.output.length.toLocaleString('fr-FR')} chars)
+              <h2 className="font-semibold mb-2 text-sm flex items-center gap-2">
+                <span>Agent output ({run.output.length.toLocaleString('fr-FR')} chars)</span>
+                <CopySourceButton text={run.output} label="Copy agent output source" />
               </h2>
-              <pre className="whitespace-pre-wrap rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-xs max-h-[600px] overflow-auto">
-                {run.output}
-              </pre>
+              {/* No max-height / overflow here (Franck 2026-05-16):
+                  the agent output renders in its entirety so the
+                  page itself scrolls instead of nesting a
+                  scrollbar inside the bubble. */}
+              <div className="rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">
+                <MessageMarkdown>{run.output}</MessageMarkdown>
+              </div>
             </section>
           )}
 
@@ -813,16 +806,28 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             </section>
           )}
 
-          {/* Tool invocations log (Franck 2026-05-07). Reuses the
-              same ToolInvocationsPanel as /chat so the per-call
-              `{tool, params}` rendering stays consistent. Open by
-              default on /run because this is the post-mortem view
-              — the user landed here specifically to see what
-              happened. Empty for legacy runs without the column. */}
+          {/* Tool invocations log (Franck 2026-05-07; collapsed
+              by default since 2026-05-16). Per-call panels keep
+              their own open/close state inside
+              ToolInvocationsPanel; we pass `defaultOpen={false}`
+              so the post-mortem view doesn't auto-expand every
+              single call on heavy runs. The outer <details> hides
+              the full list behind a single click, with a summary
+              line that exposes the total + unique-tool count
+              so the section stays informative when folded. */}
           {toolInvocationsAll.length > 0 && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm">Tool invocations</h2>
-              <ToolInvocationsPanel invocations={toolInvocationsAll} defaultOpen />
+              <details>
+                <summary className="cursor-pointer font-semibold mb-2 text-sm flex items-center gap-2 select-none">
+                  <span>Tool invocations ({toolInvocationsAll.length})</span>
+                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 font-semibold">
+                    {toolFreq.size} unique
+                  </span>
+                </summary>
+                <div className="mt-2">
+                  <ToolInvocationsPanel invocations={toolInvocationsAll} defaultOpen={false} />
+                </div>
+              </details>
             </section>
           )}
 
@@ -854,10 +859,17 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {/* Error */}
           {run.error && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm text-red-600">Error</h2>
-              <pre className="whitespace-pre-wrap rounded-md bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900 max-h-96 overflow-auto">
-                {run.error}
-              </pre>
+              <h2 className="font-semibold mb-2 text-sm text-red-600 flex items-center gap-2">
+                <span>Error</span>
+                <CopySourceButton text={run.error} label="Copy error source" />
+              </h2>
+              {/* Wrap the error in a fenced code block before
+                  passing to MessageMarkdown so stack traces keep
+                  their monospace formatting even when the body
+                  contains no markdown syntax. */}
+              <div className="rounded-md bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900">
+                <MessageMarkdown>{'```\n' + run.error + '\n```'}</MessageMarkdown>
+              </div>
             </section>
           )}
         </>

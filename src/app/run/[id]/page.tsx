@@ -29,7 +29,7 @@
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, MessageCircle, Settings } from 'lucide-react';
+import { ArrowLeft, ChevronRight, MessageCircle, Settings } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
@@ -659,12 +659,13 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           (not the rendered HTML). */}
       {run.task?.prompt && (
         <section className="mb-6">
-          <details>
-            <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600 flex items-center gap-2">
+          <details className="group rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-semibold hover:text-brand-600 flex items-center gap-2 select-none list-none">
+              <ChevronRight size={14} className="text-slate-400 transition-transform group-open:rotate-90 shrink-0" />
               <span>Prompt ({run.task.prompt.length.toLocaleString('fr-FR')} chars)</span>
-              <CopySourceButton text={run.task.prompt} label="Copy prompt source" />
+              <CopySourceButton text={run.task.prompt} label="Copy prompt source" className="ml-auto" />
             </summary>
-            <div className="mt-2 rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">
+            <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-sm">
               <MessageMarkdown>{run.task.prompt}</MessageMarkdown>
             </div>
           </details>
@@ -673,18 +674,19 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
 
       {run.inputAppend && (
         <section className="mb-6">
-          <details>
-            <summary className="cursor-pointer text-sm font-semibold hover:text-brand-600 flex items-center gap-2">
+          <details className="group rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-semibold hover:text-brand-600 flex items-center gap-2 select-none list-none">
+              <ChevronRight size={14} className="text-slate-400 transition-transform group-open:rotate-90 shrink-0" />
               <span>Input variables ({run.inputAppend.length.toLocaleString('fr-FR')} chars)</span>
-              <CopySourceButton text={run.inputAppend} label="Copy input source" />
+              <CopySourceButton text={run.inputAppend} label="Copy input source" className="ml-auto" />
             </summary>
-            <div className="mt-2 rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">
+            <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-sm">
               <MessageMarkdown>{run.inputAppend}</MessageMarkdown>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Replayed verbatim on rerun. Pass secrets via
+                TaskSecret, not here.
+              </p>
             </div>
-            <p className="mt-1 text-[11px] text-slate-500">
-              Replayed verbatim on rerun. Pass secrets via
-              TaskSecret, not here.
-            </p>
           </details>
         </section>
       )}
@@ -749,10 +751,11 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               agent behaviour. */}
           {run.thinkingOutput && (
             <section className="mb-6">
-              <details className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-purple-800 dark:text-purple-300 select-none flex items-center gap-2">
+              <details className="group rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-purple-800 dark:text-purple-300 select-none flex items-center gap-2 list-none">
+                  <ChevronRight size={14} className="text-purple-400 transition-transform group-open:rotate-90 shrink-0" />
                   <span>🧠 Agent thinking ({run.thinkingOutput.length.toLocaleString('fr-FR')} chars)</span>
-                  <CopySourceButton text={run.thinkingOutput} label="Copy thinking source" />
+                  <CopySourceButton text={run.thinkingOutput} label="Copy thinking source" className="ml-auto" />
                 </summary>
                 <div className="px-3 py-2 border-t border-purple-200 dark:border-purple-900 text-sm">
                   <MessageMarkdown>{run.thinkingOutput}</MessageMarkdown>
@@ -763,16 +766,18 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
 
           {run.output && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm flex items-center gap-2">
-                <span>Agent output ({run.output.length.toLocaleString('fr-FR')} chars)</span>
-                <CopySourceButton text={run.output} label="Copy agent output source" />
-              </h2>
-              {/* No max-height / overflow here (Franck 2026-05-16):
-                  the agent output renders in its entirety so the
-                  page itself scrolls instead of nesting a
-                  scrollbar inside the bubble. */}
-              <div className="rounded-md bg-slate-100 dark:bg-slate-900 p-3 text-sm">
-                <MessageMarkdown>{run.output}</MessageMarkdown>
+              <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+                <div className="px-3 py-2 text-sm font-semibold flex items-center gap-2">
+                  <span>Agent output ({run.output.length.toLocaleString('fr-FR')} chars)</span>
+                  <CopySourceButton text={run.output} label="Copy agent output source" className="ml-auto" />
+                </div>
+                {/* No max-height / overflow (Franck 2026-05-16):
+                    the agent output renders in its entirety so the
+                    page itself scrolls instead of nesting a
+                    scrollbar inside the bubble. */}
+                <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800 text-sm">
+                  <MessageMarkdown>{run.output}</MessageMarkdown>
+                </div>
               </div>
             </section>
           )}
@@ -780,9 +785,9 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {/* Tool breakdown */}
           {toolFreqSorted.length > 0 && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm">Tool calls breakdown</h2>
-              <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-50/40 dark:bg-slate-900/30">
+                <div className="px-3 py-2 text-sm font-semibold">Tool calls breakdown</div>
+                <table className="w-full text-sm border-t border-slate-200 dark:border-slate-800">
                   <thead className="bg-slate-50 dark:bg-slate-900/50 text-xs text-slate-500 uppercase tracking-wide">
                     <tr>
                       <th className="text-left px-3 py-2">Tool</th>
@@ -817,14 +822,15 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               so the section stays informative when folded. */}
           {toolInvocationsAll.length > 0 && (
             <section className="mb-6">
-              <details>
-                <summary className="cursor-pointer font-semibold mb-2 text-sm flex items-center gap-2 select-none">
+              <details className="group rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/30">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-semibold flex items-center gap-2 select-none list-none">
+                  <ChevronRight size={14} className="text-slate-400 transition-transform group-open:rotate-90 shrink-0" />
                   <span>Tool invocations ({toolInvocationsAll.length})</span>
                   <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 font-semibold">
                     {toolFreq.size} unique
                   </span>
                 </summary>
-                <div className="mt-2">
+                <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-800">
                   <ToolInvocationsPanel invocations={toolInvocationsAll} defaultOpen={false} />
                 </div>
               </details>
@@ -834,9 +840,9 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {/* Stream events */}
           {streamEventsSorted.length > 0 && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm">Dust stream events</h2>
-              <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="rounded-md border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-50/40 dark:bg-slate-900/30">
+                <div className="px-3 py-2 text-sm font-semibold">Dust stream events</div>
+                <table className="w-full text-sm border-t border-slate-200 dark:border-slate-800">
                   <thead className="bg-slate-50 dark:bg-slate-900/50 text-xs text-slate-500 uppercase tracking-wide">
                     <tr>
                       <th className="text-left px-3 py-2">Event type</th>
@@ -859,16 +865,18 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           {/* Error */}
           {run.error && (
             <section className="mb-6">
-              <h2 className="font-semibold mb-2 text-sm text-red-600 flex items-center gap-2">
-                <span>Error</span>
-                <CopySourceButton text={run.error} label="Copy error source" />
-              </h2>
-              {/* Wrap the error in a fenced code block before
-                  passing to MessageMarkdown so stack traces keep
-                  their monospace formatting even when the body
-                  contains no markdown syntax. */}
-              <div className="rounded-md bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-400 border border-red-200 dark:border-red-900">
-                <MessageMarkdown>{'```\n' + run.error + '\n```'}</MessageMarkdown>
+              <div className="rounded-md border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30">
+                <div className="px-3 py-2 text-sm font-semibold text-red-700 dark:text-red-400 flex items-center gap-2">
+                  <span>Error</span>
+                  <CopySourceButton text={run.error} label="Copy error source" className="ml-auto" />
+                </div>
+                {/* Wrap the error in a fenced code block before
+                    passing to MessageMarkdown so stack traces keep
+                    their monospace formatting even when the body
+                    contains no markdown syntax. */}
+                <div className="px-3 py-2 border-t border-red-200 dark:border-red-900 text-sm text-red-700 dark:text-red-400">
+                  <MessageMarkdown>{'```\n' + run.error + '\n```'}</MessageMarkdown>
+                </div>
               </div>
             </section>
           )}

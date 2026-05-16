@@ -10,6 +10,7 @@
  */
 'use client';
 
+import * as React from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useState } from 'react';
 import { UI_FLASH_MS } from '@/lib/constants';
@@ -27,13 +28,41 @@ export function CopySourceButton({
   className?: string;
 }) {
   const [done, setDone] = useState(false);
-  const onClick = async () => {
+  // Stop the click from bubbling up: the button is typically
+  // mounted INSIDE a <summary>, and a bubbling click would toggle
+  // the parent <details>, closing the section as soon as the user
+  // clicks the icon (Franck 2026-05-16 "le bouton pour copier
+  // semble ne pas fonctionner"). Combined with preventDefault to
+  // be safe across browsers.
+  const onClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
     try {
-      await navigator.clipboard.writeText(text);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-secure contexts (e.g. http://localhost
+        // when not on a loopback exception, or http:// dev
+        // deployments). Uses a hidden textarea + execCommand,
+        // deprecated but still universally available.
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        ta.style.pointerEvents = 'none';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(ta);
+        }
+      }
       setDone(true);
       setTimeout(() => setDone(false), UI_FLASH_MS);
     } catch {
-      /* clipboard blocked (insecure context, permission); silent no-op */
+      /* clipboard blocked (permission); silent no-op */
     }
   };
   return (

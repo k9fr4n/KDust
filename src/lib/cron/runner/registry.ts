@@ -163,7 +163,12 @@ export async function cancelRunCascade(
     layer = kids.map((k) => k.id);
   }
   if (cancelled.length > 0) {
-    console.log(
+    // ADR-0018: cascade cancellation is the deterministic
+    // follow-up of a parent run reaching a terminal non-success
+    // state (most commonly a user-initiated abort). It is a
+    // designed lifecycle event, not an anomaly — surface it at
+    // INFO so it stands out in /logs without looking alarming.
+    console.info(
       `[cron] cascade cancel from ${rootRunId}: ${cancelled.length} run(s) aborted (${reason})`,
     );
   }

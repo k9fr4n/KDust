@@ -117,7 +117,15 @@ export async function runHandleFailure(args: HandleFailureArgs): Promise<void> {
       : [],
     msg,
   );
-  console.error(`[cron] ${wasAborted ? 'ABORTED' : 'FAILED'} job="${job.name}": ${msg}`);
+  // ADR-0018: a user-initiated abort is a nominal lifecycle
+  // event (the user pressed Stop), not a KDust bug. Log it
+  // at INFO so /logs renders it sky-blue, not red. Genuine
+  // failures stay at ERROR.
+  if (wasAborted) {
+    console.info(`[cron] ABORTED job="${job.name}": ${msg}`);
+  } else {
+    console.error(`[cron] FAILED job="${job.name}": ${msg}`);
+  }
 
   // Cascade cancellation (Franck 2026-04-22 23:37):
   // When a parent run ends in a non-success terminal state, any

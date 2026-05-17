@@ -283,7 +283,7 @@ Compensating controls:
 ### Custom server: `thruk-mcp` (Thruk / Naemon monitoring)
 
 - Slug: `thruk-mcp` (in `kdust-custom.yaml`)
-- Image: `ghcr.io/k9fr4n/thruk-mcp:v1.0.0` — first-party, MIT
+- Image: `ghcr.io/k9fr4n/thruk-mcp:1.0.0` — first-party, MIT
   ([k9fr4n/thruk-mcp](https://github.com/k9fr4n/thruk-mcp)). The
   image is gateway-ready out of the box (stdio default, non-root
   `USER`, no stdout banner) so **no wrapper image is required**, unlike

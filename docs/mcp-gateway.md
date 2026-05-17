@@ -158,6 +158,83 @@ The filter is **applied in KDust**, not in the gateway: when a
 chat or run requests its proxy `McpServer`, only whitelisted
 tools are `registerTool`'d on the Dust transport.
 
+## Custom catalog (servers outside the Docker MCP hub)
+
+The official Docker MCP hub (`hub.docker.com/mcp`) only ships a curated
+set of servers. To run anything outside that hub (private images, niche
+community servers, custom forks) the gateway reads an extra catalog
+file via `--catalog=<path>`.
+
+KDust convention since 2026-05-17:
+
+- One versioned YAML file: `mcp-gateway/catalogs/kdust-custom.yaml`.
+- Mounted read-only at `/catalogs/` inside the gateway container (both
+  `docker-compose.yml` and `docker-compose.prod.yml`).
+- Each `registry:` entry is a server slug. Reference it from
+  `--servers=...` once declared.
+- All env vars (sensitive or not) MUST go under `secrets:` — the
+  `config:` block is Docker Desktop only and silently no-ops on Linux.
+- Secret VALUES are not in the YAML. They live in `kdust-mcp.env`,
+  written by KDust at boot. The catalog's `name:` is the key bound in
+  `/settings/mcp`.
+- **Naming convention** for KDust `Secret` rows: `UPPER_SNAKE_CASE`
+  matching the env var the underlying image consumes (e.g.
+  `EWS_USERNAME`, `EWS_PASSWORD`). The catalog's secret `name:`
+  (e.g. `ews-mcp.username`) is decoupled — it's only the binding key
+  used in `/settings/mcp` to wire a Secret to a server slot.
+
+Adding a custom server:
+
+1. Append an entry to `mcp-gateway/catalogs/kdust-custom.yaml` (image,
+   tools, secrets list).
+2. Append the slug to `--servers=` in `docker-compose.yml`
+   (+ `docker-compose.prod.yml`).
+3. Create the matching `Secret` rows + bindings in `/settings/mcp`.
+4. `docker compose up -d mcp-gateway`. Confirm with
+   `docker compose logs mcp-gateway | grep -i loaded`.
+
+### Image signature trade-off
+
+Third-party catalog entries are typically NOT signed by Docker. The
+gateway flag `--verify-signatures` blocks anything not in Docker's
+signature index, so it has been **removed** from both compose files.
+Compensating controls:
+
+- `--block-secrets` still strips leaked credentials in tool output.
+- `ProjectMcpToolFilter` default-deny means a freshly-added server is
+  invisible to every project until an operator whitelists tools.
+- Once a custom image is validated, pin it by digest in the catalog:
+
+  ```yaml
+  image: ghcr.io/azizmazrou/ews-mcp@sha256:<digest>
+  ```
+
+  That neutralises Watchtower's `pull_policy: always` on that image
+  specifically and reduces the supply-chain blast radius to a single
+  reviewed snapshot.
+
+### Custom server: `ews-mcp` (Exchange Web Services)
+
+- Slug: `ews-mcp` (in `kdust-custom.yaml`)
+- Image: `ghcr.io/azizmazrou/ews-mcp:latest` (MIT, third-party)
+- Auth modes supported by the image: OAuth2 / Basic / NTLM. The KDust
+  catalog entry declares the seven env vars needed for **NTLM**
+  (on-prem Exchange): `EWS_AUTH_TYPE`, `EWS_SERVER_URL`,
+  `EWS_AUTODISCOVER`, `EWS_EMAIL`, `EWS_USERNAME`, `EWS_PASSWORD`,
+  `TIMEZONE`. Switching to OAuth2 means editing the YAML to declare
+  `EWS_CLIENT_ID` / `EWS_CLIENT_SECRET` / `EWS_TENANT_ID` instead.
+- 67 tools across email / calendar / contacts / tasks / folders /
+  attachments / search. Whitelist conservatively per project:
+  read-only first (`read_emails`, `search_emails`,
+  `get_email_details`, `list_attachments`, `read_attachment`,
+  `find_person`, `get_calendar`, `check_availability`); promote to
+  write tools (`send_email`, `delete_email`, `move_email`,
+  `reply_email`, `forward_email`) only on a need-to-have basis.
+- The server keeps a per-mailbox SQLite cache. Not persisted across
+  gateway restarts in V1 (the gateway spawns child containers without
+  a named volume) — acceptable as long as `semantic_search_emails`
+  stays disabled.
+
 ## V1 server: `github-official`
 
 - Slug: `github-official`

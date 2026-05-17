@@ -247,7 +247,21 @@ Compensating controls:
 ### Custom server: `ews-mcp` (Exchange Web Services)
 
 - Slug: `ews-mcp` (in `kdust-custom.yaml`)
-- Image: `ghcr.io/azizmazrou/ews-mcp:latest` (MIT, third-party)
+- Image: `ews-mcp-patched:local` (locally-built thin wrapper over
+  `ghcr.io/azizmazrou/ews-mcp:latest`, MIT). Two upstream issues are
+  patched at build time (see
+  `mcp-gateway/images/ews-mcp-patched/Dockerfile`):
+  1. Banner echo redirected from stdout to stderr (otherwise the gateway
+     JSON-RPC parser dies on the date separator).
+  2. `gosu mcp` indirection dropped + `USER mcp` set at image level
+     (the gateway runs every child with `--security-opt no-new-privileges`
+     which blocks setuid).
+- Build it once per host before the first restart:
+  ```bash
+  docker build -t ews-mcp-patched:local mcp-gateway/images/ews-mcp-patched
+  ```
+  The gateway runs each child with `--pull never`, so the locally-built
+  tag is used as-is — no registry push required.
 - Auth modes supported by the image: OAuth2 / Basic / NTLM. The KDust
   catalog entry declares the seven env vars needed for **NTLM**
   (on-prem Exchange): `EWS_AUTH_TYPE`, `EWS_SERVER_URL`,

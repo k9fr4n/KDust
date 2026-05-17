@@ -87,8 +87,11 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      # --additional-catalog appends to the gateway's built-in catalogs.
-      # --catalog (without prefix) REPLACES them. Lesson learned 2026-05-17.
+      # Catalog plumbing (lessons learned 2026-05-17): the headless gateway
+      # has no built-in catalog, so we pass the official URL explicitly.
+      # --additional-catalog appends our project catalog; --servers=
+      # disables dynamic discovery, so entries must enumerate their tools.
+      - --catalog=https://desktop.docker.com/mcp/catalog/v3/catalog.yaml
       - --additional-catalog=/catalogs/kdust-custom.yaml
       - --servers=playwright,ews-mcp
       - --secrets=/secrets/kdust-mcp.env

@@ -115,7 +115,10 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      - --catalog=/catalogs/kdust-custom.yaml
+      # --additional-catalog appends to the gateway's built-in catalogs.
+      # --catalog (without prefix) REPLACES them, which would hide every
+      # official server. Lesson learned 2026-05-17.
+      - --additional-catalog=/catalogs/kdust-custom.yaml
       - --servers=github-official,ews-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets

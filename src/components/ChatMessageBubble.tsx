@@ -194,7 +194,14 @@ export function parseGeneratedFiles(json: string | null | undefined): GeneratedF
           typeof (x as GeneratedFile).title === 'string' &&
           typeof (x as GeneratedFile).contentType === 'string',
       )
-      .filter((f) => !f.hidden);
+      .filter((f) => !f.hidden)
+      // Retroactive filter (Franck 2026-05-17): historical rows
+      // persisted before the server-side guard in chat.ts may still
+      // carry internal tool-I/O files where `title === fileId`. Drop
+      // them at render time so we never surface a 502-ing download
+      // chip. See src/lib/dust/chat.ts mergeFiles() for the upstream
+      // filter that prevents new rows from accumulating these.
+      .filter((f) => f.title !== f.fileId);
   } catch {
     return [];
   }

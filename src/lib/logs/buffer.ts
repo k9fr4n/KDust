@@ -19,8 +19,24 @@
  *
  * The redactor is conservative (8+ chars, literal split/join replace, no regex)
  * so normal prose isn't accidentally blacked out.
+ *
+ * LEVEL ROUTING (ADR-0018, 2026-05-17). Before this rev, we patched only the
+ * underlying process.stdout / process.stderr write functions. That meant the
+ * captured level was binary: stdout → 'log', stderr → 'error'. console.info
+ * and console.warn lines therefore never reached the buffer with their
+ * intended level — every console.warn appeared as 'error' (red) in the UI.
+ *
+ * We now patch console.{log,info,warn,error} directly, BEFORE the stream
+ * patches. The console patches do the full pipeline (format → noise drop →
+ * redact → push at the correct level → write redacted line straight to the
+ * ORIGINAL stream so docker logs stays consistent). The stream patches stay
+ * in place as a fallback for code that bypasses the console object (native
+ * code, third-party libs that call process.stderr.write directly). For
+ * those, we still default to 'log' / 'error' — there's no better signal to
+ * infer the level from a raw stream write.
  */
 
+import { format as utilFormat } from 'node:util';
 import { buildRedactor, type RedactRef } from '../secrets/redact';
 
 export interface LogEntry {
@@ -202,6 +218,31 @@ export function installLogCapture() {
 
   const origStdout = process.stdout.write.bind(process.stdout);
   const origStderr = process.stderr.write.bind(process.stderr);
+
+  // ADR-0018: patch the console.* methods FIRST so each level
+  // ('log' | 'info' | 'warn' | 'error') is preserved in the
+  // buffer entries and rendered with the right colour in /logs.
+  // We then write the redacted line straight to the original
+  // stream — bypassing our stream patches below — so docker
+  // logs sees exactly one redacted copy. The stream patches
+  // stay registered for direct process.std{out,err}.write
+  // calls coming from code that doesn't go through console
+  // (native modules, some third-party libs).
+  function emitFromConsole(level: LogEntry['level'], text: string): void {
+    if (isNoise(text)) return;
+    const redacted = redactText(text);
+    push(level, redacted);
+    // Mirror Node's default console.X behaviour: append a
+    // trailing newline. util.format does not add one.
+    const out = redacted.endsWith('\n') ? redacted : redacted + '\n';
+    const writer = level === 'warn' || level === 'error' ? origStderr : origStdout;
+    try { writer(out); } catch { /* never throw from a console patch */ }
+  }
+
+  console.log = (...args: unknown[]) => emitFromConsole('log', utilFormat(...args));
+  console.info = (...args: unknown[]) => emitFromConsole('info', utilFormat(...args));
+  console.warn = (...args: unknown[]) => emitFromConsole('warn', utilFormat(...args));
+  console.error = (...args: unknown[]) => emitFromConsole('error', utilFormat(...args));
 
   // process.stdout.write has THREE typed overloads (chunk; chunk+cb;
   // chunk+encoding+cb). We accept any caller shape with `unknown[]`

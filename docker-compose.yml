@@ -124,7 +124,7 @@ services:
       #   entry MUST enumerate its tools (see kdust-custom.yaml).
       - --catalog=https://desktop.docker.com/mcp/catalog/v3/catalog.yaml
       - --additional-catalog=/catalogs/kdust-custom.yaml
-      - --servers=github-official,ews-mcp
+      - --servers=github-official,ews-mcp,thruk-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
       # --verify-signatures removed (2026-05-17): ews-mcp is a third-party

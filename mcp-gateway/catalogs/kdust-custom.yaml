@@ -140,3 +140,77 @@ registry:
       - name: ews-mcp.timezone
         env: TIMEZONE
         description: "IANA TZ name (e.g. Europe/Paris)"
+
+  thruk-mcp:
+    title: Thruk Monitoring MCP
+    description: |
+      MCP server for Thruk — the unified web frontend for Naemon, Nagios,
+      Icinga and Shinken. Exposes Thruk's REST API: read host/service
+      state, history, comments, downtimes; write tools for acknowledge,
+      downtime scheduling and forced rechecks. First-party gateway-ready
+      image (ghcr.io/k9fr4n/thruk-mcp, MIT — stdio default, non-root, no
+      stdout banner). Source: https://github.com/k9fr4n/thruk-mcp.
+      Hardening: pin a sha256 digest in production. Strongly recommended
+      to start with thruk-mcp.read_only=true and open writes case-by-case
+      via thruk-mcp.enabled_tools (fnmatch allowlist).
+    image: ghcr.io/k9fr4n/thruk-mcp:v1.0.0
+    type: server
+    # Tools enumerated because --servers= disables dynamic discovery.
+    # Captured 2026-05-17 from thruk-mcp v1.0.0 README.
+    tools:
+      # read — state (9)
+      - name: thruk_list_hosts
+      - name: thruk_get_host
+      - name: thruk_list_services
+      - name: thruk_get_service
+      - name: thruk_list_hostgroups
+      - name: thruk_list_servicegroups
+      - name: thruk_problems
+      - name: thruk_stats
+      - name: thruk_sites
+      # read — history & comments (7)
+      - name: thruk_list_logs
+      - name: thruk_list_alerts
+      - name: thruk_list_notifications
+      - name: thruk_recent_events
+      - name: thruk_list_comments
+      - name: thruk_list_downtimes
+      - name: thruk_get_downtime
+      # write — downtime management (8)
+      - name: thruk_schedule_downtime
+      - name: thruk_schedule_host_services_downtime
+      - name: thruk_schedule_propagated_host_downtime
+      - name: thruk_schedule_hostgroup_downtime
+      - name: thruk_schedule_servicegroup_downtime
+      - name: thruk_delete_downtime
+      - name: thruk_delete_active_downtimes
+      - name: thruk_delete_downtimes_by_filter
+      # write — problem handling (3)
+      - name: thruk_acknowledge
+      - name: thruk_remove_acknowledgement
+      - name: thruk_recheck
+      # escape hatches (2)
+      - name: thruk_query
+      - name: thruk_run_background_query
+    secrets:
+      - name: thruk-mcp.base_url
+        env: THRUK_BASE_URL
+        description: "Thruk URL, no trailing slash (https://monitor/thruk)"
+      - name: thruk-mcp.api_key
+        env: THRUK_API_KEY
+        description: "X-Thruk-Auth-Key header value"
+      - name: thruk-mcp.verify_ssl
+        env: THRUK_VERIFY_SSL
+        description: "false for self-signed certs (default: true)"
+      - name: thruk-mcp.read_only
+        env: THRUK_READ_ONLY
+        description: "true to strip every write tool (recommended initially)"
+      - name: thruk-mcp.enabled_tools
+        env: THRUK_ENABLED_TOOLS
+        description: "CSV allowlist of tool names with fnmatch wildcards (empty = all)"
+      - name: thruk-mcp.default_backends
+        env: THRUK_DEFAULT_BACKENDS
+        description: "CSV of default federated backend names (optional)"
+      - name: thruk-mcp.max_concurrent
+        env: THRUK_MAX_CONCURRENT
+        description: "Cap of in-flight HTTP requests, 0 = unlimited"

@@ -1780,3 +1780,93 @@ host-mounted (`./skills:/app/skills:ro`), so operators
 populate it themselves and the repo no longer needs to ship a
 working example. `skills/README.md` is kept as the layout
 documentation.
+
+### ADR-0017 — Undici keep-alive tuning to silence benign SSE rejections (2026-05-17)
+
+**Status**: Accepted.
+
+**Context**. The KDust process logs have been emitting recurring
+`unhandledRejection` events of the form:
+
+```
+[error] [TypeError: terminated] {
+  [cause]: [Error [SocketError]: other side closed] {
+    code: 'UND_ERR_SOCKET',
+    ...
+  }
+}
+```
+
+or with `cause.code: 'ECONNRESET' | 'ETIMEDOUT'`. They originate
+from short-lived POST requests to `dust.tt` (`postMCPResults`,
+`heartbeatMCP`, `validateAction`, etc. — `bytesWritten ~1.3kB`,
+`bytesRead ~2.6kB`, so the request itself completed fully),
+**not** from the long-lived SSE event-stream.
+
+Root cause: Node 22's global `fetch` (backed by undici) keeps
+HTTP/1.1 connections to dust.tt in an idle pool. Dust's Google
+Cloud load-balancer closes those sockets faster than undici's
+default `keepAliveTimeout`. The resulting socket-error event
+fires from undici's **internal pool**, in a microtask that has
+no userland consumer (the original request already returned).
+Node raises it as an unhandled rejection that bypasses every
+`.catch()` in `src/`. A previous attempt (commit 2026-04-30) added
+a `process.on('unhandledRejection')` dampener and tried to purge
+all other listeners — but Next.js installs THREE of its own
+listeners AFTER `instrumentation.register()`
+(`next-server.js:193`, `router-server.js:567`,
+`next-dev-server.js:257`), so each incident is logged 3 times in
+addition to our `swallowed benign SSE rejection` line. The
+dampener works but the noise stays.
+
+**Decision**. Install a custom global undici dispatcher at the
+very top of `instrumentation.register()`, with a `keepAliveTimeout`
+deliberately **lower than any peer's idle close window**. This
+makes KDust close idle sockets first via a clean FIN; the peer
+has nothing left to close, and undici emits no socket-error
+event at all.
+
+Concretely (`src/instrumentation.ts`):
+
+```ts
+const { Agent, setGlobalDispatcher } = await import('undici');
+setGlobalDispatcher(new Agent({
+  keepAliveTimeout:    4_000,   // close idle sockets fast
+  keepAliveMaxTimeout: 10_000,
+  connectTimeout:     10_000,
+  bodyTimeout:    5 * 60_000,   // long enough for SSE chat streams
+  headersTimeout:     30_000,
+}));
+```
+
+Adding `undici@^8` as a top-level dependency is required:
+Node 22 ships undici internally but does **not** expose
+`setGlobalDispatcher` via its public API. The userland package
+is the same library Node uses, just publicly importable.
+
+**Consequences**.
+
+- **Pro** — the rejection class disappears at the source: no
+  more `[TypeError: terminated]` / `UND_ERR_SOCKET` /
+  `ECONNRESET` in the logs (regardless of which Next.js
+  listener fires).
+- **Pro** — minor TLS handshake cost on the next request after
+  a 4s idle period; negligible at KDust's request volumes
+  (handful per task run).
+- **Pro** — sets correct upper bounds for `bodyTimeout` (5min,
+  matches the SDK's event-stream loop budget) and
+  `headersTimeout` (30s), which were both effectively unbounded
+  before.
+- **Con** — adds one top-level dependency (`undici`,
+  Node-core-maintained, low supply-chain risk).
+- **Con** — global side-effect on every `fetch()` from the
+  Node runtime, not just Dust calls. Acceptable because the
+  values chosen are conservative (slower close, ample
+  body/headers windows) and apply uniformly to every outbound
+  HTTP destination we use.
+
+**Follow-up (separate ADR)**. After a few days of clean
+production logs, remove the `unhandledRejection` dampener and
+its `removeAllListeners` purge from `instrumentation.ts`
+(~40 LOC). Genuine rejections become rare enough that Next.js's
+three default listeners are acceptable noise.

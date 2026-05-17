@@ -5,6 +5,63 @@ export async function register() {
     installLogCapture();
 
     // ---------------------------------------------------------------
+    // Undici keep-alive tuning (ADR-0017, Franck 2026-05-17).
+    //
+    // Root cause of the recurring `TypeError: terminated` /
+    // `UND_ERR_SOCKET` / `ECONNRESET` rejections we saw in the logs:
+    // Node 22's global fetch (undici) keeps HTTP connections to
+    // dust.tt in an idle pool. Dust's Google Cloud LB closes those
+    // sockets aggressively on its own timer. The resulting "other
+    // side closed" event is emitted from undici's internal pool —
+    // there is NO userland promise to attach a `.catch()` to, so
+    // the rejection lands straight on `process('unhandledRejection')`
+    // and gets logged by Next.js's three listeners (see comment on
+    // the dampener below).
+    //
+    // The fix is to install a global dispatcher whose keep-alive
+    // timer expires BEFORE the peer's, so it's always us who close
+    // the socket (cleanly, via FIN) — the peer has nothing to close
+    // and undici produces no rejection.
+    //
+    // We pin a dedicated `undici` dep instead of relying on Node's
+    // bundled-but-private copy, because `setGlobalDispatcher` is
+    // not exposed by Node's public API.
+    //
+    // Tuning rationale (conservative):
+    //   - keepAliveTimeout: 4_000 ms       → close idle sockets fast
+    //     enough to win the race vs. any reasonable LB (Dust's seems
+    //     ~10s, AWS/GCP defaults 60-75s — 4s is well below all).
+    //   - keepAliveMaxTimeout: 10_000 ms   → upper bound undici will
+    //     enforce even if the server's `Keep-Alive` header asks for
+    //     more. Matches "fast close" intent.
+    //   - bodyTimeout: 5 * 60_000 ms       → allow long SSE bodies
+    //     (chat streams, MCP heartbeats). 5min is the same envelope
+    //     the SDK uses for its event-stream loop.
+    //   - headersTimeout: 30_000 ms        → typical Dust API budget.
+    //   - connectTimeout: 10_000 ms        → fail fast on network blip.
+    //
+    // Side-effects on the dampener (kept below for now):
+    //   - the `[TypeError: terminated]` rejections should disappear
+    //     once this is in place (we close before the peer does);
+    //   - the dampener stays in place as a belt-and-braces measure
+    //     and will be removed in a follow-up ADR after a few days of
+    //     clean prod logs.
+    const { Agent, setGlobalDispatcher } = await import('undici');
+    setGlobalDispatcher(
+      new Agent({
+        keepAliveTimeout: 4_000,
+        keepAliveMaxTimeout: 10_000,
+        connectTimeout: 10_000,
+        bodyTimeout: 5 * 60_000,
+        headersTimeout: 30_000,
+      }),
+    );
+    console.log(
+      '[instrumentation] undici global dispatcher installed ' +
+        '(keepAliveTimeout=4s, bodyTimeout=5min) — ADR-0017',
+    );
+
+    // ---------------------------------------------------------------
     // Global unhandledRejection dampener (Franck 2026-04-24 09:08).
     //
     // Node's undici fetch throws `TypeError: terminated` with a

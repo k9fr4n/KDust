@@ -608,6 +608,20 @@ export async function streamAgentReply(
     for (const f of incoming) {
       if (!f || typeof f.fileId !== 'string') continue;
       if (f.hidden) continue;
+      // Skip internal tool-I/O files (Franck 2026-05-17). Some MCP
+      // servers (e.g. ews-mcp) upload each tool result as a Dust
+      // file with useCase `tool_output` and forget to set
+      // `hidden=true`. They arrive here with no human title (either
+      // empty or already equal to the fileId via a fallback in
+      // `extractFilesFromActionOutput` below). Surfacing them in
+      // GeneratedFilesPanel produces useless download chips that
+      // 502 in /api/files/:sId — Dust rejects `action=view` on
+      // non-conversation useCases and the `download` fallback
+      // doesn't resolve either. The Dust web UI hides them too.
+      // Heuristic: a user-facing file always carries a real title.
+      const hasHumanTitle =
+        typeof f.title === 'string' && f.title.length > 0 && f.title !== f.fileId;
+      if (!hasHumanTitle) continue;
       if (seenFileIds.has(f.fileId)) continue;
       seenFileIds.add(f.fileId);
       generatedFiles.push({

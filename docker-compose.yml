@@ -115,9 +115,14 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      # --additional-catalog appends to the gateway's built-in catalogs.
-      # --catalog (without prefix) REPLACES them, which would hide every
-      # official server. Lesson learned 2026-05-17.
+      # Catalog plumbing (lessons learned 2026-05-17):
+      # - In the headless docker/mcp-gateway image there is NO built-in
+      #   catalog (no Docker Desktop, no ~/.docker/mcp/catalogs/). The
+      #   official catalog must be passed explicitly via --catalog=<url>.
+      # - --additional-catalog appends our project catalog on top.
+      # - --servers= disables dynamic tool discovery, so each catalog
+      #   entry MUST enumerate its tools (see kdust-custom.yaml).
+      - --catalog=https://desktop.docker.com/mcp/catalog/v3/catalog.yaml
       - --additional-catalog=/catalogs/kdust-custom.yaml
       - --servers=github-official,ews-mcp
       - --secrets=/secrets/kdust-mcp.env

@@ -171,9 +171,36 @@ KDust convention since 2026-05-17:
 - Mounted read-only at `/catalogs/` inside the gateway container (both
   `docker-compose.yml` and `docker-compose.prod.yml`).
 - Registered with **`--additional-catalog=`** (not `--catalog=`). The
-  un-prefixed flag REPLACES the gateway's built-in catalogs and hides
-  every official server (playwright, github-official, etc.). The
-  `additional-` variant appends.
+  un-prefixed flag REPLACES the gateway's catalog list. We pass the
+  official Docker MCP catalog explicitly via
+  `--catalog=https://desktop.docker.com/mcp/catalog/v3/catalog.yaml`
+  because the headless `docker/mcp-gateway` image has NO built-in
+  catalog (no Docker Desktop, no `~/.docker/mcp/catalogs/` preseeded).
+- Each catalog entry MUST enumerate its `tools:` explicitly. When
+  `--servers=...` is set, dynamic introspection is disabled (gateway
+  log: `Note: dynamic-tools disabled when using --servers flag`).
+  To refresh the list after an upstream server upgrade, probe it once
+  via stdio with valid credentials:
+
+  ```bash
+  # 1. Build a env-file from the live KDust secrets (root-only)
+  sudo cat mcp-gateway/secrets/kdust-mcp.env \
+    | sed -E 's/^<slug>\.([a-z_]+)=/<UPPER>_\U\1=/' > /tmp/probe.env
+
+  # 2. Send the 3-message MCP handshake on stdin
+  printf '%s\n%s\n%s\n' \
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}' \
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+    '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > /tmp/probe.json
+
+  # 3. Probe + extract tool names
+  (cat /tmp/probe.json; sleep 15) | timeout 25 docker run --rm -i \
+    --env-file /tmp/probe.env <image> 2>&1 \
+    | grep -oE '"name":"[a-z_]+"' | sort -u
+
+  # 4. Cleanup
+  sudo rm -f /tmp/probe.env /tmp/probe.json
+  ```
 - Each `registry:` entry is a server slug. Reference it from
   `--servers=...` once declared.
 - All env vars (sensitive or not) MUST go under `secrets:` — the

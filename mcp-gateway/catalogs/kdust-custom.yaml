@@ -32,7 +32,87 @@ registry:
       consider pinning a sha256 digest in production.
     image: ghcr.io/azizmazrou/ews-mcp:latest
     type: server
-    tools: []
+    # The MCP gateway disables dynamic tool discovery when --servers= is
+    # used (verified via `docker-mcp gateway run --help`). Catalog entries
+    # MUST enumerate their tools, otherwise the gateway reports 0 tools.
+    # The list below was captured 2026-05-17 from ews-mcp v3.4 / 1.27.0
+    # via a stdio probe. Refresh after a major server upgrade.
+    tools:
+      # email (14)
+      - name: create_draft
+      - name: create_reply_draft
+      - name: create_forward_draft
+      - name: send_email
+      - name: read_emails
+      - name: search_emails
+      - name: get_email_details
+      - name: get_emails_bulk
+      - name: delete_email
+      - name: move_email
+      - name: update_email
+      - name: copy_email
+      - name: reply_email
+      - name: forward_email
+      # attachments (7)
+      - name: list_attachments
+      - name: download_attachment
+      - name: add_attachment
+      - name: delete_attachment
+      - name: read_attachment
+      - name: get_email_mime
+      - name: attach_email_to_draft
+      # calendar (7)
+      - name: create_appointment
+      - name: get_calendar
+      - name: update_appointment
+      - name: delete_appointment
+      - name: respond_to_meeting
+      - name: check_availability
+      - name: find_meeting_times
+      # contacts (3) + intelligence (2)
+      - name: create_contact
+      - name: update_contact
+      - name: delete_contact
+      - name: find_person
+      - name: analyze_contacts
+      # tasks (5)
+      - name: create_task
+      - name: get_tasks
+      - name: update_task
+      - name: complete_task
+      - name: delete_task
+      # search (1)
+      - name: search_by_conversation
+      # folders (3)
+      - name: list_folders
+      - name: find_folder
+      - name: manage_folder
+      # out-of-office (1)
+      - name: oof_settings
+      # agent-secretary v4 (21)
+      - name: memory_set
+      - name: memory_get
+      - name: memory_list
+      - name: memory_delete
+      - name: track_commitment
+      - name: list_commitments
+      - name: resolve_commitment
+      - name: submit_for_approval
+      - name: list_pending_approvals
+      - name: approve
+      - name: reject
+      - name: get_voice_profile
+      - name: rule_create
+      - name: rule_list
+      - name: rule_delete
+      - name: rule_simulate
+      - name: evaluate_rules_on_message
+      - name: configure_oof_policy
+      - name: get_oof_policy
+      - name: apply_oof_policy
+      - name: generate_briefing
+      - name: prepare_meeting
+      - name: execute_approved_action
     secrets:
       - name: ews-mcp.auth_type
         env: EWS_AUTH_TYPE

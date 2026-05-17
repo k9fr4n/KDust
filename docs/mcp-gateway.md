@@ -280,6 +280,61 @@ Compensating controls:
   a named volume) — acceptable as long as `semantic_search_emails`
   stays disabled.
 
+### Custom server: `thruk-mcp` (Thruk / Naemon monitoring)
+
+- Slug: `thruk-mcp` (in `kdust-custom.yaml`)
+- Image: `ghcr.io/k9fr4n/thruk-mcp:v1.0.0` — first-party, MIT
+  ([k9fr4n/thruk-mcp](https://github.com/k9fr4n/thruk-mcp)). The
+  image is gateway-ready out of the box (stdio default, non-root
+  `USER`, no stdout banner) so **no wrapper image is required**, unlike
+  `ews-mcp`. Pin a `sha256` digest once validated to neutralise
+  Watchtower auto-update.
+- 29 tools across:
+  - **Read — state** (9): `thruk_list_hosts`, `thruk_get_host`,
+    `thruk_list_services`, `thruk_get_service`,
+    `thruk_list_hostgroups`, `thruk_list_servicegroups`,
+    `thruk_problems`, `thruk_stats`, `thruk_sites`.
+  - **Read — history & comments** (7): `thruk_list_logs`,
+    `thruk_list_alerts`, `thruk_list_notifications`,
+    `thruk_recent_events`, `thruk_list_comments`,
+    `thruk_list_downtimes`, `thruk_get_downtime`.
+  - **Write — downtime management** (8): `thruk_schedule_*_downtime`
+    (host / service / hostgroup / servicegroup / propagated /
+    host_services) + `thruk_delete_downtime` /
+    `thruk_delete_active_downtimes` /
+    `thruk_delete_downtimes_by_filter`.
+  - **Write — problem handling** (3): `thruk_acknowledge`,
+    `thruk_remove_acknowledgement`, `thruk_recheck`.
+  - **Escape hatches** (2): `thruk_query` (raw REST call to any
+    Thruk endpoint), `thruk_run_background_query` (long-running
+    `?background=1` flow with automatic job polling).
+- Catalog keys to bind in `/settings/mcp`:
+  - `thruk-mcp.base_url` → `THRUK_BASE_URL` (e.g.
+    `https://monitor.example.com/thruk`, no trailing slash).
+  - `thruk-mcp.api_key` → `THRUK_API_KEY` (X-Thruk-Auth-Key
+    header, mint one from the Thruk user profile page).
+  - `thruk-mcp.verify_ssl` → `THRUK_VERIFY_SSL` (`false` for
+    self-signed certs).
+  - `thruk-mcp.read_only` → `THRUK_READ_ONLY` (**recommended:
+    `true` initially** — strips every write tool at boot, the LLM
+    literally cannot ack / schedule / delete anything).
+  - `thruk-mcp.enabled_tools` → `THRUK_ENABLED_TOOLS` (CSV with
+    fnmatch wildcards, e.g.
+    `thruk_list_*,thruk_problems,thruk_stats`). Combine with
+    `read_only=false` to open *specific* write tools.
+  - `thruk-mcp.default_backends` → `THRUK_DEFAULT_BACKENDS` (CSV
+    of federated site names, optional).
+  - `thruk-mcp.max_concurrent` → `THRUK_MAX_CONCURRENT` (cap of
+    in-flight HTTP requests, `0` = unlimited; combine with the
+    server's built-in TTL cache to protect the Thruk core from a
+    looping agent).
+- Recommended rollout: bind `base_url` + `api_key` +
+  `read_only=true`, attach to one read-only audit task, observe
+  the audit log (`docker compose logs mcp-gateway | grep
+  thruk_mcp.audit`), then promote selected write tools per
+  project via `enabled_tools` and per-project filters
+  (`ProjectMcpToolFilter`).
+
 ## V1 server: `github-official`
 
 - Slug: `github-official`

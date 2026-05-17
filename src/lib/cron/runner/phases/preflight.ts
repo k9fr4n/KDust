@@ -241,7 +241,11 @@ export async function runPreflight(
       const reason = sameJob
         ? `previous run ${concurrent.id} of this job still running`
         : `run ${concurrent.id} of sibling job "${concurrent.task?.name ?? concurrent.taskId}" still running on project "${effectiveProjectPath}"`;
-      console.warn(`[cron] skip job="${job.name}": ${reason} (${Math.round(ageMs / 1000)}s)`);
+      // ADR-0018: per-project concurrency skip is a designed
+      // behaviour (one runner per projectFsPath, ADR-0003), not
+      // an anomaly. Log at INFO so it doesn't look like a fault
+      // in /logs.
+      console.info(`[cron] skip job="${job.name}": ${reason} (${Math.round(ageMs / 1000)}s)`);
       const skipRow = await db.taskRun.create({
         data: {
           taskId,

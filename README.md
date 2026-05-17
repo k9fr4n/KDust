@@ -1870,3 +1870,84 @@ production logs, remove the `unhandledRejection` dampener and
 its `removeAllListeners` purge from `instrumentation.ts`
 (~40 LOC). Genuine rejections become rare enough that Next.js's
 three default listeners are acceptable noise.
+
+### ADR-0018 — Log level semantics (2026-05-17)
+
+**Status**: Accepted.
+
+**Context**. The in-app log buffer (`src/lib/logs/buffer.ts`)
+captures every Node `console.*` write and renders them in
+`/logs` with four colour channels:
+
+| Level   | Colour      | Intended meaning                                     |
+|---------|-------------|------------------------------------------------------|
+| `log`   | slate (gray)| Low-level nominal trace ("it worked").               |
+| `info`  | sky (blue)  | Notable nominal event — human intent, design choice. |
+| `warn`  | amber       | Unexpected but recoverable — external hiccup,        |
+|         |             | degraded mode, transient failure with retry.         |
+| `error` | red         | KDust bug or unrecoverable failure of the run.       |
+
+Before this rev the buffer patched only `process.stdout` /
+`process.stderr` write functions. Routing was therefore binary
+(`stdout → 'log'`, `stderr → 'error'`), which meant **every**
+`console.warn` and `console.error` collapsed into a red
+`'error'` entry — including ~95 warnings emitted from MCP
+register failures, Teams notification hiccups, Telegram
+back-offs, B3 merge-back refusals, and (most jarringly) the
+log of a user pressing **Stop** on a run. The `'info'` and
+`'warn'` colour channels in the UI were effectively dead code.
+
+**Decision**.
+
+1. Patch `console.{log,info,warn,error}` directly, before the
+   stream patches. Each method runs the full pipeline
+   (`util.format` → noise drop → redact → push at correct
+   level → write to ORIGINAL stream so `docker logs` stays
+   consistent). The stream patches stay in place as a
+   fallback for code that bypasses the console object.
+
+2. Codify the level semantics above and apply targeted
+   reclassification of misrouted call sites:
+
+   - `cron/runner/phases/handle-failure.ts` — split the
+     `ABORTED | FAILED` log: ABORTED is a nominal user
+     action → `console.info`; FAILED stays `console.error`.
+   - `cron/runner/registry.ts` — cascade-cancel log is a
+     designed follow-up of an abort, not an anomaly →
+     `console.info` (was `console.log`).
+   - `cron/runner/phases/preflight.ts` — per-project
+     concurrency skip is a designed behaviour (ADR-0003) →
+     `console.info` (was `console.warn`).
+
+   No other site needs to be moved: existing `console.warn`
+   calls (~95) correctly describe degraded paths, and
+   existing `console.error` calls (~35) correctly describe
+   KDust-side failures.
+
+**Consequences**.
+
+- **Pro** — `/logs` becomes scannable: red entries now
+  almost exclusively flag actual KDust-side problems worth
+  investigating. Yellow flags external/environmental
+  pressure. Blue marks intentional lifecycle events.
+- **Pro** — no caller migration required for the buffer fix:
+  the level signal already exists at every call site via the
+  `console.X` choice. The plumbing simply stops erasing it.
+- **Pro** — `docker logs` output is unchanged (still one
+  redacted copy per write).
+- **Con** — patching `console.*` globally is a stronger
+  invariant than patching the streams. Any future code that
+  resolves `console.log` before `installLogCapture()` runs
+  (currently nothing does — the hook fires at the top of
+  `instrumentation.register()`) would bypass our redaction
+  and level mapping. Mitigated by: redaction also remains in
+  the stream-level fallback, so even bypassed writes get
+  scrubbed before reaching `docker logs`.
+
+**Follow-up**. The optional Phase 3 (typed `log.info()` /
+`log.warn()` API in `src/lib/logs/logger.ts` with forced
+scope tags and structured fields) is deferred. The current
+`console.*` API is idiomatic, used everywhere, and now
+carries the right semantics. A typed wrapper would be
+desirable if and when we want to ship structured JSON logs to
+an external collector.

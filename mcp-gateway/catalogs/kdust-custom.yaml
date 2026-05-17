@@ -30,7 +30,12 @@ registry:
       contacts, tasks, folders, attachments, threads, search. Third-party
       server (ghcr.io/azizmazrou/ews-mcp, MIT). Not signed by Docker;
       consider pinning a sha256 digest in production.
-    image: ghcr.io/azizmazrou/ews-mcp:latest
+    # Locally-built wrapper image: ews-mcp-patched:local. Two upstream
+    # issues patched (banner-on-stdout, gosu vs no-new-privileges) — see
+    # mcp-gateway/images/ews-mcp-patched/Dockerfile for the full story.
+    # The gateway runs children with --pull never, so we don't need a
+    # registry push. Each KDust host must `docker build` this image once.
+    image: ews-mcp-patched:local
     type: server
     # The MCP gateway disables dynamic tool discovery when --servers= is
     # used (verified via `docker-mcp gateway run --help`). Catalog entries

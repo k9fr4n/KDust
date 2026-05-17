@@ -80,89 +80,45 @@ export async function GET(req: Request, ctx: Ctx) {
   const d = await getDustClient();
   if (!d) return unauthorized('not_connected');
 
-  // Raw request so we can keep the stream + forward headers.
-  // `status` and `ok` are part of the SDK's DustResponse contract
-  // (index.d.ts line 15) — exposing them lets us surface 4xx/5xx
-  // upstream errors as proper API errors instead of streaming
-  // Dust's JSON error envelope verbatim (Franck 2026-05-16, after
-  // seeing files saved with `{"error":{"type":"invalid_request_error",
-  // "message":"The file use case is not supported by the API."}}`
-  // as their payload).
-  const res = await (d.client as unknown as {
-    request: (args: {
-      method: 'GET';
-      path: string;
-      stream: true;
-    }) => Promise<{
-      isErr(): boolean;
-      error?: { message: string };
-      value?: {
-        response: {
-          status: number;
-          ok: boolean;
-          body: ReadableStream<Uint8Array> | string;
-          headers?: Headers | Record<string, string>;
-        };
-      };
-    }>;
-  }).request({
-    method: 'GET',
-    path: `files/${sId}?action=view&version=original`,
-    stream: true,
-  });
-
-  if (res.isErr()) {
-    const msg = res.error?.message ?? 'unknown error';
-    console.error('[files] proxy failed', sId, msg);
-    const status = /not[_ ]found/i.test(msg) ? 404 : 502;
-    return apiError(msg, status);
+  // Try `action=view` first (streams the body directly, fastest
+  // path). For files whose Dust `useCase` is `tool_output`,
+  // `project_context`, etc., the view action is rejected with
+  //
+  //   400 invalid_request_error:
+  //   "The file use case is not supported by the API."
+  //
+  // In that case we fall back to `action=download`, which returns
+  // a redirect to a signed GCS URL. The SDK's underlying fetch
+  // uses the default `redirect: 'follow'`, so the response we
+  // get back here is already the GCS body — we just stream it.
+  // (Franck 2026-05-17, follow-up to PR #76.)
+  let upstream = await fetchUpstreamFile(d.client, sId, 'view');
+  if (upstream.kind === 'http_error' && shouldFallbackToDownload(upstream)) {
+    console.warn(
+      '[files] view rejected, retrying with action=download',
+      sId,
+      upstream.message,
+    );
+    upstream = await fetchUpstreamFile(d.client, sId, 'download');
   }
 
-  const upstream = res.value!.response;
-
-  // Upstream HTTP error guard (Franck 2026-05-16). The SDK marks the
-  // Result as Ok as long as the request reached Dust — a 400/404/etc.
-  // with a JSON error envelope still flows through here. Without this
-  // check we'd stream `{"error":{"type":"invalid_request_error",
-  // "message":"The file use case is not supported by the API."}}` as
-  // the file body, which the browser then happily saves to disk. Buffer
-  // the small JSON, extract the message, return a proper API error.
-  if (!upstream.ok) {
-    let upstreamMsg = `upstream ${upstream.status}`;
-    try {
-      const body = upstream.body;
-      const raw =
-        typeof body === 'string' ? body : await new Response(body).text();
-      // Dust shape: { error: { type, message } } — fall back to raw on
-      // anything else (HTML 502, etc).
-      try {
-        const parsed = JSON.parse(raw) as {
-          error?: { message?: string; type?: string };
-        };
-        if (parsed?.error?.message) {
-          upstreamMsg =
-            parsed.error.type
-              ? `${parsed.error.type}: ${parsed.error.message}`
-              : parsed.error.message;
-        }
-      } catch {
-        // Non-JSON body — keep the raw snippet, capped.
-        upstreamMsg = raw.slice(0, 500) || upstreamMsg;
-      }
-    } catch {
-      // Body read failure — keep the status-only message.
-    }
+  if (upstream.kind === 'sdk_error') {
+    console.error('[files] proxy failed', sId, upstream.message);
+    const status = /not[_ ]found/i.test(upstream.message) ? 404 : 502;
+    return apiError(upstream.message, status);
+  }
+  if (upstream.kind === 'http_error') {
     console.error(
       '[files] upstream returned non-2xx',
       sId,
       upstream.status,
-      upstreamMsg,
+      upstream.message,
     );
     // 404 stays 404 (lets the UI hide the chip cleanly); everything
     // else surfaces as 502 so a transient upstream blip doesn't get
     // misinterpreted as a client mistake.
     const proxyStatus = upstream.status === 404 ? 404 : 502;
-    return apiError(upstreamMsg, proxyStatus);
+    return apiError(upstream.message, proxyStatus);
   }
 
   const hdrs = upstream.headers;
@@ -183,4 +139,131 @@ export async function GET(req: Request, ctx: Ctx) {
     return new NextResponse(body, { status: 200, headers: outHeaders });
   }
   return new NextResponse(body, { status: 200, headers: outHeaders });
+}
+
+// ---------------------------------------------------------------------------
+// Upstream fetch helper
+// ---------------------------------------------------------------------------
+
+type UpstreamOk = {
+  kind: 'ok';
+  body: ReadableStream<Uint8Array> | string;
+  headers: Headers | Record<string, string> | undefined;
+};
+type UpstreamHttpError = {
+  kind: 'http_error';
+  status: number;
+  message: string;
+  errorType: string | null;
+};
+type UpstreamSdkError = {
+  kind: 'sdk_error';
+  message: string;
+};
+type UpstreamResult = UpstreamOk | UpstreamHttpError | UpstreamSdkError;
+
+/**
+ * Dust API shape we tap into via the raw `request` escape hatch.
+ * `getFileContent` is the high-level wrapper around the same call
+ * but it materialises the body into a Blob — we want the stream so
+ * we can pipe it back to the browser without buffering.
+ */
+type RawRequest = {
+  request: (args: {
+    method: 'GET';
+    path: string;
+    stream: true;
+  }) => Promise<{
+    isErr(): boolean;
+    error?: { message: string };
+    value?: {
+      response: {
+        status: number;
+        ok: boolean;
+        body: ReadableStream<Uint8Array> | string;
+        headers?: Headers | Record<string, string>;
+      };
+    };
+  }>;
+};
+
+/**
+ * One shot at the upstream file endpoint. Wraps the SDK's two
+ * failure modes (transport error vs. HTTP error envelope) into a
+ * tagged union so the caller can branch cleanly.
+ *
+ * `action=view&version=original` streams the body directly.
+ * `action=download` returns a 302 to a signed GCS URL; with the
+ * SDK's default `redirect: 'follow'` fetch, the response we see
+ * here is already the GCS body.
+ */
+async function fetchUpstreamFile(
+  client: unknown,
+  sId: string,
+  action: 'view' | 'download',
+): Promise<UpstreamResult> {
+  const path =
+    action === 'view'
+      ? `files/${sId}?action=view&version=original`
+      : `files/${sId}?action=download`;
+  const res = await (client as RawRequest).request({
+    method: 'GET',
+    path,
+    stream: true,
+  });
+  if (res.isErr()) {
+    return { kind: 'sdk_error', message: res.error?.message ?? 'unknown error' };
+  }
+  const upstream = res.value!.response;
+  if (upstream.ok) {
+    return {
+      kind: 'ok',
+      body: upstream.body,
+      headers: upstream.headers,
+    };
+  }
+  // Non-2xx — buffer the envelope to surface a useful message.
+  let message = `upstream ${upstream.status}`;
+  let errorType: string | null = null;
+  try {
+    const raw =
+      typeof upstream.body === 'string'
+        ? upstream.body
+        : await new Response(upstream.body).text();
+    try {
+      const parsed = JSON.parse(raw) as {
+        error?: { message?: string; type?: string };
+      };
+      if (parsed?.error?.message) {
+        errorType = parsed.error.type ?? null;
+        message = errorType
+          ? `${errorType}: ${parsed.error.message}`
+          : parsed.error.message;
+      }
+    } catch {
+      message = raw.slice(0, 500) || message;
+    }
+  } catch {
+    /* keep status-only message */
+  }
+  return { kind: 'http_error', status: upstream.status, message, errorType };
+}
+
+/**
+ * Trigger condition for the `view → download` fallback. The Dust
+ * API returns a very specific envelope when the file's `useCase`
+ * (e.g. `tool_output`) doesn't grant `view` access:
+ *
+ *   { error: { type: "invalid_request_error",
+ *              message: "The file use case is not supported by the API." } }
+ *
+ * We match on the message substring (case-insensitive) gated by
+ * 400 status to avoid retrying on unrelated 4xx (auth, rate
+ * limit, etc).
+ */
+function shouldFallbackToDownload(err: UpstreamHttpError): boolean {
+  return (
+    err.status === 400 &&
+    /use[_ ]case is not supported/i.test(err.message)
+  );
 }

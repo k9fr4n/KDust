@@ -23,6 +23,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Download, X, ExternalLink } from 'lucide-react';
+import { useBlobDownload } from '@/lib/hooks/use-blob-download';
 
 type Props = {
   src: string;
@@ -66,6 +67,21 @@ export function ChatImage({ src, alt, title, downloadName }: Props) {
   // external-origin images where the proxy isn't involved.
   const dlAttr = downloadName ?? true;
 
+  // Blob-download path used for same-origin proxied images so
+  // Chrome's "Insecure download blocking" policy (HTTP origin)
+  // does not silently drop the download. External URLs keep the
+  // plain <a download> path. (Franck 2026-05-17)
+  const isProxied = src.startsWith('/api/files/');
+  const { download, isDownloading } = useBlobDownload();
+  const filenameForBlob =
+    downloadName ?? alt ?? title ?? src.split('/').pop() ?? 'download';
+  const triggerDownload = (e: React.MouseEvent) => {
+    if (!isProxied) return; // let the <a download> handle external URLs
+    e.preventDefault();
+    e.stopPropagation();
+    void download(downloadHref, filenameForBlob);
+  };
+
   return (
     <>
       {/* Thumbnail wrapper: using a <span> rather than a <button>
@@ -102,7 +118,8 @@ export function ChatImage({ src, alt, title, downloadName }: Props) {
         <a
           href={downloadHref}
           download={dlAttr}
-          onClick={(e) => e.stopPropagation()}
+          onClick={isProxied ? triggerDownload : (e) => e.stopPropagation()}
+          aria-disabled={isDownloading}
           className="absolute top-1 right-1 inline-flex items-center justify-center w-7 h-7 rounded-md bg-black/55 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 focus-visible:opacity-100 transition-opacity hover:bg-black/75"
           title="Download"
           aria-label="Download image"
@@ -128,6 +145,8 @@ export function ChatImage({ src, alt, title, downloadName }: Props) {
             <a
               href={downloadHref}
               download={dlAttr}
+              onClick={isProxied ? triggerDownload : undefined}
+              aria-disabled={isDownloading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-sm"
               title="Download"
             >

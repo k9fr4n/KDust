@@ -87,14 +87,20 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      - --servers=playwright
+      - --catalog=/catalogs/kdust-custom.yaml
+      - --servers=playwright,ews-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
-      - --verify-signatures
+      # --verify-signatures removed (2026-05-17): ews-mcp is a third-party
+      # GHCR image (ghcr.io/azizmazrou/ews-mcp) not signed by Docker.
+      # Hardening: pin a sha256 digest in mcp-gateway/catalogs/kdust-custom.yaml
+      # once the server is validated. Default-deny per-project filters remain.
       - --log-calls
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mcp-gateway/secrets:/secrets:ro
+      # Custom catalog (2026-05-17). Same convention as docker-compose.yml.
+      - ./mcp-gateway/catalogs:/catalogs:ro
     expose:
       - "8080"
     mem_limit: 1g

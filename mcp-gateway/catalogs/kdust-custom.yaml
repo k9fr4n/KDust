@@ -1,0 +1,57 @@
+# KDust custom MCP catalog — servers NOT in the official Docker MCP hub.
+#
+# Loaded by the gateway via --catalog=/catalogs/kdust-custom.yaml. The
+# `name:` field at the bottom is the catalog identifier; entries under
+# `registry:` are server slugs referenced from --servers=... in the
+# compose command.
+#
+# Secret VALUES are NOT in this file — they live in kdust-mcp.env, written
+# at boot by src/lib/mcp/gateway-secrets.ts from the McpServerSecret
+# bindings. The `name:` of each secret below is the catalog key bound in
+# /settings/mcp; the `env:` is the variable the underlying image actually
+# consumes.
+#
+# Linux gotcha: env vars MUST be declared under `secrets:` (the `config:`
+# block is Docker Desktop only). Non-sensitive values (auth_type, timezone)
+# still go here.
+#
+# Hardening recommendation: once a server is validated, pin its image by
+# sha256 digest (image: ghcr.io/.../ews-mcp@sha256:...) so Watchtower can
+# no longer auto-update it.
+
+name: kdust-custom
+displayName: KDust custom MCP servers
+
+registry:
+  ews-mcp:
+    title: Exchange Web Services MCP
+    description: |
+      Microsoft Exchange / Office 365 mailbox control — email, calendar,
+      contacts, tasks, folders, attachments, threads, search. Third-party
+      server (ghcr.io/azizmazrou/ews-mcp, MIT). Not signed by Docker;
+      consider pinning a sha256 digest in production.
+    image: ghcr.io/azizmazrou/ews-mcp:latest
+    type: server
+    tools: []
+    secrets:
+      - name: ews-mcp.auth_type
+        env: EWS_AUTH_TYPE
+        description: "Auth mode — ntlm for on-prem Exchange"
+      - name: ews-mcp.server_url
+        env: EWS_SERVER_URL
+        description: "Explicit EWS endpoint (https://.../EWS/Exchange.asmx)"
+      - name: ews-mcp.autodiscover
+        env: EWS_AUTODISCOVER
+        description: "false when EWS_SERVER_URL is set explicitly"
+      - name: ews-mcp.email
+        env: EWS_EMAIL
+        description: "Primary mailbox SMTP address"
+      - name: ews-mcp.username
+        env: EWS_USERNAME
+        description: "NTLM username in DOMAIN\\\\user form"
+      - name: ews-mcp.password
+        env: EWS_PASSWORD
+        description: "NTLM password"
+      - name: ews-mcp.timezone
+        env: TIMEZONE
+        description: "IANA TZ name (e.g. Europe/Paris)"

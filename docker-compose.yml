@@ -115,10 +115,15 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      - --servers=github-official
+      - --catalog=/catalogs/kdust-custom.yaml
+      - --servers=github-official,ews-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
-      - --verify-signatures
+      # --verify-signatures removed (2026-05-17): ews-mcp is a third-party
+      # GHCR image (ghcr.io/azizmazrou/ews-mcp) not signed by Docker.
+      # Hardening: pin a sha256 digest in mcp-gateway/catalogs/kdust-custom.yaml
+      # once the server is validated. Default-deny per-project (ProjectMcpToolFilter)
+      # remains the primary safeguard.
       - --log-calls
     volumes:
       # Required: the gateway spawns its child MCP containers on the host
@@ -127,6 +132,10 @@ services:
       # Read-only secrets file, written by KDust at boot and on every
       # Secret edit. Mode 0600, owned by uid 1000.
       - ./mcp-gateway/secrets:/secrets:ro
+      # Custom catalog (2026-05-17): declares servers outside the official
+      # Docker MCP hub (e.g. ews-mcp). KDust-versioned, read-only inside
+      # the gateway. Edit on host, then `docker compose up -d mcp-gateway`.
+      - ./mcp-gateway/catalogs:/catalogs:ro
     expose:
       - "8080"
     mem_limit: 1g

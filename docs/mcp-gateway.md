@@ -170,6 +170,10 @@ KDust convention since 2026-05-17:
 - One versioned YAML file: `mcp-gateway/catalogs/kdust-custom.yaml`.
 - Mounted read-only at `/catalogs/` inside the gateway container (both
   `docker-compose.yml` and `docker-compose.prod.yml`).
+- Registered with **`--additional-catalog=`** (not `--catalog=`). The
+  un-prefixed flag REPLACES the gateway's built-in catalogs and hides
+  every official server (playwright, github-official, etc.). The
+  `additional-` variant appends.
 - Each `registry:` entry is a server slug. Reference it from
   `--servers=...` once declared.
 - All env vars (sensitive or not) MUST go under `secrets:` — the

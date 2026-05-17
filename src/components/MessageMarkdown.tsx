@@ -57,6 +57,38 @@ import hljsPowershell from 'highlight.js/lib/languages/powershell';
 import hljsProperties from 'highlight.js/lib/languages/properties';
 import hljsYaml from 'highlight.js/lib/languages/yaml';
 import { Check, Copy, Download, FileText } from 'lucide-react';
+import { useBlobDownload } from '@/lib/hooks/use-blob-download';
+
+/**
+ * Inline chip rendered when the markdown contains a link whose
+ * href points at one of our `fil_xxx` ids. Extracted so we can
+ * hold the useBlobDownload state (Franck 2026-05-17 — Chrome
+ * blocks insecure HTTP downloads, see hook header).
+ */
+function MarkdownFileChip({
+  dlHref,
+  name,
+  display,
+}: {
+  dlHref: string;
+  name: string;
+  display: string;
+}) {
+  const { download, isDownloading, error } = useBlobDownload();
+  return (
+    <button
+      type="button"
+      onClick={() => void download(dlHref, name)}
+      disabled={isDownloading}
+      title={error ? `Download failed: ${error}` : `Download ${name}`}
+      className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 my-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 no-underline align-middle disabled:opacity-60 disabled:cursor-progress"
+    >
+      <FileText size={14} className="text-blue-500 flex-none" />
+      <span className="truncate font-medium min-w-0">{display}</span>
+      <Download size={12} className="text-slate-400 flex-none" />
+    </button>
+  );
+}
 
 /**
  * CodeBlockWithCopy (Franck 2026-04-20 09:41).
@@ -286,17 +318,7 @@ function MessageMarkdownImpl({
               const dlHref = `/api/files/${fileId}?download=1&name=${encodeURIComponent(name)}`;
               const display = linkText.length > 0 ? linkText : name;
               return (
-                <a
-                  href={dlHref}
-                  download={name}
-                  title={`Download ${name}`}
-                  className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 my-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 no-underline align-middle"
-                  {...rest}
-                >
-                  <FileText size={14} className="text-blue-500 flex-none" />
-                  <span className="truncate font-medium min-w-0">{display}</span>
-                  <Download size={12} className="text-slate-400 flex-none" />
-                </a>
+                <MarkdownFileChip dlHref={dlHref} name={name} display={display} />
               );
             }
             return (

@@ -19,6 +19,7 @@ import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import { Copy, Check, Wrench, FileText, Download } from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
 import { UI_FLASH_MS } from '@/lib/constants';
+import { useBlobDownload } from '@/lib/hooks/use-blob-download';
 import {
   parseToolInvocations,
   type ToolInvocation,
@@ -333,23 +334,57 @@ export function GeneratedFilesPanel({ files }: { files: GeneratedFile[] }) {
           );
         }
         return (
-          <a
+          <GeneratedFileChip
             key={f.fileId}
-            href={dlHref}
-            download={name}
-            title={f.snippet ? `${name}\n\n${f.snippet}` : name}
-            className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-200"
-          >
-            <FileText size={14} className="text-blue-500 flex-none" />
-            <span className="truncate font-medium min-w-0">{name}</span>
-            <span className="text-[10px] text-slate-400 dark:text-slate-500 flex-none uppercase">
-              {shortContentType(f.contentType)}
-            </span>
-            <Download size={12} className="text-slate-400 flex-none" />
-          </a>
+            dlHref={dlHref}
+            name={name}
+            snippet={f.snippet}
+            contentType={f.contentType}
+          />
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Single non-image file chip. Extracted from GeneratedFilesPanel
+ * so it can hold the useBlobDownload state (Franck 2026-05-17 —
+ * Chrome blocks insecure HTTP downloads, see hook header).
+ */
+function GeneratedFileChip({
+  dlHref,
+  name,
+  snippet,
+  contentType,
+}: {
+  dlHref: string;
+  name: string;
+  snippet?: string | null;
+  contentType: string;
+}) {
+  const { download, isDownloading, error } = useBlobDownload();
+  return (
+    <button
+      type="button"
+      onClick={() => void download(dlHref, name)}
+      disabled={isDownloading}
+      title={
+        error
+          ? `Download failed: ${error}`
+          : snippet
+            ? `${name}\n\n${snippet}`
+            : name
+      }
+      className="inline-flex items-center gap-2 max-w-full px-2.5 py-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 disabled:opacity-60 disabled:cursor-progress"
+    >
+      <FileText size={14} className="text-blue-500 flex-none" />
+      <span className="truncate font-medium min-w-0">{name}</span>
+      <span className="text-[10px] text-slate-400 dark:text-slate-500 flex-none uppercase">
+        {shortContentType(contentType)}
+      </span>
+      <Download size={12} className="text-slate-400 flex-none" />
+    </button>
   );
 }
 

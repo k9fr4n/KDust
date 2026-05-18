@@ -57,6 +57,10 @@ services:
       # ./mcp-gateway/secrets/kdust-mcp.env (mode 0600), la gateway
       # le lit en ro via son propre bind-mount.
       - ./mcp-gateway/secrets:/mcp-gateway/secrets
+      # MCP gateway custom catalog (Franck 2026-05-18). Read-only
+      # mount so /settings/mcp peut scoper le picker de tools par
+      # serveur. Même source que --additional-catalog côté gateway.
+      - ./mcp-gateway/catalogs:/app/mcp-gateway/catalogs:ro
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
     # Cf. docker-compose.yml pour le détail.
     tmpfs:
@@ -93,7 +97,9 @@ services:
       # disables dynamic discovery, so entries must enumerate their tools.
       - --catalog=https://desktop.docker.com/mcp/catalog/v3/catalog.yaml
       - --additional-catalog=/catalogs/kdust-custom.yaml
-      - --servers=playwright,ews-mcp,thruk-mcp
+      # playwright retiré 2026-05-18 (Franck): non utilisé dans le flux KDust,
+      # encombrait /settings/mcp avec 23 tools parasites.
+      - --servers=ews-mcp,thruk-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
       # --verify-signatures removed (2026-05-17): ews-mcp is a third-party

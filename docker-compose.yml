@@ -108,11 +108,39 @@ services:
   # kdust side, ro on the gateway side) and are loaded via `--secrets=`.       #
   # See docs/mcp-gateway.md.                                                   #
   # -------------------------------------------------------------------------- #
+  # ews-mcp-patched is a purely local Docker image (built from
+  # mcp-gateway/images/ews-mcp-patched/Dockerfile). It's not on any
+  # registry, so an `docker system prune` on the host wipes it and the
+  # gateway can't restart ews-mcp. This init service rebuilds the image
+  # if it's missing before the gateway starts — using DooD via the host
+  # docker.sock. Build context is piped as a tar over stdin because the
+  # host daemon can't see paths inside this container (Franck 2026-05-18).
+  ews-mcp-builder:
+    image: docker:cli
+    container_name: kdust-ews-mcp-builder
+    restart: "no"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./mcp-gateway/images/ews-mcp-patched:/build:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      set -e
+      if docker image inspect ews-mcp-patched:local >/dev/null 2>&1; then
+        echo "[ews-mcp-builder] ews-mcp-patched:local present, skipping build."
+        exit 0
+      fi
+      echo "[ews-mcp-builder] ews-mcp-patched:local missing, rebuilding..."
+      tar -C /build -cf - . | docker build -t ews-mcp-patched:local -
+      echo "[ews-mcp-builder] build OK."
+
   mcp-gateway:
     image: docker/mcp-gateway:latest
     container_name: kdust-mcp-gateway
     restart: unless-stopped
     pull_policy: always
+    depends_on:
+      ews-mcp-builder:
+        condition: service_completed_successfully
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"

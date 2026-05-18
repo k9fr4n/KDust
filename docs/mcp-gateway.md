@@ -284,6 +284,16 @@ Compensating controls:
   ```
   The gateway runs each child with `--pull never`, so the locally-built
   tag is used as-is — no registry push required.
+- **Auto-rebuild on `docker compose up`** (2026-05-18): the compose
+  files ship an `ews-mcp-builder` init service that runs `docker image
+  inspect` against the host daemon (DooD) and rebuilds the image from
+  `mcp-gateway/images/ews-mcp-patched` if it's missing — piped as a
+  tar over stdin so the host daemon doesn't need to see the build
+  context path. `mcp-gateway` declares
+  `depends_on.ews-mcp-builder.condition: service_completed_successfully`,
+  so a fresh `docker compose up -d` after a manual `docker image prune`
+  or `docker system prune` recovers transparently. Skip cost when the
+  image is present: ~2 s.
 - Auth modes supported by the image: OAuth2 / Basic / NTLM. The KDust
   catalog entry declares the seven env vars needed for **NTLM**
   (on-prem Exchange): `EWS_AUTH_TYPE`, `EWS_SERVER_URL`,

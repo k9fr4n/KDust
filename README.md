@@ -1951,3 +1951,83 @@ scope tags and structured fields) is deferred. The current
 carries the right semantics. A typed wrapper would be
 desirable if and when we want to ship structured JSON logs to
 an external collector.
+
+### ADR-0019 — Cron runner gateway-proxy parity (2026-05-18)
+
+**Status**: Accepted.
+
+**Context**. The Docker MCP Gateway proxy (ADR-0012) is
+minted per-project by `startGatewayProxy()` and exposed to
+Dust via a serverId. Chat sessions get the proxy because
+`src/app/chat/_ChatClient.tsx` POSTs `/api/mcp/gateway-ensure`
+on every conversation boot. Task runs (cron, UI "Run now",
+Telegram, push pipeline followups) go through
+`src/lib/cron/runner/phases/setup-mcp.ts`, which registered
+fs-cli + task-runner + (opt-in) command-runner + skills, but
+**not** the gateway proxy.
+
+The regression surfaced on TaskRun `cmpbmnidi0012gsyoxwtv0l4d`
+(`Thruk-Report` on `Perso/fsallet/Claw`, 2026-05-18). The
+project had a well-formed `ProjectMcpToolFilter` whitelisting
+29 `thruk_*` tools, but the cron-triggered run saw none of
+them. The agent fell back to `curl` / `python3` / `docker`
+through `fs_cli__run_command`, hit the 30 s execFile timeout
+on each network egress, the kill-by-SIGTERM rendered as the
+opaque `"Command failed with exit code unknown"`, and the
+run exhausted its step budget chasing a phantom
+"python is broken" hypothesis. Status: `failed`,
+error: `"This agent took too many steps to answer your
+query."`
+
+**Decision**. Register the per-project gateway proxy in the
+cron runner's setup-mcp phase, symmetric to fs-cli /
+task-runner / skills:
+
+1. Lazy-import `getGatewayServerId` from
+   `src/lib/mcp/registry.ts` (same accessor `_ChatClient.tsx`
+   and `/api/mcp/gateway-ensure` use). Cache hit is free,
+   cache miss pays one `tools/list` round-trip to the
+   gateway and is amortised across all subsequent runs on
+   the same project.
+2. `null` return (the documented "no whitelisted tools"
+   sentinel — `ProjectMcpToolFilter` row missing or every
+   `allowedTools=[]`) → skip silently, log one `info` line,
+   do NOT push a `null` into `mcpServerIds`
+   (`createDustConversation` rejects null entries).
+3. Hard failure (transport error, gateway down) → `warn`,
+   non-fatal. The run continues with fs-cli + task-runner +
+   skills so the agent can at least produce a diagnostic.
+4. Append to the tail of `mcpServerIds` so the existing four
+   server indices stay stable across releases — relevant
+   for any downstream consumer that introspects the array
+   by position.
+
+**Invariant codified**. Every Dust client that addresses a
+project — chat, cron, UI run-now, Telegram bridge, push
+pipeline followups — MUST see the same MCP tool surface for
+that project. The single source of truth is
+`ProjectMcpToolFilter`; any orchestration path that mints a
+Dust conversation MUST consult it via the same registry
+function.
+
+**Consequences**.
+
+- **Pro** — Task prompts that reference gateway tools (Thruk,
+  EWS, GitHub via the gateway, …) finally work from cron and
+  scheduled runs. The Thruk-Report task is unblocked without
+  any data migration.
+- **Pro** — No new dependency, no schema change. Pure phase
+  symmetry fix.
+- **Pro** — "No-tools" sentinel keeps the existing
+  zero-overhead path for projects that don't use the
+  gateway: no Dust SSE transport, no proxy registration.
+- **Con** — One extra round-trip on cold-start runs whose
+  project never opened a chat first (gateway client +
+  `tools/list` cached for 60 s afterwards). Negligible vs.
+  the rest of the boot pipeline (Dust agent provisioning,
+  fs-cli mount, etc.).
+
+**Follow-up** — `src/lib/mcp/fs-tools.ts` `runCommand`'s
+`exit code unknown` message should distinguish timeout-kill
+from "no such binary". The opaque label cost this run
+several steps of mis-diagnosis. Tracked separately.

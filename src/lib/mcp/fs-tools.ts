@@ -283,12 +283,37 @@ export const runCommand = defineTool({
         cwd,
         timeout,
         maxBuffer: 10 * 1024 * 1024,
-      }).catch((err) => {
+      }).catch((err: NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+        code?: number | string;
+        signal?: NodeJS.Signals;
+        killed?: boolean;
+      }) => {
+        // Build a structured failure tail so the agent can tell
+        // apart:
+        //   - normal non-zero exit:    "code=2 signal=none"
+        //   - SIGTERM from `timeout`:  "code=null signal=SIGTERM
+        //                              killed=true (timeout=30000ms)"
+        //     This is the case that historically rendered as the
+        //     opaque "exit code unknown" and burned step budgets
+        //     on phantom "binary is broken" hypotheses (cf.
+        //     ADR-0019 / TaskRun cmpbmnidi0012gsyoxwtv0l4d).
+        //   - spawn failure (ENOENT): err.code is a string like
+        //     'ENOENT'; we surface it verbatim instead of casting
+        //     it through `?? 'unknown'`.
+        // Franck 2026-05-18.
+        const isTimeoutKill = err.killed === true && err.signal === 'SIGTERM';
+        const parts: string[] = [];
+        parts.push(`code=${err.code === undefined ? 'null' : String(err.code)}`);
+        parts.push(`signal=${err.signal ?? 'none'}`);
+        if (err.killed) parts.push(`killed=true`);
+        if (isTimeoutKill) parts.push(`(timeout=${timeout}ms)`);
         return {
           stdout: err.stdout ?? '',
           stderr:
             (err.stderr ?? '') +
-            `\n\nError: Command failed with exit code ${err.code ?? 'unknown'}`,
+            `\n\nError: Command failed (${parts.join(' ')})`,
         };
       });
       // Truncate stdout/stderr INDEPENDENTLY so a 2 MB stdout

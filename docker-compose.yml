@@ -122,16 +122,23 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mcp-gateway/images/ews-mcp-patched:/build:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -e
-      if docker image inspect ews-mcp-patched:local >/dev/null 2>&1; then
-        echo "[ews-mcp-builder] ews-mcp-patched:local present, skipping build."
-        exit 0
-      fi
-      echo "[ews-mcp-builder] ews-mcp-patched:local missing, rebuilding..."
-      tar -C /build -cf - . | docker build -t ews-mcp-patched:local -
-      echo "[ews-mcp-builder] build OK."
+    # NB: keep the script as the *third* element of `entrypoint:`
+    # (one argv slot). Splitting it across `entrypoint:` + `command:`
+    # makes Compose tokenise the block scalar into separate argv
+    # entries, which ends up running `sh -c set` (set with no args
+    # dumps every shell variable). Tested 2026-05-18.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if docker image inspect ews-mcp-patched:local >/dev/null 2>&1; then
+          echo "[ews-mcp-builder] ews-mcp-patched:local present, skipping build."
+          exit 0
+        fi
+        echo "[ews-mcp-builder] ews-mcp-patched:local missing, rebuilding..."
+        tar -C /build -cf - . | docker build -t ews-mcp-patched:local -
+        echo "[ews-mcp-builder] build OK."
 
   mcp-gateway:
     image: docker/mcp-gateway:latest

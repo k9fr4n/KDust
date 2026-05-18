@@ -22,12 +22,13 @@ import { listSecrets } from '@/lib/secrets/repo';
 import { db } from '@/lib/db';
 import { McpGatewayEditor } from './McpGatewayEditor';
 import { listGatewayTools } from '@/lib/mcp/gateway-client';
+import { loadCatalogToolsBySlug } from '@/lib/mcp/catalog-yaml';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export default async function McpSettingsPage() {
-  const [servers, filters, secretRows, projectRows, gatewayToolsResult] =
+  const [servers, filters, secretRows, projectRows, gatewayToolsResult, catalogToolsBySlug] =
     await Promise.all([
       listServers().catch((e) => {
         console.warn('[settings/mcp] listServers failed:', e);
@@ -49,6 +50,15 @@ export default async function McpSettingsPage() {
           error: e instanceof Error ? e.message : String(e),
         }),
       ),
+      // Per-server tool inventory from kdust-custom.yaml — used
+      // to scope the FilterEditorModal to the server being edited
+      // (Franck 2026-05-18). Returns {} if the catalog file is
+      // not mounted, in which case the modal falls back to the
+      // full gateway tool list.
+      loadCatalogToolsBySlug().catch((e) => {
+        console.warn('[settings/mcp] loadCatalogToolsBySlug failed:', e);
+        return {} as Record<string, string[]>;
+      }),
     ]);
 
   return (
@@ -91,6 +101,7 @@ export default async function McpSettingsPage() {
             : []
         }
         gatewayError={gatewayToolsResult.ok ? null : gatewayToolsResult.error}
+        catalogToolsBySlug={catalogToolsBySlug}
       />
     </div>
   );

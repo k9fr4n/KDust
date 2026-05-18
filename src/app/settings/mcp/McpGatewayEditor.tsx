@@ -42,6 +42,15 @@ interface Props {
   projectFsPaths: string[];
   gatewayTools: GatewayTool[];
   gatewayError: string | null;
+  /**
+   * Per-server tool inventory loaded from kdust-custom.yaml at
+   * render time. Used by the FilterEditorModal to restrict the
+   * picker to the server being edited (Franck 2026-05-18). When
+   * a slug is absent from the map (e.g. servers from the Docker
+   * MCP catalog), the modal falls back to the full gateway tool
+   * list to keep the UI usable.
+   */
+  catalogToolsBySlug: Record<string, string[]>;
 }
 
 async function postJson(url: string, body: unknown, method = 'POST') {
@@ -74,6 +83,7 @@ export function McpGatewayEditor({
   projectFsPaths,
   gatewayTools,
   gatewayError,
+  catalogToolsBySlug,
 }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -584,20 +594,45 @@ export function McpGatewayEditor({
           ))}
         </ul>
 
-        {editingFilter && (
-          <FilterEditorModal
-            projectFsPath={editingFilter.projectFsPath}
-            serverSlug={
-              initialServers.find((s) => s.id === editingFilter.mcpServerId)
-                ?.slug ?? '?'
-            }
-            tools={gatewayTools}
-            allowed={draftAllowed}
-            setAllowed={setDraftAllowed}
-            onCancel={() => setEditingFilter(null)}
-            onSave={onSaveFilter}
-          />
-        )}
+        {editingFilter && (() => {
+          // Per-server tool scoping (Franck 2026-05-18). For known
+          // slugs declared in kdust-custom.yaml we restrict the
+          // picker to that server's tools — intersected with what
+          // the gateway actually returns (so a stale entry doesn't
+          // leak a dead tool). For unknown slugs (e.g. servers
+          // shipped by the Docker MCP catalog like github-official)
+          // we fall back to the full gateway tool list with a UI
+          // hint to keep the editor usable.
+          const slug =
+            initialServers.find((s) => s.id === editingFilter.mcpServerId)
+              ?.slug ?? '?';
+          const catalogTools = catalogToolsBySlug[slug];
+          let scopedTools: GatewayTool[];
+          let scoped: boolean;
+          if (catalogTools && catalogTools.length > 0) {
+            const live = new Map(gatewayTools.map((t) => [t.name, t]));
+            scopedTools = catalogTools.map(
+              (name) =>
+                live.get(name) ?? { name, description: null },
+            );
+            scoped = true;
+          } else {
+            scopedTools = gatewayTools;
+            scoped = false;
+          }
+          return (
+            <FilterEditorModal
+              projectFsPath={editingFilter.projectFsPath}
+              serverSlug={slug}
+              tools={scopedTools}
+              scoped={scoped}
+              allowed={draftAllowed}
+              setAllowed={setDraftAllowed}
+              onCancel={() => setEditingFilter(null)}
+              onSave={onSaveFilter}
+            />
+          );
+        })()}
       </section>
     </div>
   );
@@ -659,6 +694,7 @@ function FilterEditorModal({
   projectFsPath,
   serverSlug,
   tools,
+  scoped,
   allowed,
   setAllowed,
   onCancel,
@@ -667,6 +703,14 @@ function FilterEditorModal({
   projectFsPath: string;
   serverSlug: string;
   tools: GatewayTool[];
+  /**
+   * True when `tools` was restricted to the server being edited
+   * (via kdust-custom.yaml). False = fallback list = full gateway
+   * inventory across every enabled server; we surface that to the
+   * operator so they don't whitelist a tool from another server
+   * by accident.
+   */
+  scoped: boolean;
   allowed: Set<string>;
   setAllowed: (s: Set<string>) => void;
   onCancel: () => void;
@@ -697,6 +741,16 @@ function FilterEditorModal({
           </button>
         </div>
         <div className="p-4 space-y-3">
+          {!scoped && tools.length > 0 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 text-xs px-2 py-1.5">
+              No per-server tool inventory found for{' '}
+              <code className="font-mono">{serverSlug}</code> in{' '}
+              <code className="font-mono">kdust-custom.yaml</code>. Showing
+              the <strong>full gateway tool list</strong> (every enabled
+              server). Pick carefully — tools from another server will be
+              ignored at runtime by <code>gateway-proxy</code>.
+            </div>
+          )}
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}

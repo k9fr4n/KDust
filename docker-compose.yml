@@ -59,6 +59,12 @@ services:
       # gateway lit le même fichier en read-only via son propre
       # bind-mount. Côté KDust c'est en read-write.
       - ./mcp-gateway/secrets:/mcp-gateway/secrets
+      # MCP gateway custom catalog (Franck 2026-05-18).
+      # Read-only mount so /settings/mcp can build the per-server
+      # tool inventory and scope the FilterEditorModal to the
+      # server being edited. Same source file the gateway loads
+      # via --additional-catalog=.
+      - ./mcp-gateway/catalogs:/app/mcp-gateway/catalogs:ro
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
     # In-memory tmpfs where src/lib/ssh/bootstrap.ts materialises the
     # decrypted private keys at boot. mode=0700 + uid/gid=1000 so only

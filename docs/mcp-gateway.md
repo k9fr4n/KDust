@@ -158,6 +158,28 @@ The filter is **applied in KDust**, not in the gateway: when a
 chat or run requests its proxy `McpServer`, only whitelisted
 tools are `registerTool`'d on the Dust transport.
 
+### Per-server tool scoping in the filter editor (2026-05-18)
+
+The gateway's `tools/list` returns a **flat union** of every enabled
+server's tools with no origin tag, which used to swamp the
+`FilterEditorModal` (e.g. 23 playwright tools mixed with 29
+thruk-mcp tools when editing the thruk filter). To restore
+per-server scoping the page now:
+
+1. Reads `mcp-gateway/catalogs/kdust-custom.yaml` at render time via
+   `src/lib/mcp/catalog-yaml.ts` and builds a `{ slug: toolName[] }`
+   map. The catalogs dir is bind-mounted read-only at
+   `/app/mcp-gateway/catalogs` in both compose files.
+2. Intersects that per-slug list with the live gateway inventory
+   (so a stale catalog entry doesn't leak a dead tool).
+3. Falls back to the full gateway list with an in-modal amber banner
+   when a slug is **not** in `kdust-custom.yaml` (e.g. servers
+   pulled straight from the Docker MCP hub like `github-official`).
+
+This change is UI-only — the runtime filter (`gateway-proxy`) is
+already default-deny by tool name, so a stale whitelist would just
+register zero tools, not leak.
+
 ## Custom catalog (servers outside the Docker MCP hub)
 
 The official Docker MCP hub (`hub.docker.com/mcp`) only ships a curated
@@ -283,7 +305,7 @@ Compensating controls:
 ### Custom server: `thruk-mcp` (Thruk / Naemon monitoring)
 
 - Slug: `thruk-mcp` (in `kdust-custom.yaml`)
-- Image: `ghcr.io/k9fr4n/thruk-mcp:v1.0.0` — first-party, MIT
+- Image: `ghcr.io/k9fr4n/thruk-mcp:1.0.0` — first-party, MIT
   ([k9fr4n/thruk-mcp](https://github.com/k9fr4n/thruk-mcp)). The
   image is gateway-ready out of the box (stdio default, non-root
   `USER`, no stdout banner) so **no wrapper image is required**, unlike

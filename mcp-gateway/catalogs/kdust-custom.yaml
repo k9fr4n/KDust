@@ -153,7 +153,7 @@ registry:
       Hardening: pin a sha256 digest in production. Strongly recommended
       to start with thruk-mcp.read_only=true and open writes case-by-case
       via thruk-mcp.enabled_tools (fnmatch allowlist).
-    image: ghcr.io/k9fr4n/thruk-mcp:v1.0.0
+    image: ghcr.io/k9fr4n/thruk-mcp:1.0.0
     type: server
     # Tools enumerated because --servers= disables dynamic discovery.
     # Captured 2026-05-17 from thruk-mcp v1.0.0 README.

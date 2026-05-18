@@ -35,6 +35,7 @@ vi.mock('../../../../mcp/registry', () => ({
   getTaskRunnerServerId: vi.fn(),
   getCommandRunnerServerId: vi.fn(),
   getSkillsServerId: vi.fn(),
+  getGatewayServerId: vi.fn(),
 }));
 
 import {
@@ -42,6 +43,7 @@ import {
   getTaskRunnerServerId,
   getCommandRunnerServerId,
   getSkillsServerId,
+  getGatewayServerId,
 } from '../../../../mcp/registry';
 import { runSetupMcp } from '../setup-mcp';
 
@@ -49,6 +51,7 @@ const mockedGetFs = getFsServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetTr = getTaskRunnerServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetCr = getCommandRunnerServerId as unknown as ReturnType<typeof vi.fn>;
 const mockedGetSk = getSkillsServerId as unknown as ReturnType<typeof vi.fn>;
+const mockedGetGw = getGatewayServerId as unknown as ReturnType<typeof vi.fn>;
 
 function makeArgs(overrides: Partial<Parameters<typeof runSetupMcp>[0]> = {}) {
   const setPhase = vi.fn().mockResolvedValue(undefined);
@@ -75,6 +78,11 @@ describe('runSetupMcp', () => {
     // its (non-fatal) failure and assert on the same array shape
     // as before. Tests that DO care override per-call.
     mockedGetSk.mockRejectedValue(new Error('skills mock not configured'));
+    // Franck 2026-05-18: gateway is registered last and is
+    // documented to return null when no tools are whitelisted.
+    // Default to that quiet sentinel so legacy tests that don't
+    // care about the gateway keep their expected mcpServerIds.
+    mockedGetGw.mockResolvedValue(null);
   });
 
   // --- happy paths --------------------------------------------------------
@@ -139,6 +147,44 @@ describe('runSetupMcp', () => {
     const { args } = makeArgs();
     const r = await runSetupMcp(args);
     expect(r).toEqual(['fs_id', 'tr_id']);
+  });
+
+  // --- mcp-gateway (Franck 2026-05-18) ------------------------------------
+
+  it('appends gateway serverId at the tail when whitelisted', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    mockedGetGw.mockResolvedValueOnce('gw_id');
+    const { args } = makeArgs();
+    const r = await runSetupMcp(args);
+    // Order invariant: gateway is the last entry so existing
+    // servers keep stable indices across runs.
+    expect(r).toEqual(['fs_id', 'tr_id', 'sk_id', 'gw_id']);
+    expect(mockedGetGw).toHaveBeenCalledWith('clients/acme/web');
+  });
+
+  it('does NOT push anything when gateway returns null (no whitelisted tools)', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    mockedGetGw.mockResolvedValueOnce(null);
+    const { args } = makeArgs();
+    const r = await runSetupMcp(args);
+    // The documented "no-tools" sentinel must NOT pollute the
+    // mcpServerIds array with a null entry — createDustConversation
+    // would reject it.
+    expect(r).toEqual(['fs_id', 'tr_id', 'sk_id']);
+  });
+
+  it('gateway failure is non-fatal (run proceeds without gateway tools)', async () => {
+    mockedGetFs.mockResolvedValueOnce('fs_id');
+    mockedGetTr.mockResolvedValueOnce('tr_id');
+    mockedGetSk.mockResolvedValueOnce('sk_id');
+    mockedGetGw.mockRejectedValueOnce(new Error('gateway transport error'));
+    const { args } = makeArgs();
+    const r = await runSetupMcp(args);
+    expect(r).toEqual(['fs_id', 'tr_id', 'sk_id']);
   });
 
   // --- failure isolation --------------------------------------------------

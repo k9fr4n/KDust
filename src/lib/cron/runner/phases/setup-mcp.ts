@@ -35,6 +35,20 @@
 //      task-runner. Failure is non-fatal: the run proceeds
 //      without the skills tool surface.
 //
+//   5. mcp-gateway (Franck 2026-05-18). Per-project proxy over the
+//      Docker MCP gateway. Tool surface comes from the catalog,
+//      whitelisted per project via ProjectMcpToolFilter. Until
+//      now this proxy was minted only from /chat (UI) via
+//      /api/mcp/gateway-ensure, so cron- and UI-triggered task
+//      runs went out with zero gateway tools — a Thruk-Report
+//      task whose prompt referenced thruk_* fell back to curl/
+//      python and burned its step budget. getGatewayServerId()
+//      returns null when the project has no whitelisted tools,
+//      in which case we silently skip (no array entry, no log
+//      noise — same semantic as gateway-ensure's `skipped:no-tools`).
+//      Failure is non-fatal: the run proceeds without gateway
+//      tools so the agent can still produce a diagnostic.
+//
 // Failure model:
 //   Each registration is wrapped in its own try/catch — a failure
 //   on the optional servers must not prevent the others from
@@ -128,6 +142,33 @@ export async function runSetupMcp(
     console.log(`[cron] skills serverId=${skId}`);
   } catch (e) {
     console.warn(`[cron] skills register failed: ${(e as Error).message}`);
+  }
+
+  // mcp-gateway (Franck 2026-05-18). Per-project Docker MCP gateway
+  // proxy. Symmetric to fs-cli / task-runner / skills but mounted
+  // last so its serverId is the tail entry of mcpServerIds when
+  // present — keeps the createDustConversation call order stable
+  // across runs (existing servers always at the same index).
+  //
+  // getGatewayServerId returns null when ProjectMcpToolFilter has
+  // no enabled whitelist for this project: that's the documented
+  // "no-tools" sentinel, NOT an error — same shape as gateway-
+  // ensure's `skipped:'no-tools'`. We just don't push anything.
+  // Hard failure (e.g. transport error) is non-fatal: the run
+  // proceeds without gateway tools.
+  try {
+    const { getGatewayServerId } = await import('../../../mcp/registry');
+    const gwId = await getGatewayServerId(projectFsPath);
+    if (gwId !== null) {
+      mcpServerIds = [...(mcpServerIds ?? []), gwId];
+      console.log(`[cron] mcp-gateway serverId=${gwId}`);
+    } else {
+      console.log(
+        `[cron] mcp-gateway skipped project="${projectFsPath}" (no whitelisted tools)`,
+      );
+    }
+  } catch (e) {
+    console.warn(`[cron] mcp-gateway register failed: ${(e as Error).message}`);
   }
 
   return mcpServerIds;

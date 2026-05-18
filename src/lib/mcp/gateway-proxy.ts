@@ -46,6 +46,11 @@
 //     for the "unknown MCP server ID" 403 from Dust.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { DustMcpServerTransport } from '@dust-tt/client';
 import type { ZodRawShape } from 'zod';
 import { z, type ZodTypeAny } from 'zod';
@@ -198,9 +203,42 @@ export async function startGatewayProxy(
   // whitelisted tools still answers tools/list with [] cleanly,
   // instead of returning -32601 "Method not found" (which surfaces
   // as a confusing red banner in the chat). Franck 2026-05-10.
+  //
+  // 2026-05-18: also declare empty `prompts` and `resources`
+  // capabilities AND register explicit list-handlers below. Dust
+  // probes prompts/list, resources/list and resources/templates/list
+  // at session start; without those, the SDK returns -32601 Method
+  // not found, which Dust surfaces as
+  //   "Tools from this server are not available for this message.
+  //    Reason: MCP error -32601: Method not found."
+  // and disables the whole server for the conversation.
+  //
+  // Note: the high-level McpServer SDK only registers list-handlers
+  // lazily when you actually call server.prompt() / server.resource(),
+  // so declaring the capability alone is NOT enough. We bypass that
+  // by attaching handlers directly on the underlying low-level
+  // Server below (server.server.setRequestHandler) and have them
+  // answer with empty lists — which is exactly the right semantic
+  // for a tools-only proxy.
   const server = new McpServer(
     { name: MCP_SERVER_NAME, version: '0.1.0' },
-    { capabilities: { tools: { listChanged: true } } },
+    {
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: {},
+        resources: {},
+      },
+    },
+  );
+  server.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: [],
+  }));
+  server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [],
+  }));
+  server.server.setRequestHandler(
+    ListResourceTemplatesRequestSchema,
+    async () => ({ resourceTemplates: [] }),
   );
 
   let registered = 0;

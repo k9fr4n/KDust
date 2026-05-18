@@ -153,7 +153,15 @@ registry:
       Hardening: pin a sha256 digest in production. Strongly recommended
       to start with thruk-mcp.read_only=true and open writes case-by-case
       via thruk-mcp.enabled_tools (fnmatch allowlist).
-    image: ghcr.io/k9fr4n/thruk-mcp:1.0.0
+    # Track the floating :latest tag (Franck 2026-05-18).
+    # NB: the MCP gateway does NOT auto-pull child images — Docker
+    # uses the locally cached layer by tag. To pick up a new push,
+    # run on the host:
+    #   docker pull ghcr.io/k9fr4n/thruk-mcp:latest \
+    #     && docker restart kdust-mcp-gateway
+    # The gateway respawns its sub-container against the refreshed
+    # cache on next tool call.
+    image: ghcr.io/k9fr4n/thruk-mcp:latest
     type: server
     # Tools enumerated because --servers= disables dynamic discovery.
     # Captured 2026-05-17 from thruk-mcp v1.0.0 README.

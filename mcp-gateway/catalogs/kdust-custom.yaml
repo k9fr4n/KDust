@@ -207,18 +207,19 @@ registry:
       - name: thruk-mcp.api_key
         env: THRUK_API_KEY
         description: "X-Thruk-Auth-Key header value"
-      - name: thruk-mcp.verify_ssl
-        env: THRUK_VERIFY_SSL
-        description: "false for self-signed certs (default: true)"
-      - name: thruk-mcp.read_only
-        env: THRUK_READ_ONLY
-        description: "true to strip every write tool (recommended initially)"
-      - name: thruk-mcp.enabled_tools
-        env: THRUK_ENABLED_TOOLS
-        description: "CSV allowlist of tool names with fnmatch wildcards (empty = all)"
-      - name: thruk-mcp.default_backends
-        env: THRUK_DEFAULT_BACKENDS
-        description: "CSV of default federated backend names (optional)"
-      - name: thruk-mcp.max_concurrent
-        env: THRUK_MAX_CONCURRENT
-        description: "Cap of in-flight HTTP requests, 0 = unlimited"
+      # Optional secrets removed 2026-05-18 (Franck):
+      # verify_ssl / read_only / enabled_tools / default_backends /
+      # max_concurrent. Declaring them here without binding a Secret
+      # in /settings/mcp made the gateway inject `<UNKNOWN>` as their
+      # value, which crashed thruk-mcp on startup with
+      #   ValueError: invalid literal for int() with base 10: '<UNKNOWN>'
+      # (max_concurrent is parsed as int). Re-add a line below + bind
+      # a Secret if you want to override the upstream defaults
+      # (THRUK_MAX_CONCURRENT=0, THRUK_VERIFY_SSL=true, THRUK_READ_ONLY=false,
+      # THRUK_ENABLED_TOOLS=, THRUK_DEFAULT_BACKENDS=).
+      #
+      # Strong recommendation when going to production:
+      #   echo "true" | <bind a Secret named thruk-mcp.read_only>
+      # so writes (acknowledge, downtime, recheck) are stripped by
+      # thruk-mcp itself as a defense-in-depth layer behind the
+      # per-project filter (ProjectMcpToolFilter, default-deny).

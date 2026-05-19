@@ -44,9 +44,8 @@ services:
     volumes:
       - ./data:/data
       - ./projects:/projects
-      # Skills library (Franck 2026-05-12, ADR-0016). See
-      # docker-compose.yml for rationale; same RO bind in prod.
-      - ./skills:/app/skills:ro
+      # Skills library: baked into the image (Franck 2026-05-19, ADR-0016
+      # update). Bind-mount dropped — see docker-compose.yml + Dockerfile.
       # Clefs SSH de l'hôte (read-only, copiées par l'entrypoint)
       - ${HOME}/.ssh:/host-ssh:ro
       # Socket ssh-agent (optionnel)

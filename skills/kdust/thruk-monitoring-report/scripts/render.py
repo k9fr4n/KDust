@@ -179,7 +179,7 @@ open_problems.sort(key=_sort_problem_key)
 
 # We can't reliably infer a cap hit post-filter; the agent should
 # set `alerts_truncated=true` in meta if it observed `len(response)`
-# equal to the requested limit on the raw thruk_list_alerts call.
+# equal to the requested limit on the raw thruk_recent_events call.
 alerts_truncated = bool(meta.get("alerts_truncated", False))
 
 # ----- HTML rendering ----------------------------------------------
@@ -254,7 +254,7 @@ if not win_hosts:
     )
 if alerts_truncated:
     parts.append(
-        f'<p style="color:#ef6c00;font-weight:600;">⚠️ thruk_list_alerts a atteint '
+        f'<p style="color:#ef6c00;font-weight:600;">⚠️ thruk_recent_events a atteint '
         f'le cap de {ALERTS_CAP} entrées — les chiffres ci-dessous sont un minorant.</p>'
     )
 

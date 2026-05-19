@@ -84,7 +84,7 @@ File naming convention (consumed by `render.py`):
 |---|---|---|
 | `hosts_hostgroup.json` | `thruk_list_hosts` with `hostgroup=<HG>` | yes (or empty array) |
 | `hosts_custom_var.json` | `thruk_list_hosts` with `custom_vars={...}` | yes (or empty array) |
-| `alerts.json` | `thruk_list_alerts` since the window | yes |
+| `alerts.json` | `thruk_recent_events(only_alerts=true)` over the window (see issue #91) | yes |
 | `notifications.json` | `thruk_list_notifications` since the window | yes |
 | `problems.json` | `thruk_problems` | yes |
 | `meta.json` | written by `save.sh init` | yes (auto) |
@@ -131,8 +131,14 @@ file so `render.py` does not crash.
    silently dropped by the Thruk parser.
 
 4. **Collect monitoring data** on the window:
-   - `thruk_list_alerts(since=<since>, limit=5000, sort='-time')`
+   - `thruk_recent_events(only_alerts=true, hours=<24 or 72>, limit=5000)`
      → `save.sh alerts.json`.
+     ⚠️ Do NOT use `thruk_list_alerts` — the Thruk REST `/alerts`
+     endpoint returns `[]` on Thruk 3.26 in federated mode
+     (see issue #91). `recent_events(only_alerts=true)` queries
+     `/logs` with `class = 1` and returns the same SERVICE/HOST
+     ALERT records, with compatible fields (`host_name`,
+     `service_description`, `state`, `state_type`, `time`).
    - `thruk_list_notifications(since=<since>, limit=2000)`
      → `save.sh notifications.json`.
    - `thruk_problems(limit=500)`
@@ -177,7 +183,7 @@ not need write access.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `render.py` exits with `missing input: X.json` | An MCP step was skipped | Re-run that `save.sh` step (empty array is fine if scope unused) |
-| `alerts.json` truncated at 5000 entries | Thruk hit the cap | `render.py` already flags this in the report header — leave it |
+| `alerts.json` truncated at 5000 entries | Thruk `/logs` hit the cap | `render.py` already flags this in the report header — leave it |
 | `send_mail.py` SMTP timeout | `mailing.ecritel.net:25` unreachable | Check egress; surface stderr in the run output, do NOT retry blindly |
 | HTML differs across runs | Bug in `render.py` (must be deterministic) | Open an issue — same JSON in MUST yield same HTML out |
 

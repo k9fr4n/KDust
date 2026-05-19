@@ -6,7 +6,9 @@ node_modules
 .env.local
 data
 projects
-skills
+# skills/ is intentionally NOT ignored (Franck 2026-05-19): the
+# catalogue is now baked into the image via COPY in the runner
+# stage of the Dockerfile, not bind-mounted at runtime.
 Dockerfile
 docker-compose.yml
 *.md

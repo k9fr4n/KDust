@@ -1,10 +1,15 @@
-import { promises as fsp, existsSync, statSync } from 'node:fs';
+import { promises as fsp, existsSync, statSync, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { glob } from 'glob';
 import { errMessage } from '../errors';
+import { fetchFilBody, type FilFetchError } from '../dust/files';
+import { getDustClient } from '../dust/client';
 
 const pExecFile = promisify(execFile);
 
@@ -331,4 +336,164 @@ export const runCommand = defineTool({
   },
 });
 
-export const allFsTools = [readFile, editFile, searchFiles, searchContent, runCommand];
+// ---------------- export_fil_to_workdir ----------------
+/**
+ * Bridge a Dust conversation file (`fil_*`) onto the local FS the
+ * skill runner can read (Franck 2026-05-19).
+ *
+ * Background: when an MCP tool result exceeds Dust's inline cap,
+ * Dust's built-in `files` MCP server spills the payload into a
+ * conversation file (`fil_*`). The `files__cat` / `files__resolve`
+ * tools surface a scoped path (e.g. `conversation/foo.json`) that
+ * lives in Dust's own storage backend — NOT on the kdust container
+ * FS — so `run_skill_script` cannot `open()` it. Without this
+ * bridge, agents either had to chunk-read through `files__cat`
+ * (slow, lossy, forbidden by the prompt) or give up.
+ *
+ * This tool downloads the file via the same authenticated SDK path
+ * used by `/api/files/[sId]` and writes it to an allow-listed
+ * location on disk. The skill scripts (`save.sh --from-file …`)
+ * then consume the path as if it had been produced locally.
+ *
+ * Allow-list (mirrors `_save_helper.py`'s allow-list):
+ *   - `/tmp/thruk-report/**`     (default Thruk workdir)
+ *   - `/tmp/kdust-fil-cache/**`  (generic per-run scratch space)
+ *   - Anywhere under the project root (the fs-cli server is
+ *     project-scoped; staying inside that root keeps writes
+ *     auditable per project).
+ *
+ * Path-traversal guard: `..` segments are resolved before the
+ * allow-list check; symlinks are NOT followed for the destination
+ * directory check (we only `mkdir -p` the parent).
+ */
+const FIL_CACHE_ROOTS = [
+  '/tmp/thruk-report',
+  '/tmp/kdust-fil-cache',
+];
+
+function isUnderAllowedRoot(absDest: string, projectRoot: string): boolean {
+  const normRoots = [
+    ...FIL_CACHE_ROOTS.map((r) => path.resolve(r)),
+    path.resolve(projectRoot),
+  ];
+  return normRoots.some(
+    (r) => absDest === r || absDest.startsWith(r + path.sep),
+  );
+}
+
+export const exportFilToWorkdir = defineTool({
+  name: 'export_fil_to_workdir',
+  description:
+    'Download a Dust conversation file (fil_*) and write its bytes ' +
+    'to a path the skill runner can read. Use this when an MCP tool ' +
+    'result was spilled to a `fil_*` reference and the next step ' +
+    'needs to feed it to a script (e.g. `save.sh --from-file`). ' +
+    'Destination must be under /tmp/thruk-report/, /tmp/kdust-fil-cache/, ' +
+    'or the project root.',
+  schema: z.object({
+    file_id: z
+      .string()
+      .regex(/^fil_[A-Za-z0-9_-]+$/, 'must match /^fil_[A-Za-z0-9_-]+$/')
+      .describe('Dust file id, e.g. fil_abc123def.'),
+    dest_path: z
+      .string()
+      .describe(
+        'Absolute destination path on the kdust container FS. ' +
+          'Allowed roots: /tmp/thruk-report/, /tmp/kdust-fil-cache/, project root.',
+      ),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe('If true, replace any existing file at dest_path. Default false.'),
+  }),
+  async execute(root, args) {
+    try {
+      // 1. Resolve + allow-list the destination.
+      if (!path.isAbsolute(args.dest_path)) {
+        return toText(
+          `Error: dest_path must be absolute (got ${args.dest_path})`,
+          true,
+        );
+      }
+      const absDest = path.resolve(args.dest_path);
+      if (!isUnderAllowedRoot(absDest, root)) {
+        return toText(
+          `Error: dest_path ${absDest} is outside allowed roots ` +
+            `(${FIL_CACHE_ROOTS.join(', ')}, ${path.resolve(root)})`,
+          true,
+        );
+      }
+      if (existsSync(absDest) && !args.overwrite) {
+        return toText(
+          `Error: ${absDest} already exists (pass overwrite=true to replace)`,
+          true,
+        );
+      }
+      await fsp.mkdir(path.dirname(absDest), { recursive: true });
+
+      // 2. Resolve the active Dust client (token-rotation handled by
+      //    the async apiKey callable; getDustClient() is cheap to
+      //    re-call per request).
+      const dust = await getDustClient();
+      if (!dust) {
+        return toText('Error: Dust client not available (login required)', true);
+      }
+
+      // 3. Fetch + stream-to-disk while computing the sha256.
+      let body: Awaited<ReturnType<typeof fetchFilBody>>;
+      try {
+        body = await fetchFilBody(dust.client, args.file_id);
+      } catch (e: unknown) {
+        const fe = e as FilFetchError;
+        return toText(
+          `Error: failed to fetch ${args.file_id}: ` +
+            `${fe.kind === 'http' ? `HTTP ${fe.status ?? '?'} ` : ''}${fe.message}`,
+          true,
+        );
+      }
+
+      const hash = createHash('sha256');
+      let bytes = 0;
+      if (typeof body.body === 'string') {
+        // Dust occasionally hands us an already-buffered string
+        // (small files, non-streamable endpoints). Write directly.
+        const buf = Buffer.from(body.body, 'utf-8');
+        hash.update(buf);
+        bytes = buf.byteLength;
+        await fsp.writeFile(absDest, buf);
+      } else {
+        // True stream: pipe to disk while teeing through the hash.
+        const nodeStream = Readable.fromWeb(
+          body.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
+        );
+        nodeStream.on('data', (chunk: Buffer | string) => {
+          const b = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+          hash.update(b);
+          bytes += b.byteLength;
+        });
+        await pipeline(nodeStream, createWriteStream(absDest));
+      }
+
+      // 4. Structured success line — keep it short, the agent
+      //    typically just needs `path` to feed the next step.
+      const sha256 = hash.digest('hex');
+      return toText(
+        `OK: wrote ${bytes} bytes to ${absDest}\n` +
+          `content_type=${body.contentType}\n` +
+          `sha256=${sha256}\n` +
+          `file_id=${args.file_id}`,
+      );
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
+    }
+  },
+});
+
+export const allFsTools = [
+  readFile,
+  editFile,
+  searchFiles,
+  searchContent,
+  runCommand,
+  exportFilToWorkdir,
+];

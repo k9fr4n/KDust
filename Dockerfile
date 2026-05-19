@@ -92,6 +92,13 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 # Prisma CLI (pin\u00e9e via package.json) pour que l'entrypoint puisse faire `db push`.
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+# Skills library (Franck 2026-05-19). Previously bind-mounted from
+# ./skills:/app/skills:ro at runtime; now baked into the image so
+# the skills catalogue is versioned with the code and ships with
+# `docker compose pull` (no separate host-side sync needed).
+# The runtime user has no reason to write here (read-only by
+# convention; SKILLS_DIR resolves to /app/skills via src/lib/skills/repo.ts).
+COPY --from=builder /app/skills ./skills
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh && mkdir -p /data /projects && chown -R node:node /app /data /projects
 # L'entrypoint d\u00e9marre en root pour fixer les perms des volumes bind-mount\u00e9s,

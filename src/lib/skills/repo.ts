@@ -21,12 +21,14 @@ import path from 'node:path';
 // ---------------------------------------------------------------
 // SKILLS_DIR resolution.
 //
-// In the production container, ./skills is bind-mounted to
-// /app/skills via docker-compose.yml. In a host-side dev
-// workflow (npm run dev) or in the dev agent container that
-// shares the repo workspace, fall back to <cwd>/skills so tsc
-// and any future unit test can resolve the path without env
-// vars. No environment variable: the contract is positional.
+// In the production container, ./skills is baked into the image
+// at /app/skills via the Dockerfile runner stage (Franck 2026-05-19;
+// previously a `./skills:/app/skills:ro` bind-mount). In a
+// host-side dev workflow (npm run dev) or in the dev agent
+// container that shares the repo workspace, fall back to
+// <cwd>/skills so tsc and any future unit test can resolve the
+// path without env vars. No environment variable: the contract
+// is positional.
 export const SKILLS_DIR: string = (() => {
   if (existsSync('/app/skills')) return '/app/skills';
   return path.resolve(process.cwd(), 'skills');

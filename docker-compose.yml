@@ -1,99 +1,93 @@
+# docker-compose.yml — single canonical stack (Franck 2026-05-20).
+#
+# Image-only deployment: KDust pulls the pre-built multi-arch
+# (amd64 + arm64) image from ghcr.io — no local build needed.
+# The previous `docker-compose.prod.yml` has been merged in here;
+# there is no separate dev compose any more.
+#
+# Pré-requis sur le host :
+#   1. docker login ghcr.io -u <ton-github-login> -p <PAT>
+#      (le PAT GitHub doit avoir le scope read:packages)
+#   2. cp .env.example .env && nano .env   (remplir tous les secrets)
+#   3. mkdir -p data projects
+#
+# Démarrage :
+#   docker compose up -d
+#
+# Mise à jour automatique :
+#   Watchtower vérifie ghcr.io toutes les 5 minutes.
+#   Dès qu'une nouvelle image :latest est disponible, il pull + redémarre kdust.
+
 services:
   kdust:
-    build: .
-    image: kdust:local
+    # Pas de build: — on tire l'image pré-buildée depuis ghcr.io
+    # L'image est multi-arch (amd64 + arm64) : Docker choisit automatiquement
+    # la bonne variante selon l'hôte.
+    image: ghcr.io/k9fr4n/kdust:latest
     container_name: kdust
     restart: unless-stopped
-    # Labels Watchtower : présents en dev pour parité avec docker-compose.prod.yml.
-    # Si tu fais tourner watchtower en local, il ne touchera quand même pas
-    # `kdust:local` (pas de registry distant) — c'est juste pour la cohérence
-    # des labels entre les deux composes.
+    pull_policy: always          # tire la dernière image à chaque `up`
+    # Labels Watchtower : ce conteneur sera surveillé et mis à jour automatiquement.
+    # Le `scope` est OBLIGATOIRE : watchtower tourne avec WATCHTOWER_SCOPE=kdust-autoupdate
+    # et ignore tout container qui n'a pas le label `scope` correspondant, même
+    # avec `enable=true` (cf. --label-enable + WATCHTOWER_SCOPE, sémantique AND).
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
     ports:
-      - "3000:3000"
+      - "4000:3000"
     env_file: .env
     environment:
-      # Si ssh-agent est lancé sur l'hôte et SSH_AUTH_SOCK exporté,
-      # l'agent sera utilisé en priorité sur les clés copiées.
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
-      # Chemin HÔTE (résolu par Compose au parse time via ${PWD}) du
-      # répertoire où sont les projets. Nécessaire pour que les agents
-      # puissent construire des `docker run -v <host>:<container>` qui
-      # marchent en DooD: le daemon Docker est sur l'hôte et interprète
-      # les paths du flag -v comme des chemins hôte, pas comme des
-      # chemins dans le container KDust. Sans cette variable, $(pwd)
-      # à l'intérieur de KDust vaut /projects/... et le daemon ne
-      # trouve rien à monter (dossier vide créé silencieusement).
+      # Chemin HÔTE du répertoire projects (résolu par Compose via ${PWD}).
+      # Nécessaire pour les montages DooD (-v host_path:container_path).
       - KDUST_HOST_PROJECTS_ROOT=${PWD}/projects
       # Docker MCP gateway endpoint (ADR-0012, 2026-05-10).
-      # Reachable only on the Compose-internal network (no public
-      # ingress). Auth is disabled on the gateway via
-      # DOCKER_MCP_IN_CONTAINER=1, so no Bearer header is needed.
+      # Internal network only — pas d'auth Bearer (DOCKER_MCP_IN_CONTAINER=1).
       - MCP_GATEWAY_URL=http://mcp-gateway:8080/mcp
       - MCP_GATEWAY_SECRETS_DIR=/mcp-gateway/secrets
     volumes:
       - ./data:/data
       - ./projects:/projects
       # Skills library: baked into the image (Franck 2026-05-19, ADR-0016
-      # update). The previous `./skills:/app/skills:ro` bind-mount has been
-      # dropped — the catalogue is now versioned with the code and shipped
-      # via the Docker image. See Dockerfile (runner stage) for the COPY.
-      # Clefs SSH de l'hôte en read-only. L'entrypoint les copie ensuite
-      # dans /home/kdust/.ssh avec les bonnes perms / ownership.
-      - ${HOME}/.ssh:/host-ssh:ro
-      # Socket ssh-agent (optionnel ; s'évapore si SSH_AUTH_SOCK vide)
-      - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
-      # Docker socket (Franck 2026-04-20 23:46) - Option A / DooD.
-      # Permet aux agents d'appeler `docker ...` via fs_cli__run_command.
-      # Le GID du socket est aligné dynamiquement par l'entrypoint sur
-      # le groupe `docker` du container, puis `node` y est ajouté.
-      # [CRITICAL] accès = root sur l'hôte; cf. Dockerfile.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Docker MCP gateway secrets dir (ADR-0012, 2026-05-10).
-      # KDust écrit ./mcp-gateway/secrets/kdust-mcp.env (mode 0600)
-      # à partir des Secret bindés sur les serveurs MCP, et la
-      # gateway lit le même fichier en read-only via son propre
-      # bind-mount. Côté KDust c'est en read-write.
-      - ./mcp-gateway/secrets:/mcp-gateway/secrets
-      # MCP gateway custom catalog (Franck 2026-05-18).
-      # Read-only mount so /settings/mcp can build the per-server
-      # tool inventory and scope the FilterEditorModal to the
-      # server being edited. Same source file the gateway loads
-      # via --additional-catalog=.
-      - ./mcp-gateway/catalogs:/app/mcp-gateway/catalogs:ro
-      # Shared workdir with the thruk-mcp child container spawned by
-      # mcp-gateway (DooD). thruk-mcp spills large responses there
-      # (issue k9fr4n/thruk-mcp#49) and the skill
-      # kdust/thruk-monitoring-report reads them in via render.py.
-      # Identical path on both sides (host + container) so the handle
-      # JSON the agent receives is directly usable. Host `/tmp/thruk-report`
-      # is auto-created by Compose; it's wiped at the start of each run
-      # by `save.sh init` (which removes its CONTENTS, not the mount).
+      # update). Bind-mount dropped — see docker-compose.yml + Dockerfile.
+      # thruk-mcp spill workdir (Franck 2026-05-20). MUST mirror the
+      # `volumes:` declared for the thruk-mcp server in
+      # mcp-gateway/catalogs/kdust-custom.yaml: thruk-mcp writes large
+      # responses to /tmp/thruk-report inside its own child container,
+      # and the agent then calls `save.sh --from-file` from kdust on
+      # the same host path. Without this bind mount, the kdust
+      # container only sees an empty internal /tmp/thruk-report dir and
+      # the handoff breaks. See docker-compose.yml for the full
+      # rationale.
       #
       # IMPORTANT — host dir MUST be mode 1777:
-      # the kdust service runs as uid 1000 (`node`) while the
-      # thruk-mcp child container runs as uid 1001 / gid 999
-      # (`thruk`). No common owner/group, so 0775 fails on the
-      # child side with EACCES and thruk-mcp silently falls back
-      # to inline payload (then Dust spills to a `fil_*` ref the
-      # agent can't `cat`). On a fresh install, after the first
-      # `docker compose up -d`, run once on the host:
+      # kdust runs as uid 1000 (`node`); the thruk-mcp child container
+      # runs as uid 1001 / gid 999 (`thruk`). No common owner/group, so
+      # 0775 fails on the child side with EACCES (silent fallback to
+      # inline payload → Dust spills to `fil_*` the agent can't `cat`).
+      # On a fresh install, after the first `docker compose up -d`:
       #
       #     sudo chmod 1777 /tmp/thruk-report
       #
-      # `save.sh init` also re-asserts `chmod 1777` defensively on
-      # every run (best-effort, requires uid 1000 ownership).
-      # 2026-05-20.
+      # `save.sh init` re-asserts `chmod 1777` defensively on every run.
       - /tmp/thruk-report:/tmp/thruk-report
+      # Clefs SSH de l'hôte (read-only, copiées par l'entrypoint)
+      - ${HOME}/.ssh:/host-ssh:ro
+      # Socket ssh-agent (optionnel)
+      - ${SSH_AUTH_SOCK:-/dev/null}:${SSH_AUTH_SOCK:-/dev/null}
+      # Docker socket — DooD (accès = root sur l'hôte, cf. Dockerfile)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Docker MCP gateway secrets dir (ADR-0012). KDust écrit
+      # ./mcp-gateway/secrets/kdust-mcp.env (mode 0600), la gateway
+      # le lit en ro via son propre bind-mount.
+      - ./mcp-gateway/secrets:/mcp-gateway/secrets
+      # MCP gateway custom catalog (Franck 2026-05-18). Read-only
+      # mount so /settings/mcp peut scoper le picker de tools par
+      # serveur. Même source que --additional-catalog côté gateway.
+      - ./mcp-gateway/catalogs:/app/mcp-gateway/catalogs:ro
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
-    # In-memory tmpfs where src/lib/ssh/bootstrap.ts materialises the
-    # decrypted private keys at boot. mode=0700 + uid/gid=1000 so only
-    # the `node` user (= the running Next.js process) can read it.
-    # Size is intentionally small: a handful of ed25519 keys + the
-    # generated config + known_hosts. NEVER bind-mount a host path
-    # here -- the whole point is to keep keys out of the host fs.
+    # Cf. docker-compose.yml pour le détail.
     tmpfs:
       - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
     depends_on:
@@ -107,36 +101,11 @@ services:
 
   # -------------------------------------------------------------------------- #
   # Docker MCP Gateway (Franck 2026-05-10, ADR-0012).                          #
-  #                                                                            #
-  # Long-lived multiplexer for catalog MCP servers from hub.docker.com/mcp.    #
-  # KDust opens ONE streamable-HTTP MCP Client at boot (instrumentation.ts)    #
-  # and re-exports the discovered tools per-project via                        #
-  # DustMcpServerTransport.                                                    #
-  #                                                                            #
-  # Hardening:                                                                 #
-  #   * `expose: 8080` (no `ports:`) -> reachable only from sibling Compose    #
-  #     services. NEVER add a `ports:` mapping here.                           #
-  #   * `DOCKER_MCP_IN_CONTAINER=1` -> auth bypass on the internal network     #
-  #     (gateway expects Docker Desktop otherwise; we run headless).           #
-  #   * `--block-secrets --verify-signatures` -> default-secure flags.         #
-  #   * Image is signed by Docker; Watchtower auto-updates on the same scope  #
-  #     `kdust-autoupdate` as kdust itself.                                    #
-  #                                                                            #
-  # Active server list is hard-coded in `command:` for V1. To add/remove a    #
-  # server: edit `--servers=...` then `docker compose up -d mcp-gateway`.     #
-  # KDust's MCP Client reconnects automatically and re-runs tools/list.        #
-  #                                                                            #
-  # Secrets are NOT in env: they live in /secrets/kdust-mcp.env (rw on the     #
-  # kdust side, ro on the gateway side) and are loaded via `--secrets=`.       #
-  # See docs/mcp-gateway.md.                                                   #
+  # Voir docker-compose.yml pour le commentaire complet.                       #
   # -------------------------------------------------------------------------- #
-  # ews-mcp-patched is a purely local Docker image (built from
-  # mcp-gateway/images/ews-mcp-patched/Dockerfile). It's not on any
-  # registry, so an `docker system prune` on the host wipes it and the
-  # gateway can't restart ews-mcp. This init service rebuilds the image
-  # if it's missing before the gateway starts — using DooD via the host
-  # docker.sock. Build context is piped as a tar over stdin because the
-  # host daemon can't see paths inside this container (Franck 2026-05-18).
+  # Init service: rebuilds ews-mcp-patched:local on `docker compose up` if
+  # it's not in the host's image cache (e.g. wiped by `docker system prune`).
+  # Cf. docker-compose.yml pour le détail de l'implémentation DooD.
   ews-mcp-builder:
     image: docker:cli
     container_name: kdust-ews-mcp-builder
@@ -144,11 +113,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mcp-gateway/images/ews-mcp-patched:/build:ro
-    # NB: keep the script as the *third* element of `entrypoint:`
-    # (one argv slot). Splitting it across `entrypoint:` + `command:`
-    # makes Compose tokenise the block scalar into separate argv
-    # entries, which ends up running `sh -c set` (set with no args
-    # dumps every shell variable). Tested 2026-05-18.
+    # NB: garder le script comme 3e élément de `entrypoint:` (un seul
+    # slot argv). Séparer en entrypoint+command fait que Compose
+    # tokenise le block scalar en argv distincts et finit par lancer
+    # `sh -c set` (qui dump tout l'env). Vérifié 2026-05-18.
     entrypoint:
       - /bin/sh
       - -c
@@ -178,37 +146,59 @@ services:
     command:
       - --transport=streaming
       - --port=8080
-      # Catalog plumbing (lessons learned 2026-05-17):
-      # - In the headless docker/mcp-gateway image there is NO built-in
-      #   catalog (no Docker Desktop, no ~/.docker/mcp/catalogs/). The
-      #   official catalog must be passed explicitly via --catalog=<url>.
-      # - --additional-catalog appends our project catalog on top.
-      # - --servers= disables dynamic tool discovery, so each catalog
-      #   entry MUST enumerate its tools (see kdust-custom.yaml).
+      # Catalog plumbing (lessons learned 2026-05-17): the headless gateway
+      # has no built-in catalog, so we pass the official URL explicitly.
+      # --additional-catalog appends our project catalog; --servers=
+      # disables dynamic discovery, so entries must enumerate their tools.
       - --catalog=https://desktop.docker.com/mcp/catalog/v3/catalog.yaml
       - --additional-catalog=/catalogs/kdust-custom.yaml
-      - --servers=github-official,ews-mcp,thruk-mcp
+      # playwright retiré 2026-05-18 (Franck): non utilisé dans le flux KDust,
+      # encombrait /settings/mcp avec 23 tools parasites.
+      - --servers=ews-mcp,thruk-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
       # --verify-signatures removed (2026-05-17): ews-mcp is a third-party
       # GHCR image (ghcr.io/azizmazrou/ews-mcp) not signed by Docker.
       # Hardening: pin a sha256 digest in mcp-gateway/catalogs/kdust-custom.yaml
-      # once the server is validated. Default-deny per-project (ProjectMcpToolFilter)
-      # remains the primary safeguard.
+      # once the server is validated. Default-deny per-project filters remain.
       - --log-calls
     volumes:
-      # Required: the gateway spawns its child MCP containers on the host
-      # daemon (DooD inception, audited in ADR-0012).
       - /var/run/docker.sock:/var/run/docker.sock
-      # Read-only secrets file, written by KDust at boot and on every
-      # Secret edit. Mode 0600, owned by uid 1000.
       - ./mcp-gateway/secrets:/secrets:ro
-      # Custom catalog (2026-05-17): declares servers outside the official
-      # Docker MCP hub (e.g. ews-mcp). KDust-versioned, read-only inside
-      # the gateway. Edit on host, then `docker compose up -d mcp-gateway`.
+      # Custom catalog (2026-05-17). Same convention as docker-compose.yml.
       - ./mcp-gateway/catalogs:/catalogs:ro
     expose:
       - "8080"
     mem_limit: 1g
     mem_reservation: 128m
     cpus: 2.0
+
+  # -------------------------------------------------------------------------- #
+  # Watchtower — mise à jour automatique du conteneur kdust                    #
+  # Surveille ghcr.io toutes les 5 minutes (300s).                             #
+  # Dès qu'une nouvelle image est détectée : pull silencieux + redémarrage.    #
+  # -------------------------------------------------------------------------- #
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      # Accès au daemon Docker pour inspecter et redémarrer les conteneurs
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Credentials Docker de l'hôte (docker login ghcr.io fait plus haut)
+      # Watchtower les lit pour pouvoir puller des images privées
+      - ${HOME}/.docker/config.json:/config.json:ro
+    environment:
+      # Ne surveille QUE le conteneur kdust (pas watchtower lui-même, etc.)
+      WATCHTOWER_SCOPE: kdust-autoupdate
+      # Vérifie toutes les 5 minutes
+      WATCHTOWER_POLL_INTERVAL: "300"
+      # Supprime l'ancienne image après mise à jour (libère de la place)
+      WATCHTOWER_CLEANUP: "true"
+      # Log level lisible
+      WATCHTOWER_DEBUG: "false"
+      # Notifie dans les logs Docker (visible via `docker logs watchtower`)
+      WATCHTOWER_NOTIFICATIONS: "shoutrrr"
+      WATCHTOWER_NOTIFICATION_URL: ""   # laisser vide = logs uniquement
+    # Watchtower ne surveille que les conteneurs qui portent ce label
+    command: --label-enable --interval 300 --cleanup

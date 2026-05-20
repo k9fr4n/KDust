@@ -71,6 +71,20 @@ services:
       # JSON the agent receives is directly usable. Host `/tmp/thruk-report`
       # is auto-created by Compose; it's wiped at the start of each run
       # by `save.sh init` (which removes its CONTENTS, not the mount).
+      #
+      # IMPORTANT — host dir MUST be mode 1777:
+      # the kdust service runs as uid 1000 (`node`) while the
+      # thruk-mcp child container runs as uid 1001 / gid 999
+      # (`thruk`). No common owner/group, so 0775 fails on the
+      # child side with EACCES and thruk-mcp silently falls back
+      # to inline payload (then Dust spills to a `fil_*` ref the
+      # agent can't `cat`). On a fresh install, after the first
+      # `docker compose up -d`, run once on the host:
+      #
+      #     sudo chmod 1777 /tmp/thruk-report
+      #
+      # `save.sh init` also re-asserts `chmod 1777` defensively on
+      # every run (best-effort, requires uid 1000 ownership).
       # 2026-05-20.
       - /tmp/thruk-report:/tmp/thruk-report
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).

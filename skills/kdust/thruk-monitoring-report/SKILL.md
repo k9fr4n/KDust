@@ -139,10 +139,23 @@ file so `render.py` does not crash.
    `thruk_query` with `q="custom_variables…"` — that filter is
    silently dropped by the Thruk parser.
 
-4. **Collect monitoring data** on the window. Still push the
-   perimeter filters (`hostgroup` + `custom_vars`) down to the MCP
-   call to keep the payload focused — and the spill-to-workdir
-   mechanism handles the rest.
+4. **Collect monitoring data** on the window.
+
+   ⚠️ **One MCP filter per call (union, not AND).** `thruk-mcp`
+   combines `hostgroup` + `custom_vars` with **AND** at the
+   `/hosts` pre-resolver stage (`_resolve_hosts_to_regex`). When
+   the perimeter is defined as a **union** (e.g. `HG_WINDOWS` ∪
+   `KERNEL=windows`), passing both filters in the same call
+   drops every host matched by only one of them. Do one MCP call
+   per filter, save the first one with `save.sh <name>.json`,
+   then merge subsequent ones with `save.sh <name>.json --merge`
+   — that mode unions + dedupes on canonical-JSON of each
+   record (Franck 2026-05-20).
+
+   Concretely for the Windows perimeter, each of `alerts.json`,
+   `notifications.json`, `problems.json` is produced by TWO MCP
+   calls: one with `hostgroup='HG_WINDOWS'` (no `custom_vars`),
+   one with `custom_vars={"KERNEL":"windows"}` (no `hostgroup`).
 
    **Two response shapes to expect from `thruk_*`** (since
    thruk-mcp v0.8 — issue k9fr4n/thruk-mcp#49):
@@ -170,24 +183,29 @@ file so `render.py` does not crash.
    contains `"mode": "file"` → it's a handle, use `--from-file`.
    Otherwise it's an inline array — pipe stdin as before.
 
-   - `thruk_recent_events(only_alerts=true, hours=<24 or 72>, hostgroup='<HG>', custom_vars={…}, limit=1000)`
-     → `save.sh alerts.json` (or `save.sh alerts.json --from-file <saved_to>`).
-     ⚠️ Do NOT use `thruk_list_alerts` — the Thruk REST `/alerts`
-     endpoint returns `[]` on Thruk 3.26 in federated mode
-     (see issue #91). `recent_events(only_alerts=true)` queries
-     `/logs` with `type[~]=^(HOST|SERVICE) ALERT` and returns the
-     same SERVICE/HOST ALERT records (`host_name`,
-     `service_description`, `state`, `state_type`, `time`, …).
-   - `thruk_list_notifications(since=<since>, hostgroup='<HG>', custom_vars={…}, limit=500)`
-     → `save.sh notifications.json` (handle-aware, same rule).
-   - `thruk_problems(hostgroup='<HG>', custom_vars={…}, limit=200)`
-     → `save.sh problems.json` (handle-aware, same rule).
+   For each dataset, run the call with `hostgroup` first, save
+   it, then run the call with `custom_vars` and `--merge`:
 
-   Hostgroup + custom_vars combine logically (the `/hosts` lookup
-   used to resolve them applies both filters at once). Pass BOTH
-   when the perimeter is defined as a union — `render.py` will
-   union the two host inventories on its side too, so any host
-   matched by either filter ends up in the report.
+   - Alerts (⚠️ Do NOT use `thruk_list_alerts` — Thruk REST
+     `/alerts` returns `[]` on Thruk 3.26 federated, issue #91):
+     1. `thruk_recent_events(only_alerts=true, hours=<24|72>, hostgroup='HG_WINDOWS', limit=1000)`
+        → `save.sh alerts.json` (or `--from-file <saved_to>`).
+     2. `thruk_recent_events(only_alerts=true, hours=<24|72>, custom_vars={"KERNEL":"windows"}, limit=1000)`
+        → `save.sh alerts.json --merge` (or `--merge --from-file <saved_to>`).
+   - Notifications:
+     1. `thruk_list_notifications(since=<since>, hostgroup='HG_WINDOWS', limit=500)`
+        → `save.sh notifications.json`.
+     2. `thruk_list_notifications(since=<since>, custom_vars={"KERNEL":"windows"}, limit=500)`
+        → `save.sh notifications.json --merge`.
+   - Open problems:
+     1. `thruk_problems(hostgroup='HG_WINDOWS', limit=200)`
+        → `save.sh problems.json`.
+     2. `thruk_problems(custom_vars={"KERNEL":"windows"}, limit=200)`
+        → `save.sh problems.json --merge`.
+
+   `render.py` then sees the union and unions the host inventory
+   on its side too, so any host matched by either filter ends up
+   in the report.
 
    **Resolution cap (thruk-mcp)**: `_resolve_hosts_to_regex` caps
    the `/hosts` lookup at 1000 entries. If a hostgroup has more
@@ -236,7 +254,7 @@ not need write access.
 |---|---|---|
 | `render.py` exits with `missing input: X.json` | An MCP step was skipped | Re-run that `save.sh` step (empty array is fine if scope unused) |
 | `alerts.json` truncated at the requested `limit` | Thruk `/logs` hit the cap | Re-collect with a smaller window or set `meta.alerts_truncated=true` so the report header flags it |
-| MCP response spilled to a `fil_*` reference (LLM can't `cat` it) | thruk-mcp `THRUK_MCP_WORKDIR` is unset, so spill falls back to Dust core, which then spills to a `fil_*` Dust API refuses to serve | Check `mcp-gateway/catalogs/kdust-custom.yaml` declares `THRUK_MCP_WORKDIR=/tmp/thruk-report` for the `thruk-mcp` server AND the `volumes:` line is present. Restart `mcp-gateway` after editing. With the workdir set, large responses come back as a `mode: "file"` handle (see step 4), not a `fil_*` reference |
+| MCP response spilled to a `fil_*` reference (LLM can't `cat` it) | thruk-mcp `THRUK_MCP_WORKDIR` is unset, OR the workdir bind-mount has the wrong permissions and thruk-mcp falls back to inline (then Dust spills to a `fil_*` ref) | (1) Check `mcp-gateway/catalogs/kdust-custom.yaml` declares `THRUK_MCP_WORKDIR=/tmp/thruk-report` for the `thruk-mcp` server AND the `volumes:` line is present. (2) Check the host dir is `mode 1777` — kdust runs as uid 1000 but the thruk-mcp child container runs as uid 1001 / gid 999, no common owner/group → 0755/0775 fails with EACCES. Fix once with `sudo chmod 1777 /tmp/thruk-report`; `save.sh init` also re-asserts it on every run. Confirm in `docker logs kdust-mcp-gateway` that no `spill … failed (Permission denied)` warning appears |
 | `save.sh: --from-file path does not exist` | The agent passed a `saved_to` from a previous run, OR the bind-mount is missing on one side | Verify the `/tmp/thruk-report:/tmp/thruk-report` mount on BOTH the kdust service (docker-compose.yml) and the thruk-mcp catalog entry. After fixing, `docker compose up -d` to re-spawn the gateway with the corrected child mount |
 | `send_mail.py` SMTP timeout | `mailing.ecritel.net:25` unreachable | Check egress; surface stderr in the run output, do NOT retry blindly |
 | HTML differs across runs | Bug in `render.py` (must be deterministic) | Open an issue — same JSON in MUST yield same HTML out |

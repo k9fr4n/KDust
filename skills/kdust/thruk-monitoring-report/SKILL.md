@@ -75,8 +75,17 @@ the LLM, so the report is stable and the run output stays short.
 
 ## Working directory
 
-`/tmp/thruk-report/` — single shared scratch directory. Wipe
-before each run (the skill scripts do this on `save.sh init`).
+`/tmp/thruk-report/` — single shared scratch directory, bind-mounted
+at the **same path** in:
+
+- the kdust container (where `save.sh` / `render.py` / `send_mail.py` run);
+- the thruk-mcp child container spawned by mcp-gateway (where the MCP
+  server spills large responses — see issue k9fr4n/thruk-mcp#49).
+
+This symmetry is on purpose: the `saved_to` path returned by a spilled
+MCP response is directly usable by the skill scripts without any path
+remapping. `save.sh init` wipes the **contents** (not the mount point)
+before each run.
 
 File naming convention (consumed by `render.py`):
 
@@ -130,15 +139,39 @@ file so `render.py` does not crash.
    `thruk_query` with `q="custom_variables…"` — that filter is
    silently dropped by the Thruk parser.
 
-4. **Collect monitoring data** on the window — **always push the
+4. **Collect monitoring data** on the window. Still push the
    perimeter filters (`hostgroup` + `custom_vars`) down to the MCP
-   call**. This keeps the payload small enough to stay under Dust's
-   inline cap and avoids spillage to a `fil_*` reference (which
-   currently can't be read back by the LLM, see "Failure modes" /
-   `export_fil_to_workdir` notes below):
+   call to keep the payload focused — and the spill-to-workdir
+   mechanism handles the rest.
+
+   **Two response shapes to expect from `thruk_*`** (since
+   thruk-mcp v0.8 — issue k9fr4n/thruk-mcp#49):
+
+   - **Inline JSON array** (payload ≤ ~256 KB) — same as before.
+     Pipe verbatim through `save.sh <name>.json` (stdin).
+   - **Spill handle** (payload > threshold) — a small JSON object:
+     ```json
+     {
+       "mode": "file",
+       "saved_to": "/tmp/thruk-report/thruk_recent_events_20260520T091200_a3f1c9b2.json",
+       "rows": 1842,
+       "bytes": 2938104,
+       "sha256": "…",
+       "filters": { … }
+     }
+     ```
+     The file is ALREADY on disk in the shared workdir (see
+     "Working directory" — same path bind-mounted into the
+     thruk-mcp child container). In that case call
+     `save.sh <name>.json --from-file <saved_to>` to copy/rename
+     it into the slot `render.py` expects.
+
+   Detection rule (cheap): if the tool response starts with `{` and
+   contains `"mode": "file"` → it's a handle, use `--from-file`.
+   Otherwise it's an inline array — pipe stdin as before.
 
    - `thruk_recent_events(only_alerts=true, hours=<24 or 72>, hostgroup='<HG>', custom_vars={…}, limit=1000)`
-     → `save.sh alerts.json`.
+     → `save.sh alerts.json` (or `save.sh alerts.json --from-file <saved_to>`).
      ⚠️ Do NOT use `thruk_list_alerts` — the Thruk REST `/alerts`
      endpoint returns `[]` on Thruk 3.26 in federated mode
      (see issue #91). `recent_events(only_alerts=true)` queries
@@ -146,9 +179,9 @@ file so `render.py` does not crash.
      same SERVICE/HOST ALERT records (`host_name`,
      `service_description`, `state`, `state_type`, `time`, …).
    - `thruk_list_notifications(since=<since>, hostgroup='<HG>', custom_vars={…}, limit=500)`
-     → `save.sh notifications.json`.
+     → `save.sh notifications.json` (handle-aware, same rule).
    - `thruk_problems(hostgroup='<HG>', custom_vars={…}, limit=200)`
-     → `save.sh problems.json`.
+     → `save.sh problems.json` (handle-aware, same rule).
 
    Hostgroup + custom_vars combine logically (the `/hosts` lookup
    used to resolve them applies both filters at once). Pass BOTH
@@ -203,7 +236,8 @@ not need write access.
 |---|---|---|
 | `render.py` exits with `missing input: X.json` | An MCP step was skipped | Re-run that `save.sh` step (empty array is fine if scope unused) |
 | `alerts.json` truncated at the requested `limit` | Thruk `/logs` hit the cap | Re-collect with a smaller window or set `meta.alerts_truncated=true` so the report header flags it |
-| MCP response spilled to a `fil_*` reference (LLM can't `cat` it) | Payload > Dust inline cap because no perimeter filter was passed | **Always pre-filter** at the MCP call (`hostgroup=`, `custom_vars=`) — see step 4. The legacy bridge `fs_cli__export_fil_to_workdir` is currently broken: Dust API rejects both `?action=view` and `?action=download` on `useCase=tool_output` files. Until that's fixed upstream, an unfiltered call that spills is a hard stop |
+| MCP response spilled to a `fil_*` reference (LLM can't `cat` it) | thruk-mcp `THRUK_MCP_WORKDIR` is unset, so spill falls back to Dust core, which then spills to a `fil_*` Dust API refuses to serve | Check `mcp-gateway/catalogs/kdust-custom.yaml` declares `THRUK_MCP_WORKDIR=/tmp/thruk-report` for the `thruk-mcp` server AND the `volumes:` line is present. Restart `mcp-gateway` after editing. With the workdir set, large responses come back as a `mode: "file"` handle (see step 4), not a `fil_*` reference |
+| `save.sh: --from-file path does not exist` | The agent passed a `saved_to` from a previous run, OR the bind-mount is missing on one side | Verify the `/tmp/thruk-report:/tmp/thruk-report` mount on BOTH the kdust service (docker-compose.yml) and the thruk-mcp catalog entry. After fixing, `docker compose up -d` to re-spawn the gateway with the corrected child mount |
 | `send_mail.py` SMTP timeout | `mailing.ecritel.net:25` unreachable | Check egress; surface stderr in the run output, do NOT retry blindly |
 | HTML differs across runs | Bug in `render.py` (must be deterministic) | Open an issue — same JSON in MUST yield same HTML out |
 

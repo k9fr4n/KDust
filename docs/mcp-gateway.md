@@ -190,8 +190,8 @@ file via `--catalog=<path>`.
 KDust convention since 2026-05-17:
 
 - One versioned YAML file: `mcp-gateway/catalogs/kdust-custom.yaml`.
-- Mounted read-only at `/catalogs/` inside the gateway container (both
-  `docker-compose.yml` and `docker-compose.prod.yml`).
+- Mounted read-only at `/catalogs/` inside the gateway container via
+  `docker-compose.yml`.
 - Registered with **`--additional-catalog=`** (not `--catalog=`). The
   un-prefixed flag REPLACES the gateway's catalog list. We pass the
   official Docker MCP catalog explicitly via
@@ -240,8 +240,7 @@ Adding a custom server:
 
 1. Append an entry to `mcp-gateway/catalogs/kdust-custom.yaml` (image,
    tools, secrets list).
-2. Append the slug to `--servers=` in `docker-compose.yml`
-   (+ `docker-compose.prod.yml`).
+2. Append the slug to `--servers=` in `docker-compose.yml`.
 3. Create the matching `Secret` rows + bindings in `/settings/mcp`.
 4. `docker compose up -d mcp-gateway`. Confirm with
    `docker compose logs mcp-gateway | grep -i loaded`.

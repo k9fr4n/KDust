@@ -38,8 +38,16 @@ USAGE
 mode="$1"
 
 if [[ "$mode" == "init" ]]; then
-  rm -rf -- "$WORKDIR"
+  # Wipe CONTENTS only — never the directory itself. The workdir is a
+  # bind-mount shared with the thruk-mcp child container spawned by
+  # mcp-gateway (see docker-compose.yml + mcp-gateway/catalogs/kdust-custom.yaml).
+  # `rm -rf -- "$WORKDIR"` on a bind-mount silently leaves the previous
+  # run's files around because the kernel refuses to unlink the mount
+  # point (EBUSY), and `mkdir -p` then no-ops. Use `find -delete` so
+  # we remove the descendants of the mount and re-create the meta file
+  # in a known-clean directory.
   mkdir -p -- "$WORKDIR"
+  find "$WORKDIR" -mindepth 1 -delete
   exec python3 "$HELPER" init "$WORKDIR/meta.json"
 fi
 

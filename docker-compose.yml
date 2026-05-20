@@ -63,6 +63,16 @@ services:
       # server being edited. Same source file the gateway loads
       # via --additional-catalog=.
       - ./mcp-gateway/catalogs:/app/mcp-gateway/catalogs:ro
+      # Shared workdir with the thruk-mcp child container spawned by
+      # mcp-gateway (DooD). thruk-mcp spills large responses there
+      # (issue k9fr4n/thruk-mcp#49) and the skill
+      # kdust/thruk-monitoring-report reads them in via render.py.
+      # Identical path on both sides (host + container) so the handle
+      # JSON the agent receives is directly usable. Host `/tmp/thruk-report`
+      # is auto-created by Compose; it's wiped at the start of each run
+      # by `save.sh init` (which removes its CONTENTS, not the mount).
+      # 2026-05-20.
+      - /tmp/thruk-report:/tmp/thruk-report
     # Self-hosted SSH identities runtime (Franck 2026-05-09, ADR-0011).
     # In-memory tmpfs where src/lib/ssh/bootstrap.ts materialises the
     # decrypted private keys at boot. mode=0700 + uid/gid=1000 so only

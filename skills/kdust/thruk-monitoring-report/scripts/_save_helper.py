@@ -60,15 +60,27 @@ def _read_json_file(path_s: str):
         sys.exit(2)
 
 def _parse_dump_args(argv):
-    # argv layout: [_save_helper.py, dump, <dest>, [--from-file <path>]]
-    if len(argv) == 3:
-        return argv[2], None
-    if len(argv) == 5 and argv[3] == "--from-file":
-        return argv[2], argv[4]
-    sys.stderr.write(
-        "_save_helper.py: usage: dump <dest> [--from-file <path>]\n"
-    )
-    sys.exit(64)
+    # argv layout: [_save_helper.py, dump, <dest>, [--merge], [--from-file <path>]]
+    rest = list(argv[3:])
+    merge = False
+    if rest and rest[0] == "--merge":
+        merge = True
+        rest = rest[1:]
+    from_file = None
+    if rest:
+        if len(rest) == 2 and rest[0] == "--from-file":
+            from_file = rest[1]
+        else:
+            sys.stderr.write(
+                "_save_helper.py: usage: dump <dest> [--merge] [--from-file <path>]\n"
+            )
+            sys.exit(64)
+    if len(argv) < 3:
+        sys.stderr.write(
+            "_save_helper.py: usage: dump <dest> [--merge] [--from-file <path>]\n"
+        )
+        sys.exit(64)
+    return argv[2], from_file, merge
 
 def main() -> int:
     if len(sys.argv) < 3:
@@ -83,7 +95,7 @@ def main() -> int:
         dest = pathlib.Path(sys.argv[2])
         data = _read_json_stdin()
     elif cmd == "dump":
-        dest_s, from_file = _parse_dump_args(sys.argv)
+        dest_s, from_file, merge = _parse_dump_args(sys.argv)
         dest = pathlib.Path(dest_s)
         data = _read_json_file(from_file) if from_file else _read_json_stdin()
     else:
@@ -135,6 +147,38 @@ def main() -> int:
                 f"hosts/services), got {type(data).__name__}\n"
             )
             return 2
+        if merge and dest.exists():
+            try:
+                existing = json.loads(dest.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as e:
+                sys.stderr.write(
+                    f"save.sh {dest.name} --merge: existing file is not valid JSON ({e})\n"
+                )
+                return 2
+            if not isinstance(existing, list):
+                sys.stderr.write(
+                    f"save.sh {dest.name} --merge: existing file is not a JSON array "
+                    f"(got {type(existing).__name__})\n"
+                )
+                return 2
+            # Union + dedupe. Dedup key = canonical JSON of each record.
+            # O(N) memory, single pass — fine for the volumes we handle.
+            seen = set()
+            merged = []
+            for rec in existing + data:
+                key = json.dumps(rec, sort_keys=True, separators=(",", ":"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(rec)
+            before_in, before_existing = len(data), len(existing)
+            data = merged
+            dest.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+            print(
+                f"OK: merged {before_in} new + {before_existing} existing "
+                f"→ {len(data)} unique records → {dest}"
+            )
+            return 0
         dest.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
         print(f"OK: {len(data)} records → {dest}")
         return 0

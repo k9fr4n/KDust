@@ -16,6 +16,7 @@ import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 
 import { getCurrentProject } from '@/lib/current-project';
 import { ConversationCard } from '@/components/ConversationCard';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import { RunCard } from '@/components/RunCard';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
@@ -74,6 +75,13 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
     return (
       <div className="space-y-6">
+        {/* Override the server-side metadata.title ('Dashboard') with
+            the actual page heading (project name + branch) so the
+            global <TopBar> mirrors what the user reads in the first
+            row of the page. Franck 2026-05-21 (fourth pass):
+            "le titre des pages doit se retrouver dans la top bar,
+            pas juste le nom de la catégorie". */}
+        <DocumentTitle title={`${current.name} (${current.branch})`} />
         {/* Dashboard header (Franck 2026-05-21 third pass): the
             previous action cluster (Sync now + Settings) and the
             git-identity panel below it were dropped. The project

@@ -752,10 +752,24 @@ function ChatPageInner({
   // Auto-scroll to bottom on new content \u2014 but only while the
   // user hasn't manually scrolled up. See the `followStream` ref
   // definition above for the full state machine.
+  // Franck 2026-05-21 bug fix:
+  //  1. Dependencies now include `cotText` and `toolCalls` so the
+  //     view follows reasoning blocks and fs_tools pills, not just
+  //     plain message tokens. Previously, the thinking phase (or
+  //     a tool-call pill appearing without a streamedText update)
+  //     would leave the user scrolled above the new content.
+  //  2. `behavior: 'auto'` (instant) instead of 'smooth'. The
+  //     smooth variant animates over ~300ms and fires intermediate
+  //     `scroll` events at each frame; those frames are mid-flight
+  //     so `distance > NEAR_BOTTOM_PX` and the scroll handler
+  //     flipped `followStream` to false on the FIRST token,
+  //     killing auto-follow for the rest of the stream. Instant
+  //     scroll yields a single scroll event at distance ~= 0,
+  //     keeping the flag stable.
   useEffect(() => {
     if (!followStream.current) return;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamedText]);
+    bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [messages, streamedText, cotText, toolCalls]);
 
   // Watch scroll position on the messages container. Any scroll
   // that leaves the near-bottom zone disables follow; scrolling

@@ -57,7 +57,15 @@ function HighlightedPath({ path, query }: { path: string; query: string }) {
   return <>{out}</>;
 }
 
-export function ProjectSwitcher() {
+/**
+ * iconOnly (Franck 2026-05-21 #3): when the sidebar is collapsed,
+ * we want a 40\u00d740 icon trigger that opens the SAME combobox popover
+ * \u2014 without expanding the sidebar. The popover then anchors to the
+ * right of the icon (`left-full ml-2`) so it never gets clipped by
+ * the 56px sidebar. All other behaviour (recent list, keyboard nav,
+ * fetch flow) is preserved.
+ */
+export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {}) {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
@@ -240,22 +248,33 @@ export function ProjectSwitcher() {
 
   return (
     <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        // h-9 matches NavItem / HeaderIcons / UserMenu so all top-bar
-        // elements sit on the same baseline. Width is capped tight on
-        // md (where the horizontal NavItems compete for space) and
-        // relaxed on lg+. On mobile the parent wrapper carries
-        // `flex-1 min-w-0` to let the truncate kick in.
-        className="flex items-center gap-2 h-9 px-3 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 w-full md:w-auto md:max-w-[200px] lg:max-w-[260px]"
-        title={triggerLabel}
-      >
-        <FolderGit2 size={14} className="shrink-0" />
-        {/* Show the FULL fsPath so same-named leaves stay distinguishable.
-            Truncation kicks in via max-w + truncate when paths are long. */}
-        <span className="truncate">{triggerLabel}</span>
-        <ChevronDown size={14} className="text-slate-400 shrink-0" />
-      </button>
+      {iconOnly ? (
+        // Sidebar collapsed: 40\u00d740 icon-only trigger.
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          className="flex items-center justify-center h-10 w-full rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+          title={triggerLabel}
+          aria-label={'Switch project (current: ' + triggerLabel + ')'}
+        >
+          <FolderGit2 size={18} />
+        </button>
+      ) : (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          // h-9 matches the other sidebar/header controls so all
+          // elements sit on the same baseline.
+          className="flex items-center gap-2 h-9 px-3 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 w-full md:w-auto md:max-w-[200px] lg:max-w-[260px]"
+          title={triggerLabel}
+        >
+          <FolderGit2 size={14} className="shrink-0" />
+          {/* Show the FULL fsPath so same-named leaves stay distinguishable.
+              Truncation kicks in via max-w + truncate when paths are long. */}
+          <span className="truncate">{triggerLabel}</span>
+          <ChevronDown size={14} className="text-slate-400 shrink-0" />
+        </button>
+      )}
 
       {open && (
         <>
@@ -281,7 +300,18 @@ export function ProjectSwitcher() {
           //   for 140ms — visible "snap to center" bug).
           // - md+: keep the original behaviour (anchored under the
           //   trigger, GitLab-style).
-          className="fixed left-3 right-3 top-[3.75rem] mx-auto max-w-[560px] md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:mx-0 md:w-[560px] md:max-w-[calc(100vw-2rem)] rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col"
+          className={
+            'rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col ' +
+            (iconOnly
+              // Sidebar-collapsed: anchor to the right of the icon
+              // (left-full + ml-2). Width matches the desktop default
+              // (560px) but clamps to the remaining viewport on the
+              // right side. Top-0 aligns the popover with the icon
+              // rather than the document.
+              ? 'absolute left-full top-0 ml-2 w-[560px] max-w-[calc(100vw-5rem)]'
+              // Default (sidebar-expanded or any non-sidebar caller).
+              : 'fixed left-3 right-3 top-[3.75rem] mx-auto max-w-[560px] md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:mx-0 md:w-[560px] md:max-w-[calc(100vw-2rem)]')
+          }
           style={{ animation: 'kd-pop-in 140ms ease-out' }}
         >
           {/* Search header */}

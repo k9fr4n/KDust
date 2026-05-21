@@ -7,7 +7,6 @@ import 'highlight.js/styles/github-dark.css';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { SideNav } from '@/components/SideNav';
-import { FloatingLogsButton } from '@/components/FloatingLogsButton';
 import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
 import { getCurrentProject } from '@/lib/current-project';
@@ -50,25 +49,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {chromeless ? (
           children
         ) : (
-          <>
-            {/* New chrome (Franck 2026-05-21): claude.ai-style left
-                sidebar replaces the legacy top-bar <Nav>. The bar
-                stays at w-14 collapsed (default), expands to w-60
-                on click. Main content carries a constant `pl-14` so
-                the layout never shifts; the expanded panel overlays
-                on top of the content. */}
+          <div className="flex min-h-dvh">
+            {/* New chrome (Franck 2026-05-21, revised). Sidebar is a
+                flex sibling — not a fixed overlay — so expanding it
+                PUSHES the main content rather than covering it. The
+                width transition lives inside <SideNav>; the
+                flex-1 main child re-flows accordingly. */}
             <SideNav projectScoped={projectScoped} />
-            {/* Floating logs status icon (top-right). Lifted out of
-                the old <HeaderIcons> when the top-bar disappeared. */}
-            <FloatingLogsButton />
-            {/* Session health banner — see DustSession contract. */}
-            <DustAuthBanner />
-            {/* Cross-tab conversation sync — see component header. */}
-            <ConversationsBusListener />
-            <main className="pl-14 min-h-dvh">
-              <div className="px-4 lg:px-6 py-6">{children}</div>
+            <main className="flex-1 min-w-0 flex flex-col">
+              {/* Session health banner — see DustSession contract. */}
+              <DustAuthBanner />
+              {/* Cross-tab conversation sync — see component header. */}
+              <ConversationsBusListener />
+              <div className="flex-1 min-w-0 px-4 lg:px-6 py-6">{children}</div>
             </main>
-          </>
+          </div>
         )}
       </body>
     </html>

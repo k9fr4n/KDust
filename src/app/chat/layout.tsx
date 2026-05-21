@@ -21,19 +21,21 @@
 export const dynamic = 'force-dynamic';
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
-  // Padding cancel (Franck 2026-04-23 21:48). RootLayout wraps
-  // every page in <main class="px-4 lg:px-6 py-6">. The chat
-  // surface wants the full viewport width so the message area,
-  // composer, and the merged toolbar reach the browser edges.
-  // We negate the root padding with inverse margins and size the
-  // wrapper explicitly to "viewport minus the sticky Nav (h-14)".
+  // Padding cancel (Franck 2026-04-23 21:48, updated 2026-05-21).
+  // RootLayout wraps every page in
+  //   <main class="pl-14"><div class="px-4 lg:px-6 py-6">…</div></main>
+  // The chat surface wants the full viewport width (minus the
+  // sidebar's pl-14) so message area, composer and merged toolbar
+  // reach the browser edges. We negate the inner div's px/py and
+  // size the wrapper to the full dynamic viewport height (the new
+  // chrome no longer steals 3.5rem at the top).
   //
-  // Why negative margins rather than editing RootLayout:
-  // touching the root affects /conversation, /agents, /projects,
-  // /admin, / \u2026 which all rely on that same breathing room.
-  // Cancelling locally keeps the diff scoped to /chat.
+  // Why negative margins rather than editing RootLayout: touching
+  // the root affects /conversation, /agents, /projects, /admin, /
+  // \u2026 which all rely on that same breathing room. Cancelling
+  // locally keeps the diff scoped to /chat.
   return (
-    <div className="-mx-4 lg:-mx-6 -my-6 h-[calc(100dvh-3.5rem)] min-h-0">
+    <div className="-mx-4 lg:-mx-6 -my-6 h-dvh min-h-0">
       {children}
     </div>
   );

@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import {
   ChatMessageBubble,
   ToolInvocationsPanel,
@@ -1364,14 +1365,23 @@ function ChatPageInner({
   const field =
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
 
+  // Document title (Franck 2026-05-21): the mobile top bar shows
+  // the page title to the right of the K, with /chat showing the
+  // CURRENT CONVERSATION title instead. We feed <DocumentTitle> the
+  // active conv's title, falling back to "Chat" before any
+  // conversation is selected.
+  const docTitle =
+    (currentId && convs.find((c) => c.id === currentId)?.title) || 'Chat';
+
   return (
     // Height math:
-    //   - sticky <Nav/> is h-14 (3.5rem) at the top of <body>
-    //   - /chat/layout.tsx cancels the root <main> padding and
-    //     sizes its wrapper to calc(100dvh - 3.5rem), so this div
-    //     just needs h-full to inherit the correct height.
+    //   - /chat/layout.tsx sizes its wrapper to
+    //     calc(100dvh - 3rem) on mobile (mobile top bar) and
+    //     100dvh on >= md, so this div just needs h-full.
     //   - min-h-0 lets flex children shrink so only the inner
     //     messages pane scrolls, never the page.
+    <>
+      <DocumentTitle title={docTitle} />
     <div
       data-chat-root
       className="flex gap-0 h-full min-h-0 max-w-full"
@@ -2191,6 +2201,7 @@ function ChatPageInner({
         </form>
       </section>
     </div>
+    </>
   );
 }
 

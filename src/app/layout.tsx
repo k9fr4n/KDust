@@ -7,6 +7,7 @@ import 'highlight.js/styles/github-dark.css';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { SideNav } from '@/components/SideNav';
+import { MobileTopBar } from '@/components/MobileTopBar';
 import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
 import { getCurrentProject } from '@/lib/current-project';
@@ -56,7 +57,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 width transition lives inside <SideNav>; the
                 flex-1 main child re-flows accordingly. */}
             <SideNav projectScoped={projectScoped} />
-            <main className="flex-1 min-w-0 flex flex-col">
+            {/* Mobile-only top bar (md:hidden). Hosts the K toggle
+                and the current page title. Communicates with the
+                SideNav via a `kdust:sidebar:toggle` window event. */}
+            <MobileTopBar />
+            {/* `pt-12 md:pt-0` reserves the 48px the MobileTopBar
+                takes up on mobile (it's `fixed` so it doesn't
+                participate in flex flow). Desktop unchanged. */}
+            <main className="flex-1 min-w-0 flex flex-col pt-12 md:pt-0">
               {/* Session health banner — see DustSession contract. */}
               <DustAuthBanner />
               {/* Cross-tab conversation sync — see component header. */}

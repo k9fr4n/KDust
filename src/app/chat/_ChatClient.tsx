@@ -1378,12 +1378,12 @@ function ChatPageInner({
   const docTitle =
     (currentId && convs.find((c) => c.id === currentId)?.title) || 'Chat';
 
-  // Page-level action cluster (Franck 2026-05-21, second pass).
-  // Surfaced in the global <TopBar> via the page-actions slot. The
-  // chat-internal top toolbar that used to host these icons has
-  // been removed; the agent picker (formerly in that toolbar) has
-  // moved into the composer card, see below.
-  usePageActions(
+  // Page-level action cluster (Franck 2026-05-21, second pass +
+  // fifth pass v2). Portaled into the global <TopBar> via
+  // <PageActionsSlot/>; the returned JSX (portal node) is rendered
+  // inline below so React's reconciler keeps actions in sync with
+  // _ChatClient state without re-rendering the TopBar itself.
+  const pageActions = usePageActions(
     <>
       {/* MCP tools status indicator. Stateless from React's POV
           (CSS hover tooltip), so safe to re-create on each render. */}
@@ -1508,12 +1508,13 @@ function ChatPageInner({
   return (
     // Height math:
     //   - /chat/layout.tsx sizes its wrapper to
-    //     calc(100dvh - 3rem) on mobile (mobile top bar) and
-    //     100dvh on >= md, so this div just needs h-full.
+    //     calc(100dvh - 3rem) on every viewport (TopBar always
+    //     eats 3rem now), so this div just needs h-full.
     //   - min-h-0 lets flex children shrink so only the inner
     //     messages pane scrolls, never the page.
     <>
       <DocumentTitle title={docTitle} />
+      {pageActions}
     <div
       data-chat-root
       className="flex gap-0 h-full min-h-0 max-w-full"

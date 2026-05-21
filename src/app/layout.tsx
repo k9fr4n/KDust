@@ -8,7 +8,6 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { SideNav } from '@/components/SideNav';
 import { TopBar } from '@/components/TopBar';
-import { PageActionsProvider } from '@/components/PageActionsProvider';
 import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
 import { getCurrentProject } from '@/lib/current-project';
@@ -51,8 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {chromeless ? (
           children
         ) : (
-          <PageActionsProvider>
-            <div className="flex min-h-dvh">
+          <div className="flex min-h-dvh">
               {/* Sidebar (flex sibling, sticky top-0). Returns null
                   on mobile-collapsed so <main> takes the full width
                   and the global <TopBar> hosts the K toggle. */}
@@ -72,7 +70,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <div className="flex-1 min-w-0 px-4 lg:px-6 py-6">{children}</div>
               </main>
             </div>
-          </PageActionsProvider>
         )}
       </body>
     </html>

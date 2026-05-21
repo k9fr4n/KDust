@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import {
   PanelLeftClose,
   LayoutDashboard,
@@ -12,12 +12,10 @@ import {
   Clock,
   FolderGit2,
   Lock,
-  CircleUser,
-  Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
-import { apiSend } from '@/lib/api/client';
 import { ProjectSwitcher } from './ProjectSwitcher';
+import { SideNavBottom } from './SideNavBottom';
 
 /**
  * Claude.ai-style collapsible left sidebar.
@@ -142,7 +140,7 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
       </nav>
 
       <div className="border-t border-slate-200 dark:border-slate-800 p-2">
-        <BottomUserRow expanded={expanded} />
+        <SideNavBottom expanded={expanded} />
       </div>
     </aside>
   );
@@ -219,56 +217,4 @@ function CollapsedProjectButton({ onExpand }: { onExpand: () => void }) {
   );
 }
 
-function BottomUserRow({ expanded }: { expanded: boolean }) {
-  const router = useRouter();
-  const logout = async () => {
-    await apiSend('POST', '/api/auth/logout').catch(() => {});
-    router.push('/login');
-  };
 
-  if (!expanded) {
-    return (
-      <div className="flex flex-col gap-1">
-        <button
-          type="button"
-          onClick={() => void logout()}
-          className="flex items-center justify-center h-10 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-          title="Sign out"
-          aria-label="Sign out"
-        >
-          <CircleUser size={18} />
-        </button>
-        <Link
-          href="/settings"
-          className="flex items-center justify-center h-10 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-          title="Settings"
-          aria-label="Settings"
-        >
-          <SettingsIcon size={18} />
-        </Link>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={() => void logout()}
-        className="flex items-center gap-2 flex-1 min-w-0 h-10 px-2 rounded-md text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-        title="Sign out"
-      >
-        <CircleUser size={18} className="shrink-0" />
-        <span className="truncate">Sign out</span>
-      </button>
-      <Link
-        href="/settings"
-        className="flex items-center justify-center h-10 w-10 rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-        title="Settings"
-        aria-label="Settings"
-      >
-        <SettingsIcon size={18} />
-      </Link>
-    </div>
-  );
-}

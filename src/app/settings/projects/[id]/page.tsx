@@ -27,6 +27,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X } from 'lucide-react';
 import { errMessage } from '@/lib/errors';
 import { UI_SAVE_RESET_MS } from '@/lib/constants';
+import { DocumentTitle } from '@/components/DocumentTitle';
 
 type Project = {
   id: string;
@@ -295,6 +296,7 @@ export default function ProjectSettingsPage({
 
   return (
     <div className="space-y-6">
+      <DocumentTitle title={p.name ? `${p.name} · Project` : 'Project'} />
       {/* Breadcrumb */}
       <div className="text-sm">
         <Link href="/settings/projects" className="text-slate-500 hover:text-brand-600 inline-flex items-center gap-1">

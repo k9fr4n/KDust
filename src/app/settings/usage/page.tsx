@@ -39,6 +39,8 @@ const CHARS_PER_TOKEN = 4;
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+export const metadata: import('next').Metadata = { title: 'Usage' };
+
 /**
  * Comprehensive usage dashboard for KDust's activity against Dust.
  *

@@ -2,6 +2,7 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
+import { DocumentTitle } from '@/components/DocumentTitle';
 
 /**
  * Safe JSON-or-text reader for an error response. The server always
@@ -112,6 +113,7 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <div className="relative min-h-screen overflow-hidden flex items-center justify-center bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+      <DocumentTitle title="Sign in" />
       {/* Stylised KDust watermark. `aria-hidden` because it is purely
           decorative — screen readers should not read the brand name
           twice (the form heading already says "KDust — Login").

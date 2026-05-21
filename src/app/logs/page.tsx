@@ -1,7 +1,10 @@
+import type { Metadata } from 'next';
 import { getAppTimezone } from '@/lib/config';
 import LogsView from './LogsView';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = { title: 'Logs' };
 
 /**
  * Server shell for /logs: resolves the operator-configured

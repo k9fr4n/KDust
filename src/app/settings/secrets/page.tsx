@@ -16,6 +16,8 @@ import { GitCliStatus } from './GitCliStatus';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+export const metadata: import('next').Metadata = { title: 'Secrets' };
+
 export default async function SecretsPage() {
   const secrets = await listSecrets();
   return (

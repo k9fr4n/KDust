@@ -4,6 +4,14 @@ import { TaskForm } from '@/components/TaskForm';
 
 export const dynamic = 'force-dynamic';
 
+export async function generateMetadata(
+  { params }: { params: Promise<{ id: string }> },
+): Promise<import('next').Metadata> {
+  const { id } = await params;
+  const t = await db.task.findUnique({ where: { id }, select: { name: true } });
+  return { title: t?.name ? `Edit · ${t.name}` : 'Edit task' };
+}
+
 export default async function EditTaskPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const task = await db.task.findUnique({ where: { id } });

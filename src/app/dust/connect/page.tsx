@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
+import { DocumentTitle } from '@/components/DocumentTitle';
 
 type Device = {
   device_code: string;
@@ -83,6 +84,7 @@ export default function DustConnect() {
 
   return (
     <div className="max-w-xl">
+      <DocumentTitle title="Connect Dust" />
       <h1 className="text-2xl font-bold mb-4">Connect to Dust</h1>
 
       {step === 'idle' && (

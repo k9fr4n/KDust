@@ -23,6 +23,7 @@ import {
   Sparkles, Star, ExternalLink, Pencil, Trash2, Save,
 } from 'lucide-react';
 import { errMessage } from '@/lib/errors';
+import { DocumentTitle } from '@/components/DocumentTitle';
 
 type Agent = {
   sId: string;
@@ -333,6 +334,7 @@ export default function AgentsSettingsPage() {
 
   return (
     <div className="space-y-6">
+      <DocumentTitle title="Agents" />
       <div className="text-sm">
         <Link href="/settings" className="text-slate-500 hover:text-brand-600 inline-flex items-center gap-1">
           <ArrowLeft size={14} /> Settings

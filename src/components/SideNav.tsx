@@ -16,6 +16,7 @@ import {
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { SideNavBottom } from './SideNavBottom';
 import { SideNavLogsButton } from './SideNavLogsButton';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 /**
  * Claude.ai-style collapsible left sidebar.
@@ -108,16 +109,12 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
   }, [isMobile]);
 
   // Body scroll-lock while the mobile sheet is open so the
-  // underlying page doesn't scroll behind the overlay. Cheap, no
-  // dependency on a scroll-lock lib.
-  useEffect(() => {
-    if (!isMobile || !mobileOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isMobile, mobileOpen]);
+  // underlying page doesn't scroll behind the overlay. Uses the
+  // shared ref-counted lock so it composes safely with /chat's own
+  // lock — without that, the two restore-on-cleanup dances raced
+  // and the body sometimes stayed `overflow: hidden` after
+  // navigating away from /chat (Franck 2026-05-21 sixth pass).
+  useBodyScrollLock(isMobile && mobileOpen);
 
   const expanded = isMobile ? mobileOpen : desktopExpanded;
 

@@ -47,6 +47,29 @@ import { parseGitRepo, buildGitLinks } from '@/lib/git';
 
 export const dynamic = 'force-dynamic';
 
+export async function generateMetadata(
+  { params }: { params: Promise<{ id: string }> },
+): Promise<import('next').Metadata> {
+  const { id } = await params;
+  const run = await db.taskRun.findUnique({
+    where: { id },
+    select: { status: true, task: { select: { name: true } } },
+  });
+  if (!run) return { title: 'Run' };
+  // Status emoji prefix so multi-tab juggling is readable at a glance.
+  // Keep glyphs ASCII-narrow: most browsers truncate the favicon area
+  // hard on long titles.
+  const glyph =
+    run.status === 'running' ? '▶' :
+    run.status === 'success' ? '✓' :
+    run.status === 'failed'  ? '✗' :
+    run.status === 'aborted' ? '⊘' :
+    run.status === 'skipped' ? '↷' :
+    '·';
+  const name = run.task?.name ?? 'Run';
+  return { title: `${glyph} ${name}` };
+}
+
 function badgeClass(status: string) {
   switch (status) {
     case 'success': return 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/40 border-green-300 dark:border-green-800';

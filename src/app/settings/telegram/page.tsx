@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/Button';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import type { AppConfig } from '@prisma/client';
 import type { TelegramBridgeStatus } from '@/lib/telegram';
 
@@ -63,6 +64,7 @@ export default function TelegramSettingsPage() {
 
   return (
     <div className="max-w-2xl space-y-4">
+      <DocumentTitle title="Telegram" />
       <div>
         <Link
           href="/settings"

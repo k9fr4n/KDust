@@ -11,7 +11,12 @@ import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
 
 export const metadata: Metadata = {
-  title: 'KDust',
+  // Per-page titles (Franck 2026-05-21): pages export their own
+  // `title` (or `generateMetadata`) and Next merges via the template
+  // below — e.g. /task → "Tasks · KDust", /run/[id] → "{name} · KDust".
+  // Client-side pages that cannot use the metadata API set
+  // document.title via <DocumentTitle title="…" />.
+  title: { default: 'KDust', template: '%s · KDust' },
   description: 'Web UI for Dust agents with cron scheduling',
 };
 

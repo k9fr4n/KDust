@@ -26,8 +26,11 @@ import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import type { Prisma } from '@prisma/client';
+import type { Metadata } from 'next';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = { title: 'Runs' };
 
 type SortKey =
   | 'status'

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import {
   FolderGit2,
   Clock,
@@ -28,6 +29,8 @@ import { RunCard } from '@/components/RunCard';
 
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = { title: 'Dashboard' };
 
 type DashboardProps = { searchParams?: Promise<{ reason?: string }> };
 

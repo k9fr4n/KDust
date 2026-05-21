@@ -12,8 +12,11 @@ import { PageHeader } from '@/components/PageHeader';
 import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
+import type { Metadata } from 'next';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = { title: 'Conversations' };
 
 // Adaptive pagination (Franck 2026-04-23 14:04). Conversation
 // cards are \u224870px each (title + agent line + timestamp). Reserved

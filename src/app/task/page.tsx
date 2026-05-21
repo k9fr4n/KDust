@@ -15,8 +15,11 @@ import { nextRunAt } from '@/lib/cron/validator';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
 import type { Prisma } from '@prisma/client';
+import type { Metadata } from 'next';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = { title: 'Tasks' };
 
 // Adaptive pagination (Franck 2026-04-23 14:04). Task rows run
 // ~56px each (name + agent + run summary). Reserved \u2248 340px

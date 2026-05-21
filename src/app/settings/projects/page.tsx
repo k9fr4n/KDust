@@ -36,6 +36,7 @@ import {
   FolderOpen, X, Search, FolderTree, ChevronDown, ChevronRight,
   FolderPlus, Edit2, Move, Check,
 } from 'lucide-react';
+import { DocumentTitle } from '@/components/DocumentTitle';
 
 type P = {
   id: string;
@@ -84,6 +85,7 @@ function folderPathOf(p: P): string {
 export default function ProjectsPage() {
   return (
     <Suspense fallback={null}>
+      <DocumentTitle title="Projects" />
       <ProjectsPageInner />
     </Suspense>
   );

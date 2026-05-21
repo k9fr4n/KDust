@@ -14,6 +14,8 @@ import { SshEditor } from './SshEditor';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+export const metadata: import('next').Metadata = { title: 'SSH' };
+
 export default async function SshPage() {
   const [identities, snapshot] = await Promise.all([
     listIdentities(),

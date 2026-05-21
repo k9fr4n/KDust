@@ -27,6 +27,8 @@ import { loadCatalogToolsBySlug } from '@/lib/mcp/catalog-yaml';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+export const metadata: import('next').Metadata = { title: 'MCP' };
+
 export default async function McpSettingsPage() {
   const [servers, filters, secretRows, projectRows, gatewayToolsResult, catalogToolsBySlug] =
     await Promise.all([

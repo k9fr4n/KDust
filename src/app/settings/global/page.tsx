@@ -3,6 +3,7 @@ import { ChangeEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Settings as SettingsIcon } from 'lucide-react';
 import { Button } from '@/components/Button';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import type { AppConfig } from '@prisma/client';
 
 /**
@@ -52,6 +53,7 @@ export default function GlobalSettingsPage() {
 
   return (
     <div className="max-w-2xl space-y-4">
+      <DocumentTitle title="Global settings" />
       <div>
         <Link
           href="/settings"

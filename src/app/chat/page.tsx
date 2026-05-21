@@ -1,4 +1,7 @@
+import type { Metadata } from 'next';
 import ChatClient from './_ChatClient';
+
+export const metadata: Metadata = { title: 'Chat' };
 
 /**
  * /chat — fresh chat surface (no conversation pre-selected).

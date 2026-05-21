@@ -1,5 +1,8 @@
+import type { Metadata } from 'next';
 import { Info } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
+
+export const metadata: Metadata = { title: 'About' };
 
 export default function AboutPage() {
   return (

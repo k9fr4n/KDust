@@ -52,8 +52,12 @@ export function SideNavBottom({ expanded }: { expanded: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Fetch the Dust session status on mount AND whenever the
+  // popover opens (Franck 2026-05-21 bug: the user icon stayed
+  // slate after a page reload because the previous revision only
+  // fetched on open \u2014 so the `connected` flag never flipped to
+  // true until the user actually clicked the avatar).
   useEffect(() => {
-    if (!open) return;
     apiGet<Status>('/api/dust/region').then(setStatus).catch(() => {});
   }, [open]);
 

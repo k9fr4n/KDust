@@ -6,9 +6,11 @@ import './globals.css';
 import 'highlight.js/styles/github-dark.css';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
-import { Nav } from '@/components/Nav';
+import { SideNav } from '@/components/SideNav';
+import { FloatingLogsButton } from '@/components/FloatingLogsButton';
 import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
+import { getCurrentProject } from '@/lib/current-project';
 
 export const metadata: Metadata = {
   // Per-page titles (Franck 2026-05-21): pages export their own
@@ -35,6 +37,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     (p) => pathname === p || pathname.startsWith(p + '/'),
   );
 
+  // Project scope (Franck 2026-05-21): the new SideNav is a client
+  // component and cannot itself read the project cookie. We resolve
+  // it server-side once per request and pass it as a plain boolean
+  // prop, matching what the legacy <Nav> was doing.
+  const currentProject = chromeless ? null : await getCurrentProject();
+  const projectScoped = !!currentProject;
+
   return (
     <html lang="fr">
       <body>
@@ -42,23 +51,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           children
         ) : (
           <>
-            <Nav />
-            {/* Session health banner (Franck 2026-04-21 18:30): if the
-                DustSession row is missing or expired (e.g. after the
-                workos refresh grant returned 400/401 and we wiped the
-                row \u2014 see src/lib/dust/workos.ts), surface an amber
-                banner with a one\u2011click Re\u2011auth CTA so users don\u0027t
-                waste time wondering why agents silently fail. Server\u2011
-                rendered; null when the session is healthy. */}
+            {/* New chrome (Franck 2026-05-21): claude.ai-style left
+                sidebar replaces the legacy top-bar <Nav>. The bar
+                stays at w-14 collapsed (default), expands to w-60
+                on click. Main content carries a constant `pl-14` so
+                the layout never shifts; the expanded panel overlays
+                on top of the content. */}
+            <SideNav projectScoped={projectScoped} />
+            {/* Floating logs status icon (top-right). Lifted out of
+                the old <HeaderIcons> when the top-bar disappeared. */}
+            <FloatingLogsButton />
+            {/* Session health banner — see DustSession contract. */}
             <DustAuthBanner />
-            {/* Cross-tab sync (Franck 2026-04-20 17:04): any tab that
-                mutates a conversation (pin / delete) broadcasts an event
-                over BroadcastChannel (fallback: localStorage). Every
-                mounted page refreshes its server-rendered listings so
-                pinning a conv on /chat reflects on an open /conversation
-                tab without a manual reload, and vice-versa. */}
+            {/* Cross-tab conversation sync — see component header. */}
             <ConversationsBusListener />
-            <main className="px-4 lg:px-6 py-6">{children}</main>
+            <main className="pl-14 min-h-dvh">
+              <div className="px-4 lg:px-6 py-6">{children}</div>
+            </main>
           </>
         )}
       </body>

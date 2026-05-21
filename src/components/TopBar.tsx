@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { usePageActionsSlot } from './PageActionsProvider';
+import { PageActionsSlot } from './PageActionsProvider';
 
 /**
  * Global top bar (Franck 2026-05-21, second pass).
@@ -57,7 +57,6 @@ function normalizeDocTitle(raw: string, pathname: string): string {
 export function TopBar() {
   const pathname = usePathname() ?? '/';
   const [title, setTitle] = useState<string>(() => pathnameLabel(pathname));
-  const actions = usePageActionsSlot();
 
   useEffect(() => {
     const titleEl = document.querySelector('title');
@@ -95,9 +94,14 @@ export function TopBar() {
       <span className="text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
         {title}
       </span>
-      {/* Page-specific action cluster (icons). Empty by default. */}
-      <div className="ml-auto flex items-center gap-1 shrink-0">
-        {actions}
+      {/* Page-specific action cluster (icons). The portal target
+          lives in <PageActionsSlot/> so pages can render directly
+          into it via createPortal — see PageActionsProvider for
+          the why (avoids re-rendering the K button on every parent
+          render of the caller, which broke mobile clicks after a
+          /chat visit). */}
+      <div className="ml-auto shrink-0">
+        <PageActionsSlot />
       </div>
     </header>
   );

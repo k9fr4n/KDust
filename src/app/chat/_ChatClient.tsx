@@ -6,6 +6,7 @@ import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import { usePageActions } from '@/components/PageActionsProvider';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 import {
   ChatMessageBubble,
   ToolInvocationsPanel,
@@ -162,13 +163,12 @@ function ChatPageInner({
    * <body> is the safe belt-and-braces fix. Reverts on unmount so
    * other routes keep their normal scroll behaviour.
    */
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
+  // Use the shared ref-counted lock instead of the ad-hoc
+  // snapshot/restore dance: it composes safely with SideNav's mobile
+  // sheet lock (Franck 2026-05-21 sixth pass: 'des fois quand je
+  // change de page, pas de scroll possible' — race between two
+  // independent lockers leaked an outdated baseline).
+  useBodyScrollLock(true);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [convs, setConvs] = useState<ConvSummary[]>([]);

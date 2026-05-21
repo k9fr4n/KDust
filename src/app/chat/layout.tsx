@@ -34,8 +34,11 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   // the root affects /conversation, /agents, /projects, /admin, /
   // \u2026 which all rely on that same breathing room. Cancelling
   // locally keeps the diff scoped to /chat.
+  // Mobile top bar (Franck 2026-05-21) eats 3rem at the very top
+  // via `pt-12` on <main>. The chat shell wants the full remaining
+  // viewport: `h-[calc(100dvh-3rem)] md:h-dvh`.
   return (
-    <div className="-mx-4 lg:-mx-6 -my-6 h-dvh min-h-0">
+    <div className="-mx-4 lg:-mx-6 -my-6 h-[calc(100dvh-3rem)] md:h-dvh min-h-0">
       {children}
     </div>
   );

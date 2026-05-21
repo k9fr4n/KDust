@@ -96,6 +96,17 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
     if (isMobile) setMobileOpen(false);
   }, [pathname, isMobile]);
 
+  // <MobileTopBar> dispatches `kdust:sidebar:toggle` when the user
+  // taps the K in the mobile top bar. Listening on the window keeps
+  // the two components decoupled — the top bar doesn't know the
+  // sidebar exists, and vice-versa. Franck 2026-05-21.
+  useEffect(() => {
+    if (!isMobile) return;
+    const onToggle = () => setMobileOpen((v) => !v);
+    window.addEventListener('kdust:sidebar:toggle', onToggle);
+    return () => window.removeEventListener('kdust:sidebar:toggle', onToggle);
+  }, [isMobile]);
+
   // Body scroll-lock while the mobile sheet is open so the
   // underlying page doesn't scroll behind the overlay. Cheap, no
   // dependency on a scroll-lock lib.
@@ -126,19 +137,13 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
     });
   };
 
-  /* -------- Mobile: collapsed renders a floating K only -------- */
+  /* -------- Mobile: collapsed renders nothing (MobileTopBar owns the K) -------- */
+  // Franck 2026-05-21: the floating K was lifted into a fixed mobile
+  // top bar that also carries the current page title. The sidebar
+  // is silent until the user taps that K (dispatches the
+  // kdust:sidebar:toggle event we listen to above).
   if (isMobile && !mobileOpen) {
-    return (
-      <button
-        type="button"
-        onClick={toggle}
-        aria-label="Open navigation"
-        aria-expanded={false}
-        className="fixed top-2 left-2 z-40 inline-flex items-center justify-center w-10 h-10 rounded-md bg-brand-600 text-white font-bold shadow-md hover:bg-brand-700"
-      >
-        K
-      </button>
-    );
+    return null;
   }
 
   /* -------- Otherwise render the aside (desktop, or mobile open) -------- */

@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import {
   ChatMessageBubble,
   ToolInvocationsPanel,
@@ -751,10 +752,24 @@ function ChatPageInner({
   // Auto-scroll to bottom on new content \u2014 but only while the
   // user hasn't manually scrolled up. See the `followStream` ref
   // definition above for the full state machine.
+  // Franck 2026-05-21 bug fix:
+  //  1. Dependencies now include `cotText` and `toolCalls` so the
+  //     view follows reasoning blocks and fs_tools pills, not just
+  //     plain message tokens. Previously, the thinking phase (or
+  //     a tool-call pill appearing without a streamedText update)
+  //     would leave the user scrolled above the new content.
+  //  2. `behavior: 'auto'` (instant) instead of 'smooth'. The
+  //     smooth variant animates over ~300ms and fires intermediate
+  //     `scroll` events at each frame; those frames are mid-flight
+  //     so `distance > NEAR_BOTTOM_PX` and the scroll handler
+  //     flipped `followStream` to false on the FIRST token,
+  //     killing auto-follow for the rest of the stream. Instant
+  //     scroll yields a single scroll event at distance ~= 0,
+  //     keeping the flag stable.
   useEffect(() => {
     if (!followStream.current) return;
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamedText]);
+    bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [messages, streamedText, cotText, toolCalls]);
 
   // Watch scroll position on the messages container. Any scroll
   // that leaves the near-bottom zone disables follow; scrolling
@@ -1364,14 +1379,23 @@ function ChatPageInner({
   const field =
     'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
 
+  // Document title (Franck 2026-05-21): the mobile top bar shows
+  // the page title to the right of the K, with /chat showing the
+  // CURRENT CONVERSATION title instead. We feed <DocumentTitle> the
+  // active conv's title, falling back to "Chat" before any
+  // conversation is selected.
+  const docTitle =
+    (currentId && convs.find((c) => c.id === currentId)?.title) || 'Chat';
+
   return (
     // Height math:
-    //   - sticky <Nav/> is h-14 (3.5rem) at the top of <body>
-    //   - /chat/layout.tsx cancels the root <main> padding and
-    //     sizes its wrapper to calc(100dvh - 3.5rem), so this div
-    //     just needs h-full to inherit the correct height.
+    //   - /chat/layout.tsx sizes its wrapper to
+    //     calc(100dvh - 3rem) on mobile (mobile top bar) and
+    //     100dvh on >= md, so this div just needs h-full.
     //   - min-h-0 lets flex children shrink so only the inner
     //     messages pane scrolls, never the page.
+    <>
+      <DocumentTitle title={docTitle} />
     <div
       data-chat-root
       className="flex gap-0 h-full min-h-0 max-w-full"
@@ -1512,39 +1536,27 @@ function ChatPageInner({
             Single flex row, min-w-0 + truncate on the title so long
             titles collapse gracefully instead of pushing buttons
             off-screen. */}
-        <div className="p-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 min-w-0">
+        {/* Top toolbar — Franck 2026-05-21: dropped the hard
+            border-b in favour of a soft fade between the toolbar
+            and the messages pane (the messages pane carries a
+            top mask-image, see below). */}
+        <div className="p-2 flex items-center gap-2 min-w-0">
           {/* Leading MessageSquare icon removed (Franck 2026-05-01):
               the toolbar context is already obvious from the page
               chrome, the icon was just pushing the title column. */}
           {currentId ? (() => {
             const currentConv = convs.find((c) => c.id === currentId);
-            const agentName =
-              agents.find((a) => a.sId === agentSId)?.name ??
-              currentConv?.agentName ??
-              currentConv?.agentSId ??
-              'Agent';
-            // Prefer the Dust sId over our local cuid: that's what
-            // users recognise from dust.tt and what they paste to
-            // cross-link. Falls back to the cuid only before the
-            // sId has been synced (first-message race).
+            // Agent-name suffix dropped (Franck 2026-05-21): the agent
+            // is already visible in the status strip just above the
+            // composer, and the cleaner claude.ai-style header only
+            // keeps the conversation title.
             return (
-              <>
-                {/* Title block \u2014 truncates. Agent name is shown as
-                    a subtle prefix-suffix next to the title so it's
-                    always visible without taking its own column. */}
-                <span
-                  className="text-sm font-medium truncate min-w-0"
-                  title={currentConv?.title}
-                >
-                  {currentConv?.title ?? 'Untitled conversation'}
-                </span>
-                <span className="text-xs text-slate-500 shrink-0" title="Agent">
-                  {'\u00b7 ' + agentName}
-                </span>
-                {/* Open-in-dust link moved to the right-cluster
-                    next to the New-chat button (Franck 2026-05-01).
-                    See cluster below. */}
-              </>
+              <span
+                className="text-sm font-medium truncate min-w-0"
+                title={currentConv?.title}
+              >
+                {currentConv?.title ?? 'Untitled conversation'}
+              </span>
             );
           })() : (
             /* New-chat mode: show the agent picker inline. Kept as
@@ -1907,8 +1919,11 @@ function ChatPageInner({
               ? 'bg-amber-500'
               : 'bg-slate-400 dark:bg-slate-600';
           return (
+            // Status strip — Franck 2026-05-21: dropped the hard
+            // border-t now that the composer sits in a soft fade
+            // band rather than being separated by a line.
             <div
-              className={`flex items-center gap-2 px-3 py-1.5 text-[11px] border-t ${tone}`}
+              className={`flex items-center gap-2 px-3 py-1.5 text-[11px] ${tone}`}
               role="status"
               aria-live="polite"
             >
@@ -2005,10 +2020,18 @@ function ChatPageInner({
           );
         })()}
 
-        <form
-          onSubmit={send}
-          className="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2"
-        >
+        {/* Composer — Franck 2026-05-21: claude.ai-style refresh.
+            The hard border-t is replaced with a soft top fade
+            (gradient overlay rendered absolutely just above the
+            card). The textarea + action buttons now live INSIDE a
+            single rounded card with a transparent backdrop, no
+            inner borders, ghost icon-buttons at the bottom \u2014
+            mirroring the visual reference. */}
+        <form onSubmit={send} className="relative p-3 flex flex-col gap-2">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-0 right-0 -top-6 h-6 bg-gradient-to-t from-white dark:from-slate-950 to-transparent"
+          />
           {/* Attachment chips (Franck 2026-04-23 16:59). Rendered
               above the textarea so they don't compete horizontally
               with the send button. Each chip shows name + size,
@@ -2049,13 +2072,17 @@ function ChatPageInner({
             </div>
           )}
 
-          <div className="flex gap-2 items-stretch">
-            {/* Hidden input for the paperclip button rendered on the
-                right side of the composer (Franck 2026-04-29: both
-                action buttons grouped on the right to free horizontal
-                space for the textarea). Multiple selection supported;
-                re-opening the picker does NOT reset existing chips
-                (onChange appends). */}
+          {/* Single rounded card (Franck 2026-05-21). All three
+              interactive elements \u2014 textarea, attach button, send
+              button \u2014 share one backdrop with no inner separators.
+              `focus-within` lifts the border tone so the user gets
+              the same focus affordance the old per-element border
+              used to provide. */}
+          <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-900/60 focus-within:border-slate-300 dark:focus-within:border-slate-700 transition-colors px-3 pt-3 pb-2">
+            {/* Hidden input for the paperclip button (Franck
+                2026-04-29). Multiple selection supported; re-opening
+                the picker does NOT reset existing chips (onChange
+                appends). */}
             <input
               ref={fileInputRef}
               type="file"
@@ -2070,18 +2097,18 @@ function ChatPageInner({
             />
             <textarea
               ref={textareaRef}
-              className={field + ' resize-none leading-relaxed'}
+              className="w-full bg-transparent border-0 outline-none resize-none leading-relaxed text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 px-0 py-0"
               rows={2}
               // The height is driven by `autoResize` (see useLayoutEffect
               // on `draft`). max-height is set inline because tailwind's
               // max-h-[Xpx] works but duplicating the constant here
               // keeps the JS ceiling and the CSS ceiling in sync.
-              // minHeight 5rem (80px) matches the stacked button
-              // column on the right (h-9 + gap-2 + h-9 = 36+8+36 =
-              // 80px) so the composer stays visually balanced at
-              // rest. The column uses flex-1 inside, so it tracks
-              // the textarea if autoResize grows it taller.
-              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '5rem' }}
+              // minHeight 3rem (~48px ~ 2 lines of leading-relaxed)
+              // gives the composer a comfortable two-line rest height
+              // \u2014 claude.ai uses a similar baseline. The action row
+              // below has its own height (h-8), so the card no longer
+              // needs to match a stacked button column.
+              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '3rem' }}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onInput={autoResize}
@@ -2149,28 +2176,23 @@ function ChatPageInner({
               placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
               disabled={streaming || !agentSId}
             />
-            {/* Stacked action buttons (Franck 2026-04-29). The
-                column shares the textarea height (items-stretch on
-                the parent) and each button uses flex-1 so they
-                always split that height evenly. At rest the column
-                is 80px tall (matching textarea minHeight 5rem); if
-                the textarea grows via autoResize, both buttons grow
-                proportionally and stay aligned with its top/bottom
-                edges. w-9 keeps them square at rest. Order: Attach
-                on top, Send at the bottom (Franck preference). */}
-            <div className="flex flex-col gap-2 w-9 shrink-0">
-              <Button
+            {/* Bottom action row (Franck 2026-05-21). claude.ai-style
+                ghost icons inside the same card as the textarea \u2014
+                no inner border, no per-button background until hover.
+                Attach on the left, Send on the right (filled brand
+                button so it remains the obvious primary CTA). */}
+            <div className="mt-1 flex items-center justify-between">
+              <button
                 type="button"
-                variant="secondary"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={streaming}
                 title="Attach files"
                 aria-label="Attach files"
-                className="flex-1 w-full p-0"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-700/60 transition-colors disabled:opacity-40 disabled:pointer-events-none"
               >
                 <Paperclip size={16} />
-              </Button>
-              <Button
+              </button>
+              <button
                 type="submit"
                 disabled={
                   streaming ||
@@ -2180,19 +2202,20 @@ function ChatPageInner({
                 }
                 title={streaming ? 'Streaming…' : 'Send'}
                 aria-label={streaming ? 'Streaming' : 'Send'}
-                className="flex-1 w-full p-0"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-brand-600 text-white hover:bg-brand-700 transition-colors disabled:opacity-40 disabled:pointer-events-none"
               >
                 {streaming ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Send size={16} />
                 )}
-              </Button>
+              </button>
             </div>
           </div>
         </form>
       </section>
     </div>
+    </>
   );
 }
 

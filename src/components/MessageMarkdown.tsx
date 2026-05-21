@@ -357,20 +357,29 @@ function MessageMarkdownImpl({
             </CodeBlockWithCopy>
           ),
           // Tables: give them a subtle border + header shade.
+          // Reset `overflow-wrap` on the wrapper, table and cells so
+          // they do NOT inherit `[overflow-wrap:anywhere]` from the
+          // persisted chat bubble (ChatMessageBubble, 2026-04-29).
+          // With `anywhere`, cell text breaks inside words, collapsing
+          // the table's min-content width on narrow viewports (mobile)
+          // and suppressing the intended horizontal scrollbar. Restoring
+          // `normal` keeps the bubble-level anti-overflow heuristic for
+          // prose / long URLs while letting tables overflow-x-scroll as
+          // designed. (Franck 2026-05-22 mobile table compaction bug)
           table: ({ children: c }) => (
-            <div className="overflow-x-auto my-2">
-              <table className="text-sm border-collapse border border-slate-300 dark:border-slate-700">
+            <div className="overflow-x-auto my-2 [overflow-wrap:normal]">
+              <table className="text-sm border-collapse border border-slate-300 dark:border-slate-700 [overflow-wrap:normal]">
                 {c}
               </table>
             </div>
           ),
           th: ({ children: c }) => (
-            <th className="border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2 py-1 text-left font-semibold">
+            <th className="border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2 py-1 text-left font-semibold [overflow-wrap:normal]">
               {c}
             </th>
           ),
           td: ({ children: c }) => (
-            <td className="border border-slate-300 dark:border-slate-700 px-2 py-1">
+            <td className="border border-slate-300 dark:border-slate-700 px-2 py-1 [overflow-wrap:normal]">
               {c}
             </td>
           ),

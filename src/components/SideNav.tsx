@@ -10,35 +10,43 @@ import {
   MessagesSquare,
   Activity,
   Clock,
-  FolderGit2,
   Lock,
   type LucideIcon,
 } from 'lucide-react';
 import { ProjectSwitcher } from './ProjectSwitcher';
 import { SideNavBottom } from './SideNavBottom';
+import { SideNavLogsButton } from './SideNavLogsButton';
 
 /**
- * Claude.ai-style collapsible left sidebar.
+ * Claude.ai-style collapsible left sidebar (Franck 2026-05-21,
+ * revised same day after first review).
  *
- * Layout (Franck 2026-05-21):
- *   collapsed (default, 56px)
- *     - top: K logo (toggle)
- *     - ProjectSwitcher (icon-only)
- *     - nav items (icons): Dashboard, Conversation, Chat, Run, Task
- *     - bottom: user avatar + settings cog
+ *  v1 made the sidebar `fixed` so expansion overlaid the content.
+ *  v2 (this file) makes the sidebar a regular flex sibling, so
+ *  expansion PUSHES the main content to the right. We rely on a
+ *  CSS transition on `width` for a smooth slide; the main column
+ *  carries `flex-1 min-w-0` so its children clamp width correctly
+ *  during the transition (Tailwind `min-w-0` is the standard fix
+ *  for shrink-collapse inside flex).
+ *
+ * Layout:
+ *   collapsed (56px)
+ *     - K logo (toggle)
+ *     - ProjectSwitcher icon (opens popover IN PLACE — does not
+ *       expand the sidebar; Franck 2026-05-21 #3)
+ *     - nav items (icons)
+ *     - logs icon (above user, Franck 2026-05-21 #4)
+ *     - single user button (combined user info + settings,
+ *       Franck 2026-05-21 #2)
  *   expanded (240px)
- *     - K logo + "KDust" label (toggle)
- *     - ProjectSwitcher (full)
+ *     - K logo + 'KDust' label (toggle)
+ *     - full ProjectSwitcher combobox
  *     - nav items (icon + label)
- *     - bottom: user name + settings cog
+ *     - logs row (icon + 'Container log' label)
+ *     - user button (icon + display name)
  *
- * Expanded state is persisted to localStorage under
- * `kdust:sidebar:expanded`. The sidebar is `fixed left-0` and
- * overlays content when expanded (claude.ai semantics) — the main
- * content area carries a constant `pl-14` so layout never shifts.
- *
- * Popovers (user, settings) are wired in a follow-up commit; for
- * now the two bottom slots are placeholders.
+ * Sticky top-0 + h-dvh keeps the sidebar pinned while the main
+ * column scrolls.
  */
 
 const STORAGE_KEY = 'kdust:sidebar:expanded';
@@ -88,11 +96,11 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
       aria-label="Primary navigation"
       data-expanded={expanded}
       className={[
-        'fixed top-0 left-0 h-dvh z-40 flex flex-col',
+        'sticky top-0 h-dvh z-30 flex flex-col flex-none',
         'border-r border-slate-200 dark:border-slate-800',
         'bg-white dark:bg-slate-950',
         'transition-[width] duration-200 ease-out',
-        expanded ? 'w-60 shadow-xl' : 'w-14',
+        expanded ? 'w-60' : 'w-14',
       ].join(' ')}
     >
       <div className="h-14 flex items-center px-2 border-b border-slate-200 dark:border-slate-800">
@@ -120,11 +128,7 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
       </div>
 
       <div className="px-2 py-2 border-b border-slate-200 dark:border-slate-800">
-        {expanded ? (
-          <ProjectSwitcher />
-        ) : (
-          <CollapsedProjectButton onExpand={toggle} />
-        )}
+        <ProjectSwitcher iconOnly={!expanded} />
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
@@ -139,7 +143,8 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
         ))}
       </nav>
 
-      <div className="border-t border-slate-200 dark:border-slate-800 p-2">
+      <div className="border-t border-slate-200 dark:border-slate-800 p-2 flex flex-col gap-1">
+        <SideNavLogsButton expanded={expanded} />
         <SideNavBottom expanded={expanded} />
       </div>
     </aside>
@@ -202,19 +207,3 @@ function SideNavItem({
     </Link>
   );
 }
-
-function CollapsedProjectButton({ onExpand }: { onExpand: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onExpand}
-      className="flex items-center justify-center h-10 w-full rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-      title="Switch project"
-      aria-label="Switch project"
-    >
-      <FolderGit2 size={18} />
-    </button>
-  );
-}
-
-

@@ -163,19 +163,13 @@ registry:
     # cache on next tool call.
     image: ghcr.io/k9fr4n/thruk-mcp:latest
     type: server
-    # Large-response spill workdir (issue k9fr4n/thruk-mcp#49, 2026-05-20).
-    # thruk-mcp writes payloads above THRUK_SPILL_THRESHOLD_KB (default
-    # 256 KB) to this directory and returns a compact handle JSON instead
-    # of the inline rows. Bind-mounted at the SAME path inside the kdust
-    # container (see docker-compose.yml) so the handle's `saved_to` field
-    # is directly usable by the skill kdust/thruk-monitoring-report.
-    # Host path is /tmp/thruk-report — wiped at the start of each run by
-    # save.sh init (contents only, not the mount).
-    volumes:
-      - "/tmp/thruk-report:/tmp/thruk-report"
-    env:
-      - name: THRUK_MCP_WORKDIR
-        value: "/tmp/thruk-report"
+    # NOTE (Franck 2026-05-21): the upstream large-response spill
+    # mechanism (THRUK_MCP_WORKDIR + bind-mounted /tmp/thruk-report,
+    # issue k9fr4n/thruk-mcp#49) has been removed. Large payloads now
+    # come back as Dust `fil_*` references that the agent downloads
+    # via `export_fil_to_workdir` before feeding them to
+    # `save.sh --from-file` in the kdust/thruk-monitoring-report skill.
+    # DO NOT re-add `volumes:` or `THRUK_MCP_WORKDIR` here.
     # Tools enumerated because --servers= disables dynamic discovery.
     # Captured 2026-05-17 from thruk-mcp v1.0.0 README.
     tools:

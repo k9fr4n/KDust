@@ -356,7 +356,7 @@ export const runCommand = defineTool({
  * then consume the path as if it had been produced locally.
  *
  * Allow-list (mirrors `_save_helper.py`'s allow-list):
- *   - `/tmp/thruk-report/**`     (default Thruk workdir)
+ *   - `/tmp/thruk-report/**`     (kdust/thruk-monitoring-report skill workdir)
  *   - `/tmp/kdust-fil-cache/**`  (generic per-run scratch space)
  *   - Anywhere under the project root (the fs-cli server is
  *     project-scoped; staying inside that root keeps writes

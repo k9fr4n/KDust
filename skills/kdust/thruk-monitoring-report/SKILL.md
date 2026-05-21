@@ -75,17 +75,17 @@ the LLM, so the report is stable and the run output stays short.
 
 ## Working directory
 
-`/tmp/thruk-report/` — single shared scratch directory, bind-mounted
-at the **same path** in:
+`/tmp/thruk-report/` — scratch directory **inside the kdust container
+only** (no host bind mount, no cross-container sharing). Used by
+`save.sh` / `render.py` / `send_mail.py`. `save.sh init` wipes the
+**contents** (not the directory itself) before each run.
 
-- the kdust container (where `save.sh` / `render.py` / `send_mail.py` run);
-- the thruk-mcp child container spawned by mcp-gateway (where the MCP
-  server spills large responses — see issue k9fr4n/thruk-mcp#49).
-
-This symmetry is on purpose: the `saved_to` path returned by a spilled
-MCP response is directly usable by the skill scripts without any path
-remapping. `save.sh init` wipes the **contents** (not the mount point)
-before each run.
+Historical note (Franck 2026-05-21): an earlier version of thruk-mcp
+spilled large responses to this same path via `THRUK_MCP_WORKDIR`
+(issue k9fr4n/thruk-mcp#49). That mechanism was removed upstream;
+large MCP payloads now come back as Dust `fil_*` references and the
+agent uses `export_fil_to_workdir` to drop them into
+`/tmp/thruk-report/` before passing the path to `save.sh --from-file`.
 
 File naming convention (consumed by `render.py`):
 
@@ -254,8 +254,8 @@ not need write access.
 |---|---|---|
 | `render.py` exits with `missing input: X.json` | An MCP step was skipped | Re-run that `save.sh` step (empty array is fine if scope unused) |
 | `alerts.json` truncated at the requested `limit` | Thruk `/logs` hit the cap | Re-collect with a smaller window or set `meta.alerts_truncated=true` so the report header flags it |
-| MCP response spilled to a `fil_*` reference (LLM can't `cat` it) | thruk-mcp `THRUK_MCP_WORKDIR` is unset, OR the workdir bind-mount has the wrong permissions and thruk-mcp falls back to inline (then Dust spills to a `fil_*` ref) | (1) Check `mcp-gateway/catalogs/kdust-custom.yaml` declares `THRUK_MCP_WORKDIR=/tmp/thruk-report` for the `thruk-mcp` server AND the `volumes:` line is present. (2) Check the host dir is `mode 1777` — kdust runs as uid 1000 but the thruk-mcp child container runs as uid 1001 / gid 999, no common owner/group → 0755/0775 fails with EACCES. Fix once with `sudo chmod 1777 /tmp/thruk-report`; `save.sh init` also re-asserts it on every run. Confirm in `docker logs kdust-mcp-gateway` that no `spill … failed (Permission denied)` warning appears |
-| `save.sh: --from-file path does not exist` | The agent passed a `saved_to` from a previous run, OR the bind-mount is missing on one side | Verify the `/tmp/thruk-report:/tmp/thruk-report` mount on BOTH the kdust service (docker-compose.yml) and the thruk-mcp catalog entry. After fixing, `docker compose up -d` to re-spawn the gateway with the corrected child mount |
+| MCP response spilled to a `fil_*` reference (LLM can't `cat` it) | Expected behaviour since the upstream `THRUK_MCP_WORKDIR` spill was removed: large payloads come back as Dust `fil_*` refs | Use `export_fil_to_workdir(file_id, dest_path=/tmp/thruk-report/<name>.json)` to materialise the file inside the kdust container, then pass that path to `save.sh --from-file` |
+| `save.sh: --from-file path does not exist` | The agent passed a `saved_to` from a previous run, OR the `fil_*` was not exported first | Re-run `export_fil_to_workdir` for the current run's `fil_*` ref (paths are not persistent across runs — `save.sh init` wipes `/tmp/thruk-report/` at the start of each run) |
 | `send_mail.py` SMTP timeout | `mailing.ecritel.net:25` unreachable | Check egress; surface stderr in the run output, do NOT retry blindly |
 | HTML differs across runs | Bug in `render.py` (must be deterministic) | Open an issue — same JSON in MUST yield same HTML out |
 

@@ -314,13 +314,13 @@ Compensating controls:
 ### Custom server: `thruk-mcp` (Thruk / Naemon monitoring)
 
 - Slug: `thruk-mcp` (in `kdust-custom.yaml`)
-- Image: `ghcr.io/k9fr4n/thruk-mcp:1.0.0` — first-party, MIT
-  ([k9fr4n/thruk-mcp](https://github.com/k9fr4n/thruk-mcp)). The
-  image is gateway-ready out of the box (stdio default, non-root
-  `USER`, no stdout banner) so **no wrapper image is required**, unlike
-  `ews-mcp`. Pin a `sha256` digest once validated to neutralise
-  Watchtower auto-update.
-- 29 tools across:
+- Image: `ghcr.io/k9fr4n/thruk-mcp:latest` (currently `v1.3.0`) —
+  first-party, MIT ([k9fr4n/thruk-mcp](https://github.com/k9fr4n/thruk-mcp)).
+  The image is gateway-ready out of the box (stdio default,
+  non-root `USER`, no stdout banner) so **no wrapper image is
+  required**, unlike `ews-mcp`. Pin a `sha256` digest once
+  validated to neutralise Watchtower auto-update.
+- 39 tools across:
   - **Read — state** (9): `thruk_list_hosts`, `thruk_get_host`,
     `thruk_list_services`, `thruk_get_service`,
     `thruk_list_hostgroups`, `thruk_list_servicegroups`,
@@ -329,6 +329,23 @@ Compensating controls:
     `thruk_list_alerts`, `thruk_list_notifications`,
     `thruk_recent_events`, `thruk_list_comments`,
     `thruk_list_downtimes`, `thruk_get_downtime`.
+  - **Read — noise & flap analysis** (3, v1.1):
+    `thruk_top_noisy_hosts` (hosts ranked by HOST ALERT count
+    over a window), `thruk_top_noisy_services` (services
+    ranked by SERVICE ALERT count), `thruk_flap_summary`
+    (hosts/services with the most state transitions).
+  - **Read — problem intelligence** (4, v1.2):
+    `thruk_oldest_problems` (unhandled problems sorted by age
+    asc), `thruk_unacked_critical` (CRIT/DOWN not acked for
+    > N minutes), `thruk_stale_acks` (acknowledgements older
+    than N days), `thruk_problems_by_hostgroup` (problem
+    counts aggregated per hostgroup).
+  - **Read — log analytics** (3, v1.3):
+    `thruk_alert_heatmap` (alert counts grouped by time
+    bucket for storm/quiet-period detection),
+    `thruk_concurrent_failures` (sliding-window detection of
+    multi-host outages), `thruk_recurring_problems` (chronic
+    objects with repeated alerts over a window).
   - **Write — downtime management** (8): `thruk_schedule_*_downtime`
     (host / service / hostgroup / servicegroup / propagated /
     host_services) + `thruk_delete_downtime` /

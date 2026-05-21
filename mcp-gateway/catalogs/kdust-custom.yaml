@@ -171,7 +171,7 @@ registry:
     # `save.sh --from-file` in the kdust/thruk-monitoring-report skill.
     # DO NOT re-add `volumes:` or `THRUK_MCP_WORKDIR` here.
     # Tools enumerated because --servers= disables dynamic discovery.
-    # Captured 2026-05-17 from thruk-mcp v1.0.0 README.
+    # Captured 2026-05-22 from thruk-mcp v1.3.0 (catalog/tools.json).
     tools:
       # read — state (9)
       - name: thruk_list_hosts
@@ -191,6 +191,19 @@ registry:
       - name: thruk_list_comments
       - name: thruk_list_downtimes
       - name: thruk_get_downtime
+      # read — noise & flap analysis (3) — added v1.1 (2026-05-21)
+      - name: thruk_top_noisy_hosts
+      - name: thruk_top_noisy_services
+      - name: thruk_flap_summary
+      # read — problem intelligence (4) — added v1.2 (2026-05-21)
+      - name: thruk_oldest_problems
+      - name: thruk_unacked_critical
+      - name: thruk_stale_acks
+      - name: thruk_problems_by_hostgroup
+      # read — log analytics (3) — added v1.3 (2026-05-21)
+      - name: thruk_alert_heatmap
+      - name: thruk_concurrent_failures
+      - name: thruk_recurring_problems
       # write — downtime management (8)
       - name: thruk_schedule_downtime
       - name: thruk_schedule_host_services_downtime

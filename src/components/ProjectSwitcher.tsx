@@ -301,16 +301,26 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
           // - md+: keep the original behaviour (anchored under the
           //   trigger, GitLab-style).
           className={
+            // The vertical cap (max-h-[calc(100dvh-…)]) keeps the
+            // popover inside the viewport on short / landscape mobile
+            // screens. Without it the popover overflows the bottom of
+            // the viewport (the inner list had a static 420px cap)
+            // and there's no way to reach the lower entries \u2014
+            // Franck 2026-05-21 bug. The list itself now uses
+            // `flex-1 min-h-0 overflow-auto` so it scrolls inside
+            // the capped popover.
             'rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col ' +
             (iconOnly
               // Sidebar-collapsed: anchor to the right of the icon
               // (left-full + ml-2). Width matches the desktop default
               // (560px) but clamps to the remaining viewport on the
               // right side. Top-0 aligns the popover with the icon
-              // rather than the document.
-              ? 'absolute left-full top-0 ml-2 w-[560px] max-w-[calc(100vw-5rem)]'
+              // rather than the document. Height capped to the
+              // viewport minus ~2rem of breathing room.
+              ? 'absolute left-full top-0 ml-2 w-[560px] max-w-[calc(100vw-5rem)] max-h-[calc(100dvh-2rem)]'
               // Default (sidebar-expanded or any non-sidebar caller).
-              : 'fixed left-3 right-3 top-[3.75rem] mx-auto max-w-[560px] md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:mx-0 md:w-[560px] md:max-w-[calc(100vw-2rem)]')
+              // top-[3.75rem] on mobile \u2192 cap height to viewport - 5rem.
+              : 'fixed left-3 right-3 top-[3.75rem] mx-auto max-w-[560px] max-h-[calc(100dvh-5rem)] md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:mx-0 md:w-[560px] md:max-w-[calc(100vw-2rem)] md:max-h-[calc(100dvh-5rem)]')
           }
           style={{ animation: 'kd-pop-in 140ms ease-out' }}
         >
@@ -343,8 +353,16 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
             )}
           </div>
 
-          {/* Scrollable list */}
-          <div ref={listRef} className="max-h-[420px] overflow-auto p-1">
+          {/* Scrollable list. flex-1 + min-h-0 makes it fill the
+              remaining vertical space inside the (now-capped)
+              popover; overflow-y-auto handles the actual scrolling.
+              `overscroll-contain` prevents the touch scroll from
+              chaining into the body once we hit the top/bottom,
+              avoiding the iOS Safari rubber-band-then-stuck quirk. */}
+          <div
+            ref={listRef}
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
+          >
             {/* "All projects" sentinel — always row 0 */}
             {(() => {
               const idx = rowIndex((r) => r.kind === 'all');

@@ -4,24 +4,19 @@ import {
   FolderGit2,
   Clock,
   Activity,
-  GitBranch,
-  Link as LinkIcon,
   MessageSquare,
   CheckCircle2,
   XCircle,
   PlayCircle,
   AlertTriangle,
   Pin,
-  Settings,
 } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getAppTimezone } from '@/lib/config';
-import { formatDateTime } from '@/lib/format';
 import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 
 import { getCurrentProject } from '@/lib/current-project';
-import { SyncProjectButton } from '@/components/SyncProjectButton';
 import { ConversationCard } from '@/components/ConversationCard';
+import { DocumentTitle } from '@/components/DocumentTitle';
 import { RunCard } from '@/components/RunCard';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
@@ -37,7 +32,6 @@ type DashboardProps = { searchParams?: Promise<{ reason?: string }> };
 export default async function Dashboard({ searchParams }: DashboardProps) {
   const sp = (await searchParams) ?? {};
   const reason = sp.reason;
-  const tz = await getAppTimezone();
   const current = await getCurrentProject();
 
   if (current) {
@@ -81,73 +75,30 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
     return (
       <div className="space-y-6">
-        {/* Header (Franck 2026-05-01 mobile L2):
-            - <sm: 2 rows. Row 1 = icon + name + branch (truncate-
-              friendly); Row 2 = action buttons aligned right.
-            - sm+: single row, actions pushed to the right with ml-auto.
-            `flex-wrap` + `w-full sm:w-auto` on the action group does
-            the trick without media-query JS. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <FolderGit2 size={20} className="text-slate-400 shrink-0" />
-            <h1 className="text-xl sm:text-2xl font-bold flex items-baseline gap-2 min-w-0">
-              <span className="truncate">{current.name}</span>
-              <span className="text-sm sm:text-base font-normal text-slate-500 font-mono truncate">
-                {current.branch}
-              </span>
-            </h1>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto sm:ml-auto justify-end">
-            <SyncProjectButton projectId={current.id} />
-            {/* Settings button sits next to "Sync now" (Franck
-                2026-04-19 18:29) so the user can jump straight to
-                /settings/projects/:id to edit gitUrl / branch and
-                see the full identity panel. */}
-            <Link
-              href={`/settings/projects/${current.id}`}
-              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title="Edit this project's settings"
-            >
-              <Settings size={14} />
-              Settings
-            </Link>
-          </div>
-        </div>
-
-        <section className="rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-2 text-sm">
-          {/* Identity panel (Franck 2026-05-01 mobile L2):
-              `items-start` + `min-w-0` on the <code> child so long
-              git URLs actually wrap via `break-all` instead of pushing
-              the section beyond the viewport. */}
-          <div className="flex items-start gap-2 text-slate-600 dark:text-slate-400">
-            <LinkIcon size={14} className="mt-0.5 shrink-0" />
-            <code className="font-mono break-all min-w-0">{current.gitUrl}</code>
-          </div>
-          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-            <GitBranch size={14} className="shrink-0" /> branch{' '}
-            <code className="break-all min-w-0">{current.branch}</code>
-          </div>
-          <div className="flex items-start gap-2 text-slate-600 dark:text-slate-400 flex-wrap">
-            <Activity size={14} className="mt-0.5 shrink-0" />
-            <span className="min-w-0">
-              Last sync:{' '}
-              {current.lastSyncAt ? (
-                <>
-                  {formatDateTime(current.lastSyncAt, tz)} ·{' '}
-                  <span
-                    className={
-                      current.lastSyncStatus === 'success' ? 'text-green-600' : 'text-red-500'
-                    }
-                  >
-                    {current.lastSyncStatus}
-                  </span>
-                </>
-              ) : (
-                'never'
-              )}
+        {/* Override the server-side metadata.title ('Dashboard') with
+            the actual page heading (project name + branch) so the
+            global <TopBar> mirrors what the user reads in the first
+            row of the page. Franck 2026-05-21 (fourth pass):
+            "le titre des pages doit se retrouver dans la top bar,
+            pas juste le nom de la catégorie". */}
+        <DocumentTitle title={`${current.name} (${current.branch})`} />
+        {/* Dashboard header (Franck 2026-05-21 third pass): the
+            previous action cluster (Sync now + Settings) and the
+            git-identity panel below it were dropped. The project
+            switcher in the SideNav already exposes the same context
+            (selecting a project), `/settings/projects/:id` reaches
+            the editing surface, and the auto-sync cron keeps things
+            fresh \u2014 the manual controls had become noise on the
+            dashboard's first fold. */}
+        <div className="flex items-center gap-3 min-w-0">
+          <FolderGit2 size={20} className="text-slate-400 shrink-0" />
+          <h1 className="text-xl sm:text-2xl font-bold flex items-baseline gap-2 min-w-0">
+            <span className="truncate">{current.name}</span>
+            <span className="text-sm sm:text-base font-normal text-slate-500 font-mono truncate">
+              {current.branch}
             </span>
-          </div>
-        </section>
+          </h1>
+        </div>
 
         <section className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <StatTile

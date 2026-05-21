@@ -7,7 +7,8 @@ import 'highlight.js/styles/github-dark.css';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { SideNav } from '@/components/SideNav';
-import { MobileTopBar } from '@/components/MobileTopBar';
+import { TopBar } from '@/components/TopBar';
+import { PageActionsProvider } from '@/components/PageActionsProvider';
 import { DustAuthBanner } from '@/components/DustAuthBanner';
 import { ConversationsBusListener } from '@/components/ConversationsBusListener';
 import { getCurrentProject } from '@/lib/current-project';
@@ -50,28 +51,28 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         {chromeless ? (
           children
         ) : (
-          <div className="flex min-h-dvh">
-            {/* New chrome (Franck 2026-05-21, revised). Sidebar is a
-                flex sibling — not a fixed overlay — so expanding it
-                PUSHES the main content rather than covering it. The
-                width transition lives inside <SideNav>; the
-                flex-1 main child re-flows accordingly. */}
-            <SideNav projectScoped={projectScoped} />
-            {/* Mobile-only top bar (md:hidden). Hosts the K toggle
-                and the current page title. Communicates with the
-                SideNav via a `kdust:sidebar:toggle` window event. */}
-            <MobileTopBar />
-            {/* `pt-12 md:pt-0` reserves the 48px the MobileTopBar
-                takes up on mobile (it's `fixed` so it doesn't
-                participate in flex flow). Desktop unchanged. */}
-            <main className="flex-1 min-w-0 flex flex-col pt-12 md:pt-0">
-              {/* Session health banner — see DustSession contract. */}
-              <DustAuthBanner />
-              {/* Cross-tab conversation sync — see component header. */}
-              <ConversationsBusListener />
-              <div className="flex-1 min-w-0 px-4 lg:px-6 py-6">{children}</div>
-            </main>
-          </div>
+          <PageActionsProvider>
+            <div className="flex min-h-dvh">
+              {/* Sidebar (flex sibling, sticky top-0). Returns null
+                  on mobile-collapsed so <main> takes the full width
+                  and the global <TopBar> hosts the K toggle. */}
+              <SideNav projectScoped={projectScoped} />
+              <main className="flex-1 min-w-0 flex flex-col">
+                {/* Global top bar (Franck 2026-05-21, second pass).
+                    Sticky inside <main>, so it sits to the right of
+                    the sidebar on desktop and spans full viewport
+                    on mobile. Hosts the K toggle (mobile only), the
+                    current page title, and a page-level action slot
+                    fed via <PageActionsProvider>. */}
+                <TopBar />
+                {/* Session health banner — see DustSession contract. */}
+                <DustAuthBanner />
+                {/* Cross-tab conversation sync — see component header. */}
+                <ConversationsBusListener />
+                <div className="flex-1 min-w-0 px-4 lg:px-6 py-6">{children}</div>
+              </main>
+            </div>
+          </PageActionsProvider>
         )}
       </body>
     </html>

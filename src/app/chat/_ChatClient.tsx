@@ -5,6 +5,7 @@ import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { DocumentTitle } from '@/components/DocumentTitle';
+import { usePageActions } from '@/components/PageActionsProvider';
 import {
   ChatMessageBubble,
   ToolInvocationsPanel,
@@ -17,13 +18,11 @@ import {
   subscribeConvEvents,
 } from '@/lib/client/conversationsBus';
 import {
-  MessageSquare,
   Plus,
   Send,
   Square,
   Trash2,
   Wrench,
-  Clock,
   Pin,
   PinOff,
   Check,
@@ -114,18 +113,9 @@ function fullTime(iso?: string | null): string {
 }
 
 /** Elapsed seconds → "1m 23s" / "45s" / "2h 03m". */
-function elapsed(sinceIso?: string | null, nowMs?: number): string {
-  if (!sinceIso) return '';
-  const from = new Date(sinceIso).getTime();
-  if (!Number.isFinite(from)) return '';
-  const diff = Math.max(0, Math.round(((nowMs ?? Date.now()) - from) / 1000));
-  if (diff < 60) return `${diff}s`;
-  const m = Math.floor(diff / 60);
-  const s = diff % 60;
-  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${String(m % 60).padStart(2, '0')}m`;
-}
+// `elapsed()` helper removed (Franck 2026-05-21, second pass): only
+// the status strip above the composer consumed it, and that strip
+// was dropped in favour of a colour-coded send button.
 
 /**
  * Top-level entry point shared by both route shells (Franck
@@ -313,11 +303,15 @@ function ChatPageInner({
   // reply. It stays true even if the user navigated away and came back,
   // as long as the Dust call is still producing tokens in the background.
   const [serverStreaming, setServerStreaming] = useState(false);
-  const [serverStreamingSince, setServerStreamingSince] = useState<string | null>(null);
-  // When the *local* SSE read loop starts, we record the wall-clock
-  // time so the status strip can display a live "1m 23s" counter,
-  // mirroring what serverStreamingSince does for detached streams.
-  const [localStreamStartedAt, setLocalStreamStartedAt] = useState<string | null>(null);
+  // Wall-clock timestamps recorded when a stream starts (server-side
+  // for cross-tab takeover, local for THIS tab's SSE loop). The
+  // status strip above the composer used to display a live "1m 23s"
+  // counter from these; that strip was removed (Franck 2026-05-21,
+  // second pass), but the setters are still called by the stream
+  // lifecycle code, so we keep the state in case a future iteration
+  // wants to surface it again (e.g. inside the send button tooltip).
+  const [_serverStreamingSince, setServerStreamingSince] = useState<string | null>(null);
+  const [_localStreamStartedAt, setLocalStreamStartedAt] = useState<string | null>(null);
   // Heartbeat tick (ms) used to re-render the relative-time labels
   // (sidebar "2h", status strip elapsed, message "just now"). Cheap
   // global re-render, gated so it only ticks while something is live.
@@ -1376,16 +1370,140 @@ function ChatPageInner({
     autoResize();
   }, [draft, autoResize]);
 
-  const field =
-    'w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100 px-3 py-2';
-
-  // Document title (Franck 2026-05-21): the mobile top bar shows
-  // the page title to the right of the K, with /chat showing the
+  // Document title (Franck 2026-05-21): the global TopBar shows the
+  // page title to the right of the K, with /chat showing the
   // CURRENT CONVERSATION title instead. We feed <DocumentTitle> the
   // active conv's title, falling back to "Chat" before any
   // conversation is selected.
   const docTitle =
     (currentId && convs.find((c) => c.id === currentId)?.title) || 'Chat';
+
+  // Page-level action cluster (Franck 2026-05-21, second pass).
+  // Surfaced in the global <TopBar> via the page-actions slot. The
+  // chat-internal top toolbar that used to host these icons has
+  // been removed; the agent picker (formerly in that toolbar) has
+  // moved into the composer card, see below.
+  usePageActions(
+    <>
+      {/* MCP tools status indicator. Stateless from React's POV
+          (CSS hover tooltip), so safe to re-create on each render. */}
+      {currentProject && (() => {
+        type Status = 'ready' | 'starting' | 'failed' | 'inactive' | 'task-only';
+        const STATUS_LABEL: Record<Status, string> = {
+          ready: 'ready',
+          starting: 'starting\u2026',
+          failed: 'failed',
+          inactive: 'inactive',
+          'task-only': 'task-only',
+        };
+        const STATUS_DOT: Record<Status, string> = {
+          ready: 'bg-green-500',
+          starting: 'bg-amber-500',
+          failed: 'bg-red-500',
+          inactive: 'bg-red-500',
+          'task-only': 'bg-slate-400 dark:bg-slate-600',
+        };
+        const statusFor = (id: string, scope: 'chat' | 'task'): Status => {
+          if (scope === 'task') return 'task-only';
+          if (id === 'fs') {
+            if (mcpStatus === 'ready') return 'ready';
+            if (mcpStatus === 'starting') return 'starting';
+            if (mcpStatus === 'error') return 'failed';
+            return 'inactive';
+          }
+          if (id === 'task-runner') return taskRunnerServerId ? 'ready' : 'inactive';
+          if (id === 'mcp-gateway') return gatewayServerId ? 'ready' : 'inactive';
+          if (id === 'skills') return skillsServerId ? 'ready' : 'inactive';
+          return 'inactive';
+        };
+        const catalog = mcpCatalog ?? [
+          { id: 'fs', name: 'fs', description: '', scope: 'chat' as const, tools: [] },
+          { id: 'task-runner', name: 'task-runner', description: '', scope: 'chat' as const, tools: [] },
+        ];
+        const chatScoped = catalog.filter((c) => c.scope === 'chat');
+        const allReady = chatScoped.length > 0 && chatScoped.every((c) => statusFor(c.id, c.scope) === 'ready');
+        return (
+          <div className="relative group">
+            <span
+              className={`inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
+                allReady
+                  ? 'text-success-strong dark:text-green-400 hover:bg-success-subtle dark:hover:bg-green-950/30'
+                  : 'text-danger-strong dark:text-red-400 hover:bg-danger-subtle dark:hover:bg-red-950/30'
+              }`}
+              aria-label={`MCP tools ${allReady ? 'all ready' : 'partial'}`}
+            >
+              <Wrench size={16} />
+            </span>
+            <div
+              role="tooltip"
+              className="pointer-events-none group-hover:pointer-events-auto absolute right-0 top-full z-50 w-96 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto"
+            >
+              <p className="font-semibold text-slate-800 dark:text-slate-100">
+                MCP tools{mcpCatalog === null ? ' (loading\u2026)' : ''}
+              </p>
+              {catalog.map((c) => {
+                const st = statusFor(c.id, c.scope);
+                return (
+                  <div key={c.id}>
+                    <p className="font-medium flex items-center gap-1.5">
+                      <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[st]}`} />
+                      <span className="font-mono">{c.name}</span>
+                      <span className="text-slate-500 dark:text-slate-400">&mdash; {STATUS_LABEL[st]}</span>
+                    </p>
+                    {c.description && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">{c.description}</p>
+                    )}
+                    {c.id === 'fs' && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">
+                        Project: <code className="font-mono">{currentProject}</code>
+                      </p>
+                    )}
+                    {c.tools.length > 0 && (
+                      <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
+                        {c.tools.map((t) => (
+                          <li key={t.name}>
+                            <code className="font-mono">{t.name}</code>
+                            {t.description && <span className="text-slate-500 dark:text-slate-500"> &mdash; {t.description}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+      {/* Open-in-Dust external link */}
+      {currentId && workspaceId && (() => {
+        const conv = convs.find((c) => c.id === currentId);
+        if (!conv?.dustConversationSId) return null;
+        return (
+          <a
+            href={`https://app.dust.tt/w/${workspaceId}/conversation/${conv.dustConversationSId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open in Dust"
+            aria-label="Open conversation in Dust"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            <ExternalLink size={16} />
+          </a>
+        );
+      })()}
+      {/* New chat */}
+      <button
+        type="button"
+        onClick={newChat}
+        title="Start a new conversation"
+        aria-label="Start a new conversation"
+        className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+      >
+        <Plus size={16} />
+      </button>
+    </>,
+  );
 
   return (
     // Height math:
@@ -1519,258 +1637,18 @@ function ChatPageInner({
           the content and the whole layout overflows horizontally, which
           in turn pushes the body past 100dvh and creates a page-level
           scrollbar on the right. */}
-      <section className="flex-1 flex flex-col min-h-0 min-w-0 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
-        {/* Compact single-row toolbar (Franck 2026-04-23 19:27).
-            Everything fits on one horizontal line. Two render modes:
-              \u2022 Active conversation (currentId != null):
-                Title \u00b7 Agent(name as text)
-                                       [open-in-dust] [MCP] [+]
-                Agent is rendered as a muted label (not a combobox)
-                because changing the agent mid-conversation is
-                unsupported by Dust \u2014 the picker was always
-                disabled anyway, so we drop the control entirely.
-              \u2022 No conversation (currentId == null):
-                <agent select>                       [MCP] [+]
-                Full picker because the user is choosing an agent
-                before their first message.
-            Single flex row, min-w-0 + truncate on the title so long
-            titles collapse gracefully instead of pushing buttons
-            off-screen. */}
-        {/* Top toolbar — Franck 2026-05-21: dropped the hard
-            border-b in favour of a soft fade between the toolbar
-            and the messages pane (the messages pane carries a
-            top mask-image, see below). */}
-        <div className="p-2 flex items-center gap-2 min-w-0">
-          {/* Leading MessageSquare icon removed (Franck 2026-05-01):
-              the toolbar context is already obvious from the page
-              chrome, the icon was just pushing the title column. */}
-          {currentId ? (() => {
-            const currentConv = convs.find((c) => c.id === currentId);
-            // Agent-name suffix dropped (Franck 2026-05-21): the agent
-            // is already visible in the status strip just above the
-            // composer, and the cleaner claude.ai-style header only
-            // keeps the conversation title.
-            return (
-              <span
-                className="text-sm font-medium truncate min-w-0"
-                title={currentConv?.title}
-              >
-                {currentConv?.title ?? 'Untitled conversation'}
-              </span>
-            );
-          })() : (
-            /* New-chat mode: show the agent picker inline. Kept as
-               a native <select> to match the rest of the app; the
-               combobox-disabled arm used to live here too. */
-            <select
-              className={field + ' max-w-xs'}
-              value={agentSId}
-              onChange={(e) => {
-                setAgentSId(e.target.value);
-                setAgentPickedBy('user');
-              }}
-            >
-              {agents.map((a) => (
-                <option
-                  key={a.sId}
-                  value={a.sId}
-                  className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
-                >
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          )}
+      <section className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
+        {/* Chat-internal top toolbar removed (Franck 2026-05-21,
+            second pass). The action icons (MCP indicator, Open-in-
+            Dust, New chat) moved up into the global <TopBar> via
+            the page-actions slot — see the `usePageActions(...)`
+            call earlier in this component. The agent picker moved
+            DOWN into the composer card (claude.ai-style), see the
+            composer card below.
 
-          {/* Right-aligned cluster: MCP chip + per-conv actions +
-              New chat. `ml-auto` pushes the cluster regardless of
-              whether the title/agent column is wide or narrow. */}
-          <div className="ml-auto flex items-center gap-2 shrink-0">
-            {/*
-              MCP tools status indicator (Franck 2026-05-09).
-              One icon for ALL MCP servers attached to the chat:
-              green if every server is ready, red as soon as one
-              is missing/erroring. The hover bubble lists each MCP
-              with its tools so the operator knows what the agent
-              can actually call. Replaces the previous per-server
-              chips (FolderTree + ListChecks) which were ambiguous
-              ("which one is the fs again?").
-            */}
-            {currentProject && (() => {
-              // Per-MCP runtime status, keyed by catalog id. The
-              // bubble renders one block per catalog entry; chat-
-              // scoped MCPs are graded ready/partial/failed against
-              // this map, task-scoped ones are always 'task-only'
-              // (still listed so the operator knows they exist but
-              // is not surprised by a red dot when chatting).
-              type Status = 'ready' | 'starting' | 'failed' | 'inactive' | 'task-only';
-              const STATUS_LABEL: Record<Status, string> = {
-                ready: 'ready',
-                starting: 'starting\u2026',
-                failed: 'failed',
-                inactive: 'inactive',
-                'task-only': 'task-only',
-              };
-              const STATUS_DOT: Record<Status, string> = {
-                ready: 'bg-green-500',
-                starting: 'bg-amber-500',
-                failed: 'bg-red-500',
-                inactive: 'bg-red-500',
-                'task-only': 'bg-slate-400 dark:bg-slate-600',
-              };
-              const statusFor = (id: string, scope: 'chat' | 'task'): Status => {
-                if (scope === 'task') return 'task-only';
-                if (id === 'fs') {
-                  if (mcpStatus === 'ready') return 'ready';
-                  if (mcpStatus === 'starting') return 'starting';
-                  if (mcpStatus === 'error') return 'failed';
-                  return 'inactive';
-                }
-                if (id === 'task-runner') return taskRunnerServerId ? 'ready' : 'inactive';
-                if (id === 'mcp-gateway') return gatewayServerId ? 'ready' : 'inactive';
-                if (id === 'skills') return skillsServerId ? 'ready' : 'inactive';
-                return 'inactive';
-              };
-
-              // Fallback when the catalog hasn't loaded yet (or the
-              // call failed) -- keep the previous static list so the
-              // indicator never goes blank.
-              const catalog = mcpCatalog ?? [
-                { id: 'fs',          name: 'fs',          description: '', scope: 'chat' as const, tools: [] },
-                { id: 'task-runner', name: 'task-runner', description: '', scope: 'chat' as const, tools: [] },
-              ];
-
-              // Aggregate verdict: green only if every chat-scoped
-              // MCP is 'ready'. task-scoped MCPs do not influence the
-              // top-level colour (they aren't expected to be active
-              // in /chat).
-              const chatScoped = catalog.filter((c) => c.scope === 'chat');
-              const allReady = chatScoped.length > 0 && chatScoped.every((c) => statusFor(c.id, c.scope) === 'ready');
-
-              return (
-                <div className="relative group">
-                  <span
-                    className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
-                      allReady
-                        ? 'border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 bg-success-subtle dark:bg-green-950/30'
-                        : 'border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 bg-danger-subtle dark:bg-red-950/30'
-                    }`}
-                    aria-label={`MCP tools ${allReady ? 'all ready' : 'partial'}`}
-                  >
-                    <Wrench size={14} />
-                  </span>
-                  {/*
-                    Hover bubble. Pure-CSS tooltip via group-hover --
-                    no extra deps. pointer-events-none so it never
-                    interferes with the surrounding click targets;
-                    z-50 to stay above the conv list and the message
-                    area. Right-aligned (`right-0`) because the icon
-                    sits in the right cluster of the header.
-                    Width widened (w-96) to fit the tools list of the
-                    task-runner MCP without truncation.
-                    Franck 2026-05-13: panel must be interactive
-                    only WHILE visible. With a plain
-                    `pointer-events-auto`, the hidden panel
-                    (`opacity-0`) still received mouse events
-                    because opacity does not gate pointer-events,
-                    so hovering the empty area below the icon was
-                    enough to trigger `group:hover` and pop the
-                    panel without ever touching the icon.
-                    Fix: pointer-events-none by default, flipped
-                    to pointer-events-auto only on group-hover --
-                    same trigger as the visibility classes, so the
-                    panel becomes interactive exactly when (and
-                    only when) it is visible. The panel is flush
-                    against the icon (no `mt-*` gap) so the cursor
-                    never crosses a dead zone when transitioning
-                    icon -> panel.
-                  */}
-                  <div
-                    role="tooltip"
-                    className="pointer-events-none group-hover:pointer-events-auto absolute right-0 top-full z-50 w-96 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto"
-                  >
-                    <p className="font-semibold text-slate-800 dark:text-slate-100">
-                      MCP tools{mcpCatalog === null ? ' (loading\u2026)' : ''}
-                    </p>
-                    {catalog.map((c) => {
-                      const st = statusFor(c.id, c.scope);
-                      return (
-                        <div key={c.id}>
-                          <p className="font-medium flex items-center gap-1.5">
-                            <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[st]}`} />
-                            <span className="font-mono">{c.name}</span>
-                            <span className="text-slate-500 dark:text-slate-400">&mdash; {STATUS_LABEL[st]}</span>
-                          </p>
-                          {c.description && (
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">{c.description}</p>
-                          )}
-                          {c.id === 'fs' && (
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">
-                              Project: <code className="font-mono">{currentProject}</code>
-                            </p>
-                          )}
-                          {c.tools.length > 0 && (
-                            <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
-                              {c.tools.map((t) => (
-                                <li key={t.name}>
-                                  <code className="font-mono">{t.name}</code>
-                                  {t.description && <span className="text-slate-500 dark:text-slate-500"> &mdash; {t.description}</span>}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-            {/*
-              Pin / Delete buttons used to live here (cluster
-              `[pin/del]`) but Franck removed them on 2026-05-01:
-              the same actions are still available per-row in the
-              sidebar (hover) and on the dashboard, so the toolbar
-              keeps a single right-aligned action: New chat.
-            */}
-            {/* Open-in-Dust external link, styled exactly like the
-                neighbouring New-chat Button (Franck 2026-05-01).
-                Rendered as <a target=_blank> so cmd/middle-click and
-                paste-link still work; classes mirror the Button
-                primary md variant + the same `px-1.5` square padding
-                used by New chat for visual parity. Only visible when
-                we have both a workspace and a Dust-side conversation
-                sId (otherwise the link would 404). */}
-            {currentId && workspaceId && (() => {
-              const conv = convs.find((c) => c.id === currentId);
-              if (!conv?.dustConversationSId) return null;
-              return (
-                <a
-                  href={`https://app.dust.tt/w/${workspaceId}/conversation/${conv.dustConversationSId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open in Dust"
-                  aria-label="Open conversation in Dust"
-                  className="inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none px-1.5 py-1.5 text-sm bg-brand-600 text-white border border-brand-600 hover:bg-brand-700 hover:border-brand-700"
-                >
-                  <ExternalLink size={14} />
-                </a>
-              );
-            })()}
-            {/* Icon-only button (Franck 2026-05-01). Square padding
-                so the brand square doesn't visually dwarf the
-                neighbouring 28x28 MCP chips. aria-label preserves
-                the action name for screen readers. */}
-            <Button
-              onClick={newChat}
-              title="Start a new conversation"
-              aria-label="Start a new conversation"
-              className="px-1.5"
-            >
-              <Plus size={14} />
-            </Button>
-          </div>
-        </div>
+            The section's outer border was dropped at the same time
+            so the chat surface flows edge-to-edge into the chrome
+            without a hard rectangle. */}
 
         <div ref={scrollerRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
           {/* Windowing banner: only visible when the top of the
@@ -1887,138 +1765,15 @@ function ChatPageInner({
           <div ref={bottomRef} />
         </div>
 
-        {/*
-          Persistent status strip — ALWAYS visible directly above the
-          composer so the user never loses sight of what's happening
-          (idle / streaming here / streaming on server). Three states:
-            - streaming       : this tab is consuming the SSE → blue
-            - serverStreaming : another tab/no tab owns the stream → amber
-            - idle            : nothing in flight → neutral (shows
-                                message count + agent + last activity)
-          Per Franck 2026-04-18: "toujours laisser visible l'état
-          au-dessus de la fenêtre de saisie".
-        */}
-        {(() => {
-          const active = streaming || serverStreaming;
-          const firstAt = messages[0]?.createdAt;
-          const lastAt = messages[messages.length - 1]?.createdAt;
-          const currentAgent = agents.find((a) => a.sId === agentSId);
-          const tone = streaming
-            ? 'border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300'
-            : serverStreaming
-              ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300'
-              : 'border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/40 text-slate-500';
-          const dotOuter = streaming
-            ? 'bg-blue-400'
-            : serverStreaming
-              ? 'bg-amber-400'
-              : 'bg-slate-300 dark:bg-slate-700';
-          const dotInner = streaming
-            ? 'bg-blue-500'
-            : serverStreaming
-              ? 'bg-amber-500'
-              : 'bg-slate-400 dark:bg-slate-600';
-          return (
-            // Status strip — Franck 2026-05-21: dropped the hard
-            // border-t now that the composer sits in a soft fade
-            // band rather than being separated by a line.
-            <div
-              className={`flex items-center gap-2 px-3 py-1.5 text-[11px] ${tone}`}
-              role="status"
-              aria-live="polite"
-            >
-              <span className="relative flex h-2 w-2 shrink-0">
-                {active && (
-                  <span
-                    className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${dotOuter}`}
-                  />
-                )}
-                <span
-                  className={`relative inline-flex rounded-full h-2 w-2 ${dotInner}`}
-                />
-              </span>
-              <span
-                className="flex-1 truncate flex flex-wrap items-center gap-x-2"
-                data-tick={nowTick}
-              >
-                {streaming ? (
-                  <>
-                    <Clock size={11} className="shrink-0" />
-                    <span>Streaming live</span>
-                    {localStreamStartedAt && (
-                      <span>
-                        · elapsed <b>{elapsed(localStreamStartedAt, nowTick)}</b>
-                      </span>
-                    )}
-                  </>
-                ) : serverStreaming ? (
-                  <>
-                    <Clock size={11} className="shrink-0" />
-                    <span>Agent is still replying in the background</span>
-                    {serverStreamingSince && (
-                      <span title={fullTime(serverStreamingSince)}>
-                        · started{' '}
-                        {new Date(serverStreamingSince).toLocaleTimeString('fr-FR')}{' '}
-                        ({elapsed(serverStreamingSince, nowTick)})
-                      </span>
-                    )}
-                  </>
-                ) : !currentId ? (
-                  <>
-                    <MessageSquare size={11} className="shrink-0" />
-                    <span>Ready — type a message to start a new conversation</span>
-                    {currentAgent && (
-                      <span>
-                        · agent{' '}
-                        <b className="text-slate-700 dark:text-slate-300">
-                          {currentAgent.name}
-                        </b>
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <MessageSquare size={11} className="shrink-0" />
-                    <span>
-                      Idle · {messages.length} message
-                      {messages.length > 1 ? 's' : ''}
-                    </span>
-                    {currentAgent && (
-                      <span>
-                        · agent{' '}
-                        <b className="text-slate-700 dark:text-slate-300">
-                          {currentAgent.name}
-                        </b>
-                      </span>
-                    )}
-                    {lastAt && (
-                      <span title={fullTime(lastAt)}>
-                        · last message {relTime(lastAt)}
-                      </span>
-                    )}
-                    {firstAt && firstAt !== lastAt && (
-                      <span title={fullTime(firstAt)}>
-                        · started {relTime(firstAt)}
-                      </span>
-                    )}
-                  </>
-                )}
-              </span>
-              {active && currentId && (
-                <button
-                  type="button"
-                  onClick={stopStream}
-                  disabled={stopping}
-                  title="Stop the agent's reply"
-                  className="inline-flex items-center gap-1 rounded-md border border-red-300 dark:border-red-800 px-2 py-1 text-xs text-danger-strong dark:text-red-400 hover:bg-danger-subtle dark:hover:bg-red-950/30 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  <Square size={12} />
-                  {stopping ? 'Stopping…' : 'Stop'}
-                </button>
-              )}
-            </div>
-          );
-        })()}
+        {/* Status strip removed (Franck 2026-05-21, second pass).
+            The streaming state is now signalled by the send button
+            color in the composer; the Stop control merges with the
+            send button (becomes a red square while streaming).
+            Idle metadata (message count, last activity) was
+            informational only and is dropped to keep the surface
+            clean. Server-streaming awareness is preserved through
+            the send-button color (amber while another tab owns the
+            stream). */}
 
         {/* Composer — Franck 2026-05-21: claude.ai-style refresh.
             The hard border-t is replaced with a soft top fade
@@ -2176,40 +1931,106 @@ function ChatPageInner({
               placeholder={currentId ? 'Reply…' : 'Ask anything to start a new conversation…'}
               disabled={streaming || !agentSId}
             />
-            {/* Bottom action row (Franck 2026-05-21). claude.ai-style
-                ghost icons inside the same card as the textarea \u2014
-                no inner border, no per-button background until hover.
-                Attach on the left, Send on the right (filled brand
-                button so it remains the obvious primary CTA). */}
-            <div className="mt-1 flex items-center justify-between">
+            {/* Bottom action row (Franck 2026-05-21, second pass).
+                Three slots, claude.ai-style:
+                  - left: attach (ghost paperclip)
+                  - center: agent picker (selectable before the first
+                    message; read-only label once a conversation
+                    exists, because Dust pins the agent at conv
+                    creation time)
+                  - right: send / stop. The single primary button
+                    morphs:
+                      idle           \u2192 brand send icon
+                      streaming      \u2192 red square, click = stop
+                      serverStream   \u2192 amber square, click = stop
+                    The colour is the new streaming indicator that
+                    replaced the status strip above the composer. */}
+            <div className="mt-1 flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={streaming}
                 title="Attach files"
                 aria-label="Attach files"
-                className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-700/60 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-700/60 transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0"
               >
                 <Paperclip size={16} />
               </button>
-              <button
-                type="submit"
-                disabled={
-                  streaming ||
-                  !draft.trim() ||
-                  !agentSId ||
-                  attachments.some((a) => a.status === 'uploading')
-                }
-                title={streaming ? 'Streaming…' : 'Send'}
-                aria-label={streaming ? 'Streaming' : 'Send'}
-                className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-brand-600 text-white hover:bg-brand-700 transition-colors disabled:opacity-40 disabled:pointer-events-none"
-              >
-                {streaming ? (
-                  <Loader2 size={16} className="animate-spin" />
+
+              {/* Agent picker. Native <select> kept on purpose: it's
+                  cheap, accessible, and matches the existing chrome.
+                  Once a conversation exists, the agent is pinned by
+                  Dust at creation time, so the picker degrades to a
+                  read-only label (the previous toolbar did the same).
+                  `flex-1 min-w-0` lets the picker absorb the
+                  horizontal slack between paperclip and send, with
+                  truncate kicking in for long agent names. */}
+              <div className="flex-1 min-w-0 flex justify-center">
+                {currentId ? (
+                  <span
+                    className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400 truncate"
+                    title={agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
+                  >
+                    {agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
+                  </span>
                 ) : (
-                  <Send size={16} />
+                  <select
+                    value={agentSId}
+                    onChange={(e) => {
+                      setAgentSId(e.target.value);
+                      setAgentPickedBy('user');
+                    }}
+                    aria-label="Select agent"
+                    className="max-w-full bg-transparent text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer outline-none rounded px-2 py-1 hover:bg-slate-200/60 dark:hover:bg-slate-700/40 transition-colors truncate"
+                  >
+                    {agents.map((a) => (
+                      <option
+                        key={a.sId}
+                        value={a.sId}
+                        className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
+                      >
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
                 )}
-              </button>
+              </div>
+
+              {(() => {
+                // Send / Stop morphing button.
+                const active = streaming || serverStreaming;
+                const tone = streaming
+                  // This tab owns the SSE: red, clear "stop NOW".
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : serverStreaming
+                    // Another tab owns it: amber, "stop in background".
+                    ? 'bg-amber-500 text-white hover:bg-amber-600'
+                    // Idle: primary brand CTA.
+                    : 'bg-brand-600 text-white hover:bg-brand-700';
+                const sendDisabled =
+                  !active &&
+                  (!draft.trim() ||
+                    !agentSId ||
+                    attachments.some((a) => a.status === 'uploading'));
+                return (
+                  <button
+                    type={active ? 'button' : 'submit'}
+                    onClick={active ? () => void stopStream() : undefined}
+                    disabled={active ? stopping : sendDisabled}
+                    title={
+                      streaming
+                        ? 'Stop streaming'
+                        : serverStreaming
+                          ? 'Stop the background stream'
+                          : 'Send'
+                    }
+                    aria-label={active ? 'Stop' : 'Send'}
+                    className={`inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0 ${tone}`}
+                  >
+                    {active ? <Square size={14} /> : <Send size={16} />}
+                  </button>
+                );
+              })()}
             </div>
           </div>
         </form>

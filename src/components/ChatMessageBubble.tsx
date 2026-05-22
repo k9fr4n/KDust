@@ -22,7 +22,9 @@ import { UI_FLASH_MS } from '@/lib/constants';
 import { useBlobDownload } from '@/lib/hooks/use-blob-download';
 import {
   parseToolInvocations,
+  parseTimeline,
   type ToolInvocation,
+  type TimelineEvent,
 } from '@/lib/tool-invocations';
 
 /**
@@ -159,6 +161,130 @@ export function ToolInvocationsPanel({
 // Re-export the parser so non-bubble surfaces (e.g. /run/[id])
 // can reuse it without duplicating the JSON guard.
 export type { ToolInvocation };
+
+/**
+ * Inline chronological timeline panel (Franck 2026-05-22, ADR-0017).
+ *
+ * Renders the agent's turn as a single ordered list interleaving
+ * narration text, chain-of-thought, and tool invocations — matching
+ * the Dust web reference rendering. Used by:
+ *
+ * - `_ChatClient.tsx` during streaming: events come from a single
+ *   ordered SSE state, no separate "thinking pane" or grouped tools
+ *   panel anymore.
+ * - `ChatMessageBubble` for persisted agent messages whose
+ *   `timeline` column is populated (post-ADR-0017 rows). Legacy
+ *   rows (`timeline === null`) keep the previous grouped layout
+ *   via the fallback branch in `ChatMessageBubbleImpl`.
+ *
+ * `streamingTail` toggles the live blinking caret on the LAST text
+ * node, so the live pane has the same "answer in progress" cue the
+ * old streamed bubble used to provide.
+ */
+export function MessageTimeline({
+  events,
+  streamingTail = false,
+}: {
+  events: TimelineEvent[];
+  streamingTail?: boolean;
+}) {
+  if (events.length === 0) return null;
+  const lastTextIdx = (() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'text') return i;
+    }
+    return -1;
+  })();
+  return (
+    <ol className="flex flex-col gap-1.5 max-w-full list-none">
+      {events.map((ev, i) => {
+        if (ev.type === 'text') {
+          const isTail = streamingTail && i === lastTextIdx;
+          return (
+            <li
+              key={i}
+              className="text-[15px] text-slate-900 dark:text-slate-100 [overflow-wrap:anywhere] min-w-0 max-w-full"
+            >
+              <MessageMarkdown tone="agent">{ev.content}</MessageMarkdown>
+              {isTail && (
+                <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
+              )}
+            </li>
+          );
+        }
+        if (ev.type === 'cot') {
+          return (
+            <li key={i} className="max-w-full">
+              <details className="text-xs text-slate-500 italic">
+                <summary className="cursor-pointer select-none">thinking…</summary>
+                <pre className="whitespace-pre-wrap mt-1 pl-3 border-l-2 border-slate-300 dark:border-slate-700 [overflow-wrap:anywhere]">
+                  {ev.content}
+                </pre>
+              </details>
+            </li>
+          );
+        }
+        // Tool event — same visual contract as ToolInvocationsPanel
+        // rows so a turn that mixes timeline+legacy never looks
+        // discontinuous on screen.
+        let pretty: string;
+        try {
+          pretty = JSON.stringify(ev.params ?? null, null, 2);
+        } catch {
+          pretty = String(ev.params);
+        }
+        const hasParams = Boolean(pretty) && pretty !== 'null';
+        const hint = summarizeParams(ev.params);
+        return (
+          <li key={i} className="max-w-full">
+            <details
+              className="group text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-full"
+            >
+              <summary
+                className={
+                  'select-none flex items-center gap-1.5 marker:hidden [&::-webkit-details-marker]:hidden ' +
+                  (hasParams ? 'cursor-pointer' : 'cursor-default')
+                }
+              >
+                <Wrench size={12} className="text-amber-500 flex-none" />
+                <span className="font-mono text-amber-700 dark:text-amber-400 flex-none">
+                  {ev.tool}
+                </span>
+                {hint && (
+                  <span
+                    className="text-slate-500 dark:text-slate-400 truncate font-mono text-[11px] min-w-0"
+                    title={hint}
+                  >
+                    {hint}
+                  </span>
+                )}
+                {hasParams && (
+                  <>
+                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden flex-none">
+                      ▸
+                    </span>
+                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline flex-none">
+                      ▾
+                    </span>
+                  </>
+                )}
+              </summary>
+              {hasParams && (
+                <pre className="mt-1 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
+                  {pretty}
+                </pre>
+              )}
+            </details>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// Re-export the timeline type for non-bubble surfaces (live pane
+// in _ChatClient, future /run timeline view, etc.).
+export type { TimelineEvent };
 
 /**
  * Shape persisted on `Message.generatedFiles` and emitted on the
@@ -496,6 +622,15 @@ export type ChatBubbleProps = {
    * (Franck 2026-05-16)
    */
   generatedFilesJson?: string | null;
+  /**
+   * Raw JSON blob from Message.timeline (agent rows only, Franck
+   * 2026-05-22, ADR-0017). When non-null the bubble switches to the
+   * inline chronological renderer (`MessageTimeline`) and the legacy
+   * grouped `ToolInvocationsPanel` + markdown bubble layout is
+   * skipped. null / undefined / empty string => legacy layout
+   * (covers all pre-ADR rows; no retroactive backfill).
+   */
+  timelineJson?: string | null;
 };
 
 function ChatMessageBubbleImpl(props: ChatBubbleProps) {
@@ -507,8 +642,14 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
     showDay,
     toolInvocationsJson,
     generatedFilesJson,
+    timelineJson,
   } = props;
   const isUser = role === 'user';
+  const timeline = useMemo(
+    () => (role === 'agent' ? parseTimeline(timelineJson) : []),
+    [role, timelineJson],
+  );
+  const useTimeline = timeline.length > 0;
   const invocations = useMemo(
     () => (role === 'agent' ? parseToolInvocations(toolInvocationsJson) : []),
     [role, toolInvocationsJson],
@@ -562,59 +703,60 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
             scroll horizontally instead of just the table.
             (Franck 2026-05-22) */}
         <div className={`flex flex-col gap-0.5 min-w-0 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
-          {/* MCP tool invocations panel (Franck 2026-05-08).
-              Rendered ABOVE the agent bubble: chronologically
-              tools run before the textual answer, and keeping
-              them on top lets the user scan "what was queried"
-              first. Folded by default — each row carries an
-              inline hint (path / url / command / …) so a
-              collapsed list is still informative. */}
-          {invocations.length > 0 && (
-            <div className="w-full max-w-full mb-0.5">
-              <ToolInvocationsPanel invocations={invocations} />
+          {/*
+            Inline timeline branch (Franck 2026-05-22, ADR-0017).
+            When the persisted Message.timeline is non-null we
+            render the agent turn as a single chronological list
+            (narration / thinking / tool calls interleaved in
+            arrival order) instead of the legacy "tools panel
+            above the bubble" layout. The legacy branch (else)
+            is preserved verbatim for pre-ADR rows (no
+            retroactive backfill) and for user/system messages.
+           */}
+          {role === 'agent' && useTimeline ? (
+            <div className="w-full max-w-full">
+              <MessageTimeline events={timeline} />
             </div>
-          )}
-          <div
-            className={
-              (isUser
-                ? 'px-3 py-2 rounded-2xl rounded-br-sm text-[15px] bg-blue-600 text-white shadow-sm'
-                : role === 'system'
-                  ? 'px-3 py-2 rounded-2xl text-[15px] bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
-                  : 'px-3 py-2 rounded-2xl rounded-bl-sm text-[15px] bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
-              // [overflow-wrap:anywhere] is more aggressive than
-              // break-words: it can break inside an otherwise
-              // unbreakable token (long URL, hash, base64) so very
-              // long messages stay inside the bubble. We dropped
-              // overflow-hidden because it was masking the tail of
-              // the message when the wrap heuristic failed instead
-              // of expanding to a new line. (Franck 2026-04-29)
-              //
-              // 2026-05-22 (Franck): `max-w-full overflow-hidden`
-              // restored, but at this depth only. As a flex item of
-              // the `flex-col items-start` wrapper above, this div's
-              // preferred cross-axis size is `max-content` and a
-              // markdown table with long cells would push it past
-              // the 85% bound of its wrapper — turning the whole
-              // chat column into a horizontal scroller. `max-w-full`
-              // ties the bubble to the wrapper's resolved width,
-              // and `overflow-hidden` clips anything that still
-              // escapes (e.g. an inline <pre>); the markdown table
-              // wrapper has its own `overflow-x-auto` so the table
-              // scrolls in place, as intended.
-              ' [overflow-wrap:anywhere] min-w-0 max-w-full overflow-hidden'
-            }
-          >
-            {role === 'system' ? (
-              content
-            ) : (
-              <MessageMarkdown
-                tone={isUser ? 'user' : 'agent'}
-                fileNamesByFileId={fileNamesByFileId}
+          ) : (
+            <>
+              {/* MCP tool invocations panel (Franck 2026-05-08).
+                  Rendered ABOVE the agent bubble: chronologically
+                  tools run before the textual answer, and keeping
+                  them on top lets the user scan "what was queried"
+                  first. Folded by default — each row carries an
+                  inline hint (path / url / command / …) so a
+                  collapsed list is still informative. */}
+              {invocations.length > 0 && (
+                <div className="w-full max-w-full mb-0.5">
+                  <ToolInvocationsPanel invocations={invocations} />
+                </div>
+              )}
+              <div
+                className={
+                  (isUser
+                    ? 'px-3 py-2 rounded-2xl rounded-br-sm text-[15px] bg-blue-600 text-white shadow-sm'
+                    : role === 'system'
+                      ? 'px-3 py-2 rounded-2xl text-[15px] bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200 italic whitespace-pre-wrap'
+                      : 'px-3 py-2 rounded-2xl rounded-bl-sm text-[15px] bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700') +
+                  // See 2026-04-29 / 2026-05-22 notes on
+                  // [overflow-wrap:anywhere] + max-w-full +
+                  // overflow-hidden interaction with markdown tables.
+                  ' [overflow-wrap:anywhere] min-w-0 max-w-full overflow-hidden'
+                }
               >
-                {content}
-              </MessageMarkdown>
-            )}
-          </div>
+                {role === 'system' ? (
+                  content
+                ) : (
+                  <MessageMarkdown
+                    tone={isUser ? 'user' : 'agent'}
+                    fileNamesByFileId={fileNamesByFileId}
+                  >
+                    {content}
+                  </MessageMarkdown>
+                )}
+              </div>
+            </>
+          )}
           {/* Files surfaced by the agent during this turn (Franck
               2026-05-16). Rendered BELOW the bubble — keeps the
               visual flow "agent says X, attaches Y". Hidden when

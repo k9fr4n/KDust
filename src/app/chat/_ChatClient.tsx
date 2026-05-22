@@ -3,17 +3,20 @@ import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, us
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { errMessage } from '@/lib/errors';
-import { MessageMarkdown } from '@/components/MessageMarkdown';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import { usePageActions } from '@/components/PageActionsProvider';
 import { useBodyScrollLock } from '@/lib/scroll-lock';
 import {
   ChatMessageBubble,
-  ToolInvocationsPanel,
+  MessageTimeline,
   GeneratedFilesPanel,
   parseGeneratedFiles,
   type GeneratedFile,
 } from '@/components/ChatMessageBubble';
+import {
+  appendTimelineEvent,
+  type TimelineEvent,
+} from '@/lib/tool-invocations';
 import {
   publishConvEvent,
   subscribeConvEvents,
@@ -77,6 +80,13 @@ type Msg = {
    * ChatMessageBubble. (Franck 2026-05-16)
    */
   generatedFiles?: string | null;
+  /**
+   * Raw JSON blob from Message.timeline (agent rows only,
+   * Franck 2026-05-22, ADR-0017). When non-null the bubble
+   * renders the inline chronological timeline; null on legacy
+   * pre-ADR rows triggers the legacy grouped layout fallback.
+   */
+  timeline?: string | null;
 };
 
 /**
@@ -253,6 +263,19 @@ function ChatPageInner({
     return null;
   };
   const [toolCalls, setToolCalls] = useState<Array<{ tool: string; params: unknown }>>([]);
+  /**
+   * Inline chronological timeline of the in-flight reply (Franck
+   * 2026-05-22, ADR-0017). Single ordered array of text / cot /
+   * tool events appended in SSE arrival order via
+   * `appendTimelineEvent` (coalesces consecutive text-or-cot runs).
+   * Renders through `<MessageTimeline streamingTail>` and replaces
+   * the 3-block stacked live layout. The legacy `streamedText`,
+   * `cotText` and `toolCalls` states are kept populated for the
+   * cross-tab replay seeding path until that endpoint is migrated
+   * to read `streamEvents` exclusively (no functional UI impact —
+   * those states are not rendered anymore).
+   */
+  const [streamEvents, setStreamEvents] = useState<TimelineEvent[]>([]);
   /**
    * Live generated-files list for the in-flight agent reply
    * (Franck 2026-05-16). The server emits the FULL deduped list
@@ -480,6 +503,24 @@ function ChatPageInner({
               .filter((x: { tool: string; params: unknown } | null): x is { tool: string; params: unknown } => x !== null)
           : [],
       );
+      // Seed the inline timeline from the server replay buffer so a
+      // tab joining mid-stream renders the chronological feed as the
+      // owning tab sees it (Franck 2026-05-22, ADR-0017). The
+      // payload is already ordered and coalesced server-side; we
+      // accept it verbatim, dropping events with unexpected shapes.
+      setStreamEvents(
+        Array.isArray(j.streamEvents)
+          ? (j.streamEvents as unknown[])
+              .filter((x): x is TimelineEvent => {
+                if (!x || typeof x !== 'object') return false;
+                const ev = x as Record<string, unknown>;
+                if (ev.type === 'text' && typeof ev.content === 'string') return true;
+                if (ev.type === 'cot' && typeof ev.content === 'string') return true;
+                if (ev.type === 'tool' && typeof ev.tool === 'string') return true;
+                return false;
+              })
+          : [],
+      );
       // Seed the live generated-files chips from the replay buffer
       // so a tab joining mid-stream sees what the agent already
       // surfaced. (Franck 2026-05-16)
@@ -488,6 +529,7 @@ function ChatPageInner({
       setStreamedText('');
       setCotText('');
       setToolCalls([]);
+      setStreamEvents([]);
       setStreamGeneratedFiles([]);
     }
     // An open conversation \"owns\" the agent choice \u2014 beats project
@@ -813,6 +855,7 @@ function ChatPageInner({
           setStreamedText('');
           setCotText('');
           setToolCalls([]);
+          setStreamEvents([]);
           setServerStreaming(false);
           setServerStreamingSince(null);
         } else {
@@ -831,6 +874,24 @@ function ChatPageInner({
               ? j.streamToolCalls
                   .map(parseToolCallPayload)
                   .filter((x: { tool: string; params: unknown } | null): x is { tool: string; params: unknown } => x !== null)
+              : [],
+          );
+          // Inline timeline replay (Franck 2026-05-22, ADR-0017) —
+          // same shape as the live SSE accumulator; the server
+          // already ordered & coalesced the events, we just adopt
+          // the latest snapshot.
+          setStreamEvents(
+            Array.isArray(j.streamEvents)
+              ? (j.streamEvents as unknown[]).filter(
+                  (x): x is TimelineEvent => {
+                    if (!x || typeof x !== 'object') return false;
+                    const ev = x as Record<string, unknown>;
+                    if (ev.type === 'text' && typeof ev.content === 'string') return true;
+                    if (ev.type === 'cot' && typeof ev.content === 'string') return true;
+                    if (ev.type === 'tool' && typeof ev.tool === 'string') return true;
+                    return false;
+                  },
+                )
               : [],
           );
         }
@@ -893,15 +954,34 @@ function ChatPageInner({
           // (Franck 2026-05-07)
           const dataLine = /\ndata: ?(.*)$/s.exec(frame)?.[1] ?? '';
           const data = dataLine.replace(/\\n/g, '\n');
-          if (ev === 'token') setStreamedText((t) => t + data);
-          else if (ev === 'cot') setCotText((t) => t + data);
+          if (ev === 'token') {
+            setStreamedText((t) => t + data);
+            setStreamEvents((evs) =>
+              appendTimelineEvent(evs, { type: 'text', content: data }),
+            );
+          }
+          else if (ev === 'cot') {
+            setCotText((t) => t + data);
+            setStreamEvents((evs) =>
+              appendTimelineEvent(evs, { type: 'cot', content: data }),
+            );
+          }
           else if (ev === 'agent_message_id') {
             // Server tracks the sId itself for the /cancel endpoint.
             // We receive it purely for forward-compat / debugging.
           }
           else if (ev === 'tool_call') {
             const parsed = parseToolCallPayload(data);
-            if (parsed) setToolCalls((arr) => [...arr, parsed]);
+            if (parsed) {
+              setToolCalls((arr) => [...arr, parsed]);
+              setStreamEvents((evs) =>
+                appendTimelineEvent(evs, {
+                  type: 'tool',
+                  tool: parsed.tool,
+                  params: parsed.params,
+                }),
+              );
+            }
           } else if (ev === 'generated_files') {
             // Server already emits the full deduped JSON list each
             // time, so we just replace — no reconciliation needed.
@@ -911,6 +991,7 @@ function ChatPageInner({
             setStreamedText('');
             setCotText('');
             setToolCalls([]);
+            setStreamEvents([]);
             setStreamGeneratedFiles([]);
             // reload conv from server (agent message now persisted)
             await loadConv(convId);
@@ -1715,43 +1796,36 @@ function ChatPageInner({
                   showDay={showDay}
                   toolInvocationsJson={m.toolInvocations ?? null}
                   generatedFilesJson={m.generatedFiles ?? null}
+                  timelineJson={m.timeline ?? null}
                 />
               );
             });
           })()}
 
-          {/* Live tool invocations during streaming. Rendered
-              ABOVE the streaming response bubble (cotText /
-              streamedText below) and folded by default — each
-              row carries an inline param hint so the user sees
-              "what's being queried" without expanding. Visuals
-              match the persisted history rows in
-              ChatMessageBubble so nothing snaps when the stream
-              completes. (Franck 2026-05-08) */}
-          {toolCalls.length > 0 && (
+          {/*
+            Live inline timeline (Franck 2026-05-22, ADR-0017).
+            Single chronological feed interleaving narration / CoT
+            / tool calls in Dust SSE arrival order, replacing the
+            former 3 stacked blocks (tools panel + thinking
+            details + streamed bubble). `streamingTail` adds the
+            blinking caret on the trailing text node so the
+            "answer in progress" cue is preserved.
+
+            When the conv is streaming but `streamEvents` is still
+            empty (very first frame), we render a minimal
+            placeholder so the user doesn't see an empty viewport.
+           */}
+          {streamEvents.length > 0 && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] w-full">
-                <ToolInvocationsPanel invocations={toolCalls} />
+              <div className="max-w-[85%] w-full min-w-0">
+                <MessageTimeline events={streamEvents} streamingTail />
               </div>
             </div>
           )}
-
-          {cotText && (
+          {streamEvents.length === 0 && (streaming || serverStreaming) && (
             <div className="flex justify-start">
-              <details className="max-w-[85%] text-xs text-slate-500 italic">
-                <summary className="cursor-pointer select-none">thinking…</summary>
-                <pre className="whitespace-pre-wrap mt-1 pl-3 border-l-2 border-slate-300 dark:border-slate-700">
-                  {cotText}
-                </pre>
-              </details>
-            </div>
-          )}
-
-          {streamedText && (
-            <div className="flex justify-start">
-              <div className="max-w-[85%] px-3 py-2 rounded-2xl rounded-bl-sm text-[15px] bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 break-words min-w-0 overflow-hidden">
-                <MessageMarkdown tone="agent">{streamedText}</MessageMarkdown>
-                <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
+              <div className="max-w-[85%] text-xs text-slate-500 italic">
+                thinking…
               </div>
             </div>
           )}

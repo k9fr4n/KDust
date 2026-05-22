@@ -3,7 +3,11 @@
 #
 # Reads /tmp/thruk-report/*.json (produced by save.sh) and emits
 # /tmp/thruk-report/report.html using a fixed HTML template.
+#
 # Deterministic: same inputs ⇒ same output, byte for byte.
+# Schema-agnostic: every section JSON is rendered via the same
+# auto-table renderer. Aggregations are produced server-side by
+# thruk-mcp v1.1+ — this script only formats them.
 #
 # stdlib only (no jinja, no pip).
 from __future__ import annotations
@@ -13,215 +17,202 @@ import json
 import os
 import pathlib
 import sys
-from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 WORKDIR = pathlib.Path(os.environ.get("THRUK_REPORT_WORKDIR", "/tmp/thruk-report"))
 
-# ----- Constants ----------------------------------------------------
-# State -> (label, color). Centralised so the email is consistent.
-HOST_STATE_LABEL = {0: "UP", 1: "DOWN", 2: "UNREACHABLE"}
-SVC_STATE_LABEL  = {0: "OK", 1: "WARNING", 2: "CRITICAL", 3: "UNKNOWN"}
-STATE_COLOR = {
-    "OK":          "#2e7d32",
-    "UP":          "#2e7d32",
-    "WARNING":     "#ef6c00",
-    "CRITICAL":    "#c62828",
-    "DOWN":        "#c62828",
-    "UNKNOWN":     "#616161",
-    "UNREACHABLE": "#616161",
-}
-ALERTS_CAP = 5000  # mirrors save.sh / agent default limit
+# Ordered list of (slot, title) — drives both file lookup and
+# rendering order. Keep this list stable: append-only, no reorder
+# without a doc update.
+SECTIONS: list[tuple[str, str]] = [
+    ("hosts_perimeter",        "Périmètre"),
+    ("unacked_critical",       "Problèmes critiques non-acquittés"),
+    ("oldest_problems",        "Problèmes les plus anciens"),
+    ("problems_by_hostgroup",  "Problèmes agrégés par hostgroup"),
+    ("notifications",          "Notifications envoyées"),
+    ("alert_heatmap",          "Heatmap des alertes"),
+    ("concurrent_failures",    "Pannes concurrentes (storms)"),
+    ("recurring_problems",     "Problèmes récurrents"),
+    ("noisy_hosts",            "Top hôtes bruyants"),
+    ("noisy_services",         "Top services bruyants"),
+    ("flap_summary",           "Flap summary"),
+    ("stale_acks",             "Acquittements périmés"),
+]
+
+MAX_ROWS_PER_SECTION = 50
+MAX_COLS_PER_TABLE   = 10
+MAX_CELL_CHARS       = 200
 
 # ----- IO helpers ---------------------------------------------------
 
-def _load(name: str, *, required: bool = True):
+def _load(name: str, *, required: bool = False):
     p = WORKDIR / name
     if not p.exists():
         if required:
             sys.stderr.write(f"missing input: {name}\n")
             sys.exit(2)
-        return [] if name != "meta.json" else {}
+        return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         sys.stderr.write(f"corrupt input: {name} ({e})\n")
         sys.exit(2)
 
-def _fmt_duration(seconds: float | int | None) -> str:
-    if seconds is None:
-        return "—"
-    try:
-        s = int(seconds)
-    except (TypeError, ValueError):
-        return "—"
-    if s < 0:
-        return "—"
-    days, s = divmod(s, 86400)
-    hours, s = divmod(s, 3600)
-    mins, _ = divmod(s, 60)
-    if days:
-        return f"{days}j {hours}h"
-    if hours:
-        return f"{hours}h {mins:02d}m"
-    return f"{mins}m"
-
-def _fmt_ts(ts: float | int | None) -> str:
-    if not ts:
-        return "—"
-    try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    except (TypeError, ValueError, OSError):
-        return "—"
-
 def _esc(s) -> str:
     return html.escape("" if s is None else str(s), quote=True)
 
-def _state_label(rec: dict) -> str:
-    # A record is a host event if it has no service description.
-    svc = rec.get("service_description") or rec.get("description") or ""
-    state = rec.get("state")
-    if svc == "":
-        return HOST_STATE_LABEL.get(state, str(state) if state is not None else "—")
-    return SVC_STATE_LABEL.get(state, str(state) if state is not None else "—")
+def _fmt_cell(v) -> str:
+    if v is None:
+        return "—"
+    if isinstance(v, bool):
+        return "✓" if v else "✗"
+    if isinstance(v, (int, float)):
+        return _esc(v)
+    if isinstance(v, (list, dict)):
+        s = json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    else:
+        s = str(v)
+    if len(s) > MAX_CELL_CHARS:
+        s = s[: MAX_CELL_CHARS - 1] + "…"
+    return _esc(s)
 
-# ----- Load inputs --------------------------------------------------
+# ----- HTML styles --------------------------------------------------
 
-meta          = _load("meta.json")
-hosts_hg      = _load("hosts_hostgroup.json", required=False)
-hosts_cv      = _load("hosts_custom_var.json", required=False)
-alerts        = _load("alerts.json")
-notifications = _load("notifications.json")
-problems      = _load("problems.json")
+TABLE_STYLE = (
+    "border-collapse:collapse;width:100%;font-family:Arial,sans-serif;"
+    "font-size:13px;margin:8px 0 16px 0;"
+)
+TH_STYLE = (
+    "background:#eceff1;color:#263238;text-align:left;padding:6px 10px;"
+    "border:1px solid #cfd8dc;font-weight:600;"
+)
+TD_STYLE = "padding:6px 10px;border:1px solid #cfd8dc;vertical-align:top;"
+SECTION_H2 = (
+    "font-family:Arial,sans-serif;color:#263238;margin:24px 0 8px 0;"
+    "padding-bottom:4px;border-bottom:2px solid #cfd8dc;"
+)
+EMPTY_NOTE = (
+    '<p style="font-family:Arial,sans-serif;color:#616161;'
+    'margin:8px 0 16px 0;">(aucun)</p>'
+)
+MISSING_NOTE = (
+    '<p style="font-family:Arial,sans-serif;color:#9e9e9e;'
+    'margin:8px 0 16px 0;font-style:italic;">(slot non collecté)</p>'
+)
 
+# ----- Auto-table renderer -----------------------------------------
+
+def _columns_for(rows: list[dict]) -> list[str]:
+    """Stable column ordering: keys present in the first row first
+    (preserves the natural order returned by thruk-mcp), then any
+    extra keys sorted alphabetically. Capped at MAX_COLS_PER_TABLE."""
+    if not rows:
+        return []
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    for k in rows[0].keys():
+        if k not in seen_set:
+            seen.append(k)
+            seen_set.add(k)
+    extras: set[str] = set()
+    for r in rows[1:]:
+        for k in r.keys():
+            if k not in seen_set:
+                extras.add(k)
+    seen.extend(sorted(extras))
+    return seen[:MAX_COLS_PER_TABLE]
+
+def _render_list_of_dicts(rows: list[dict]) -> str:
+    cols = _columns_for(rows)
+    if not cols:
+        return EMPTY_NOTE
+    head = "".join(f'<th style="{TH_STYLE}">{_esc(c)}</th>' for c in cols)
+    out  = [f'<table style="{TABLE_STYLE}"><thead><tr>{head}</tr></thead><tbody>']
+    capped = rows[:MAX_ROWS_PER_SECTION]
+    for r in capped:
+        cells = "".join(
+            f'<td style="{TD_STYLE}">{_fmt_cell(r.get(c))}</td>' for c in cols
+        )
+        out.append(f"<tr>{cells}</tr>")
+    out.append("</tbody></table>")
+    if len(rows) > MAX_ROWS_PER_SECTION:
+        out.append(
+            f'<p style="font-family:Arial,sans-serif;color:#616161;'
+            f'font-size:12px;margin:0 0 16px 0;">… + {len(rows) - MAX_ROWS_PER_SECTION} '
+            f"autre(s) ligne(s) tronquée(s).</p>"
+        )
+    return "".join(out)
+
+def _render_dict_kv(d: dict) -> str:
+    if not d:
+        return EMPTY_NOTE
+    items = sorted(d.items(), key=lambda kv: kv[0])
+    rows = []
+    for k, v in items:
+        rows.append(
+            f'<tr><td style="{TD_STYLE};font-weight:600;width:30%;">{_esc(k)}</td>'
+            f'<td style="{TD_STYLE}">{_fmt_cell(v)}</td></tr>'
+        )
+    return (
+        f'<table style="{TABLE_STYLE}"><thead><tr>'
+        f'<th style="{TH_STYLE}">Clé</th><th style="{TH_STYLE}">Valeur</th>'
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+def _render_list_of_scalars(items: list) -> str:
+    if not items:
+        return EMPTY_NOTE
+    capped = items[:MAX_ROWS_PER_SECTION]
+    lis = "".join(f"<li>{_fmt_cell(x)}</li>" for x in capped)
+    extra = ""
+    if len(items) > MAX_ROWS_PER_SECTION:
+        extra = (
+            f'<p style="font-family:Arial,sans-serif;color:#616161;'
+            f'font-size:12px;margin:0 0 16px 0;">… + {len(items) - MAX_ROWS_PER_SECTION} '
+            f"autre(s).</p>"
+        )
+    return (
+        f'<ul style="font-family:Arial,sans-serif;font-size:13px;'
+        f'margin:8px 0 16px 24px;">{lis}</ul>{extra}'
+    )
+
+def _auto_render(payload) -> tuple[str, int]:
+    """Return (html_fragment, row_count). row_count is best-effort
+    for the summary table; 0 for empty / unknown shapes."""
+    if payload is None:
+        return MISSING_NOTE, 0
+    if isinstance(payload, list):
+        if not payload:
+            return EMPTY_NOTE, 0
+        # list of dicts → auto-table; list of scalars → ul
+        if all(isinstance(r, dict) for r in payload):
+            return _render_list_of_dicts(payload), len(payload)
+        return _render_list_of_scalars(payload), len(payload)
+    if isinstance(payload, dict):
+        # Some thruk-mcp tools wrap data under a known key.
+        for k in ("data", "results", "rows", "items"):
+            v = payload.get(k)
+            if isinstance(v, list):
+                return _auto_render(v)
+        # heatmap-like: dict of dicts (e.g. day -> {hour: count})
+        if payload and all(isinstance(v, dict) for v in payload.values()):
+            # render as a list-of-dicts with an extra "_key" column
+            rows = []
+            for k in sorted(payload.keys()):
+                row = {"_key": k}
+                row.update(payload[k])
+                rows.append(row)
+            return _render_list_of_dicts(rows), len(rows)
+        return _render_dict_kv(payload), len(payload)
+    # scalar
+    return f'<p style="font-family:Arial,sans-serif;">{_fmt_cell(payload)}</p>', 1
+
+# ----- Main ---------------------------------------------------------
+
+meta = _load("meta.json", required=True)
 if not isinstance(meta, dict):
     sys.stderr.write("meta.json is not a JSON object\n")
     sys.exit(2)
-
-# ----- Perimeter ----------------------------------------------------
-
-def _names(records):
-    out = set()
-    for r in records or []:
-        n = r.get("name") or r.get("host_name")
-        if isinstance(n, str) and n:
-            out.add(n)
-    return out
-
-win_hosts = _names(hosts_hg) | _names(hosts_cv)
-
-def _keep(rec):
-    h = rec.get("host_name") or rec.get("name")
-    return isinstance(h, str) and h in win_hosts
-
-if win_hosts:
-    alerts        = [r for r in alerts        if _keep(r)]
-    notifications = [r for r in notifications if _keep(r)]
-    problems      = [r for r in problems      if _keep(r)]
-
-# ----- Aggregations -------------------------------------------------
-
-hard_count = sum(1 for r in alerts if int(r.get("hard", 0) or 0) == 1
-                                   or r.get("state_type") in (1, "HARD"))
-soft_count = len(alerts) - hard_count
-
-by_state = Counter(_state_label(r) for r in alerts)
-
-noisy_hosts = Counter()
-noisy_pairs = Counter()
-for r in alerts:
-    h = r.get("host_name") or "—"
-    s = r.get("service_description") or r.get("description") or ""
-    noisy_hosts[h] += 1
-    noisy_pairs[(h, s if s else "<host>")] += 1
-
-transitions = defaultdict(int)
-for r in alerts:
-    h = r.get("host_name") or "—"
-    s = r.get("service_description") or r.get("description") or ""
-    transitions[(h, s)] += 1
-flapping = sorted(
-    ((h, s, n) for (h, s), n in transitions.items() if n >= 5),
-    key=lambda t: (-t[2], t[0], t[1]),
-)
-
-notif_contacts = Counter()
-for r in notifications:
-    c = r.get("contact_name") or r.get("contact") or "—"
-    notif_contacts[c] += 1
-
-# Open problems: services in WARN/CRIT/UNK, hosts DOWN/UNREACH, NOT acked.
-open_problems = []
-for r in problems:
-    acked = bool(r.get("acknowledged") or r.get("problem_has_been_acknowledged"))
-    if acked:
-        continue
-    state = r.get("state")
-    svc   = r.get("service_description") or r.get("description") or ""
-    if svc:
-        if state in (1, 2, 3):
-            open_problems.append(r)
-    else:
-        if state in (1, 2):
-            open_problems.append(r)
-
-def _sort_problem_key(r):
-    # Order: severity (CRIT/DOWN first, then WARN, then UNK/UNREACH),
-    # then duration desc, then host/service.
-    lbl = _state_label(r)
-    sev = {"DOWN": 0, "CRITICAL": 1, "WARNING": 2, "UNKNOWN": 3, "UNREACHABLE": 4}.get(lbl, 9)
-    now = int(datetime.now(timezone.utc).timestamp())
-    last = int(r.get("last_state_change") or r.get("last_hard_state_change") or now)
-    dur  = max(0, now - last)
-    return (sev, -dur, r.get("host_name") or "", r.get("service_description") or "")
-
-open_problems.sort(key=_sort_problem_key)
-
-# We can't reliably infer a cap hit post-filter; the agent should
-# set `alerts_truncated=true` in meta if it observed `len(response)`
-# equal to the requested limit on the raw thruk_recent_events call.
-alerts_truncated = bool(meta.get("alerts_truncated", False))
-
-# ----- HTML rendering ----------------------------------------------
-
-def _color(label: str) -> str:
-    return STATE_COLOR.get(label, "#424242")
-
-def _state_pill(label: str) -> str:
-    return (
-        f'<span style="display:inline-block;padding:2px 8px;border-radius:10px;'
-        f'background:{_color(label)};color:#fff;font-weight:600;font-size:11px;'
-        f'">{_esc(label)}</span>'
-    )
-
-TABLE_STYLE = (
-    'border-collapse:collapse;width:100%;font-family:Arial,sans-serif;'
-    'font-size:13px;margin:8px 0 16px 0;'
-)
-TH_STYLE = (
-    'background:#eceff1;color:#263238;text-align:left;padding:6px 10px;'
-    'border:1px solid #cfd8dc;font-weight:600;'
-)
-TD_STYLE = 'padding:6px 10px;border:1px solid #cfd8dc;vertical-align:top;'
-SECTION_H2 = (
-    'font-family:Arial,sans-serif;color:#263238;margin:24px 0 8px 0;'
-    'padding-bottom:4px;border-bottom:2px solid #cfd8dc;'
-)
-
-def _table(headers, rows) -> str:
-    if not rows:
-        return '<p style="font-family:Arial,sans-serif;color:#616161;">(aucun)</p>'
-    out = [f'<table style="{TABLE_STYLE}"><thead><tr>']
-    for h in headers:
-        out.append(f'<th style="{TH_STYLE}">{_esc(h)}</th>')
-    out.append('</tr></thead><tbody>')
-    for row in rows:
-        out.append('<tr>')
-        for cell in row:
-            out.append(f'<td style="{TD_STYLE}">{cell}</td>')
-        out.append('</tr>')
-    out.append('</tbody></table>')
-    return ''.join(out)
 
 scope_label  = str(meta.get("scope_label", "—"))
 period_label = str(meta.get("period_label", "—"))
@@ -230,137 +221,69 @@ until        = str(meta.get("until", "—"))
 hostgroup    = meta.get("hostgroup") or "—"
 custom_vars  = meta.get("custom_vars") or {}
 cv_str       = ", ".join(f"{k}={v}" for k, v in sorted(custom_vars.items())) or "—"
+warnings     = meta.get("warnings") or []
 
-parts = []
+parts: list[str] = []
+parts.append('<div style="font-family:Arial,sans-serif;color:#263238;max-width:1200px;">')
 parts.append(
-    '<div style="font-family:Arial,sans-serif;color:#263238;max-width:1100px;">'
+    f'<h1 style="color:#263238;margin:0 0 8px 0;">Rapport monitoring '
+    f'{_esc(scope_label)} — {_esc(period_label)}</h1>'
 )
 parts.append(
-    f'<h1 style="color:#263238;margin:0 0 8px 0;">Rapport monitoring {_esc(scope_label)} '
-    f'— {_esc(period_label)}</h1>'
+    f'<p style="margin:0 0 4px 0;">Fenêtre : du <b>{_esc(since)}</b> '
+    f'au <b>{_esc(until)}</b>.</p>'
 )
 parts.append(
-    f'<p style="margin:0 0 4px 0;">Période couverte : <b>{_esc(period_label)}</b> '
-    f'(du {_esc(since)} au {_esc(until)}).</p>'
+    f'<p style="margin:0 0 4px 0;">Filtres : hostgroup=<b>{_esc(hostgroup)}</b>, '
+    f'custom_vars=<b>{_esc(cv_str)}</b>.</p>'
 )
-parts.append(
-    f'<p style="margin:0 0 4px 0;">Périmètre : hostgroup=<b>{_esc(hostgroup)}</b>, '
-    f'custom_vars=<b>{_esc(cv_str)}</b>, <b>{len(win_hosts)}</b> hôte(s).</p>'
-)
-if not win_hosts:
+for w in warnings:
     parts.append(
-        '<p style="color:#c62828;font-weight:600;">Aucun hôte identifié dans le '
-        'périmètre — le rapport ci-dessous est vide par construction.</p>'
-    )
-if alerts_truncated:
-    parts.append(
-        f'<p style="color:#ef6c00;font-weight:600;">⚠️ thruk_recent_events a atteint '
-        f'le cap de {ALERTS_CAP} entrées — les chiffres ci-dessous sont un minorant.</p>'
+        f'<p style="color:#ef6c00;font-weight:600;margin:4px 0;">⚠️ {_esc(w)}</p>'
     )
 
-# ----- Synthèse -----------------------------------------------------
+# Table of contents + row counts (computed as we render).
+section_render: list[tuple[str, str, int]] = []
+for slot, title in SECTIONS:
+    payload = _load(f"{slot}.json", required=False)
+    body, count = _auto_render(payload)
+    section_render.append((title, body, count))
+
+# TOC
 parts.append(f'<h2 style="{SECTION_H2}">Synthèse</h2>')
-parts.append(_table(
-    ["Indicateur", "Valeur"],
-    [
-        ["Alertes (total)",          _esc(len(alerts))],
-        ["Alertes HARD",             _esc(hard_count)],
-        ["Alertes SOFT",             _esc(soft_count)],
-        ["Notifications envoyées",   _esc(len(notifications))],
-        ["Problèmes ouverts (non-ack)", _esc(len(open_problems))],
-        ["Hôtes dans le périmètre",  _esc(len(win_hosts))],
-    ],
-))
+toc_rows = []
+for title, _body, count in section_render:
+    toc_rows.append(
+        f'<tr><td style="{TD_STYLE}">{_esc(title)}</td>'
+        f'<td style="{TD_STYLE};text-align:right;width:120px;">{_esc(count)}</td></tr>'
+    )
+parts.append(
+    f'<table style="{TABLE_STYLE}"><thead><tr>'
+    f'<th style="{TH_STYLE}">Section</th>'
+    f'<th style="{TH_STYLE};text-align:right;">Lignes</th>'
+    f"</tr></thead><tbody>{''.join(toc_rows)}</tbody></table>"
+)
 
-# ----- Répartition par état ---------------------------------------
-parts.append(f'<h2 style="{SECTION_H2}">Répartition par état (alertes)</h2>')
-state_order = ["OK", "UP", "WARNING", "CRITICAL", "DOWN", "UNKNOWN", "UNREACHABLE"]
-rows = []
-for s in state_order:
-    if by_state.get(s):
-        rows.append([_state_pill(s), _esc(by_state[s])])
-for s, n in sorted(by_state.items()):
-    if s not in state_order:
-        rows.append([_state_pill(s), _esc(n)])
-parts.append(_table(["État", "Nombre"], rows))
-
-# ----- Top hôtes ----------------------------------------------------
-parts.append(f'<h2 style="{SECTION_H2}">Top 10 hôtes les plus bruyants</h2>')
-parts.append(_table(
-    ["Hôte", "Alertes"],
-    [[_esc(h), _esc(n)] for h, n in noisy_hosts.most_common(10)],
-))
-
-# ----- Top couples --------------------------------------------------
-parts.append(f'<h2 style="{SECTION_H2}">Top 15 couples hôte / service</h2>')
-parts.append(_table(
-    ["Hôte", "Service", "Alertes"],
-    [[_esc(h), _esc(s), _esc(n)] for (h, s), n in noisy_pairs.most_common(15)],
-))
-
-# ----- Flapping -----------------------------------------------------
-parts.append(f'<h2 style="{SECTION_H2}">Flapping suspecté (≥ 5 transitions)</h2>')
-parts.append(_table(
-    ["Hôte", "Service", "Transitions"],
-    [[_esc(h), _esc(s), _esc(n)] for (h, s, n) in flapping],
-))
-
-# ----- Notifications ------------------------------------------------
-parts.append(f'<h2 style="{SECTION_H2}">Notifications</h2>')
-parts.append(_table(
-    ["Indicateur", "Valeur"],
-    [
-        ["Total notifications", _esc(len(notifications))],
-    ],
-))
-parts.append('<p style="font-family:Arial,sans-serif;margin:8px 0 4px 0;">'
-             'Top 5 contacts notifiés :</p>')
-parts.append(_table(
-    ["Contact", "Notifications"],
-    [[_esc(c), _esc(n)] for c, n in notif_contacts.most_common(5)],
-))
-
-# ----- Problèmes ouverts -------------------------------------------
-parts.append(f'<h2 style="{SECTION_H2}">Problèmes ouverts à traiter</h2>')
-now_ts = int(datetime.now(timezone.utc).timestamp())
-rows = []
-for r in open_problems:
-    lbl  = _state_label(r)
-    last = r.get("last_state_change") or r.get("last_hard_state_change")
-    dur  = (now_ts - int(last)) if last else None
-    rows.append([
-        _esc(r.get("host_name") or "—"),
-        _esc(r.get("service_description") or ""),
-        _state_pill(lbl),
-        _esc(_fmt_ts(last)),
-        _esc(_fmt_duration(dur)),
-        _esc((r.get("plugin_output") or "").strip()[:200]),
-    ])
-parts.append(_table(
-    ["Hôte", "Service", "État", "Depuis", "Durée", "Sortie plugin"],
-    rows,
-))
+# Sections
+for title, body, _count in section_render:
+    parts.append(f'<h2 style="{SECTION_H2}">{_esc(title)}</h2>')
+    parts.append(body)
 
 parts.append(
     f'<p style="font-family:Arial,sans-serif;color:#616161;font-size:11px;'
-    f'margin-top:24px;">Généré par <code>kdust/thruk-monitoring-report</code> '
-    f'— {_esc(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))}</p>'
+    f'margin-top:24px;">Généré par <code>kdust/thruk-monitoring-report</code> — '
+    f'{_esc(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))}</p>'
 )
-parts.append('</div>')
+parts.append("</div>")
 
 html_doc = (
     '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">'
-    f'<title>Monitoring {_esc(scope_label)} {_esc(period_label)}</title>'
-    '</head><body>' + "".join(parts) + '</body></html>'
+    f"<title>Monitoring {_esc(scope_label)} {_esc(period_label)}</title>"
+    "</head><body>" + "".join(parts) + "</body></html>"
 )
 
 out_path = WORKDIR / "report.html"
 out_path.write_text(html_doc, encoding="utf-8")
 
-# Tiny stdout summary (intentionally short — it ends up in the
-# run output that goes back to the LLM).
-print(
-    f"OK: report.html written ({len(html_doc)} bytes) — hosts={len(win_hosts)} "
-    f"alerts={len(alerts)} notifications={len(notifications)} "
-    f"problems={len(open_problems)}"
-)
+counts = ", ".join(f"{t}={c}" for t, _b, c in section_render)
+print(f"OK: report.html written ({len(html_doc)} bytes) — {counts}")

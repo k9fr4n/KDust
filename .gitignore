@@ -30,3 +30,4 @@ prisma/dev-migrate.db
 .freebox-token.json
 core
 core.*
+__pycache__/

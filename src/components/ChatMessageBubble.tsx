@@ -551,7 +551,17 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
         </div>
       )}
       <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-        <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
+        {/* `min-w-0` is critical here: this wrapper is a flex item of
+            the outer `flex justify-start/end` row, whose default
+            `min-width` is `min-content`. Without `min-w-0`, a child
+            with large intrinsic width (e.g. a markdown <table> whose
+            cells are now allowed to keep their natural width, see
+            MessageMarkdown.tsx) would force this wrapper to exceed
+            its own `max-w-[85%]`, defeating the inner table's
+            `overflow-x-auto` and making the entire chat column
+            scroll horizontally instead of just the table.
+            (Franck 2026-05-22) */}
+        <div className={`flex flex-col gap-0.5 min-w-0 ${isUser ? 'items-end' : 'items-start'} max-w-[85%]`}>
           {/* MCP tool invocations panel (Franck 2026-05-08).
               Rendered ABOVE the agent bubble: chronologically
               tools run before the textual answer, and keeping
@@ -578,7 +588,20 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
               // overflow-hidden because it was masking the tail of
               // the message when the wrap heuristic failed instead
               // of expanding to a new line. (Franck 2026-04-29)
-              ' [overflow-wrap:anywhere] min-w-0'
+              //
+              // 2026-05-22 (Franck): `max-w-full overflow-hidden`
+              // restored, but at this depth only. As a flex item of
+              // the `flex-col items-start` wrapper above, this div's
+              // preferred cross-axis size is `max-content` and a
+              // markdown table with long cells would push it past
+              // the 85% bound of its wrapper — turning the whole
+              // chat column into a horizontal scroller. `max-w-full`
+              // ties the bubble to the wrapper's resolved width,
+              // and `overflow-hidden` clips anything that still
+              // escapes (e.g. an inline <pre>); the markdown table
+              // wrapper has its own `overflow-x-auto` so the table
+              // scrolls in place, as intended.
+              ' [overflow-wrap:anywhere] min-w-0 max-w-full overflow-hidden'
             }
           >
             {role === 'system' ? (

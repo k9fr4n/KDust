@@ -1383,6 +1383,17 @@ function ChatPageInner({
   // <PageActionsSlot/>; the returned JSX (portal node) is rendered
   // inline below so React's reconciler keeps actions in sync with
   // _ChatClient state without re-rendering the TopBar itself.
+  //
+  // Visual contract (Franck 2026-05-22): every icon button in this
+  // cluster is exactly 32×32 (w-8 h-8), rounded-md, holds a 16px
+  // lucide icon, and shares the SAME base layout class so spacing
+  // stays uniform. Only color/hover differs (Wrench reflects MCP
+  // status, others are neutral). Extracted into ACTION_BTN_BASE to
+  // make future drift impossible to introduce by accident.
+  const ACTION_BTN_BASE =
+    'inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors';
+  const ACTION_BTN_NEUTRAL =
+    `${ACTION_BTN_BASE} text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800`;
   const pageActions = usePageActions(
     <>
       {/* MCP tools status indicator. Stateless from React's POV
@@ -1425,7 +1436,7 @@ function ChatPageInner({
         return (
           <div className="relative group">
             <span
-              className={`inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
+              className={`${ACTION_BTN_BASE} ${
                 allReady
                   ? 'text-success-strong dark:text-green-400 hover:bg-success-subtle dark:hover:bg-green-950/30'
                   : 'text-danger-strong dark:text-red-400 hover:bg-danger-subtle dark:hover:bg-red-950/30'
@@ -1486,7 +1497,7 @@ function ChatPageInner({
             rel="noopener noreferrer"
             title="Open in Dust"
             aria-label="Open conversation in Dust"
-            className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className={ACTION_BTN_NEUTRAL}
           >
             <ExternalLink size={16} />
           </a>
@@ -1498,7 +1509,7 @@ function ChatPageInner({
         onClick={newChat}
         title="Start a new conversation"
         aria-label="Start a new conversation"
-        className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        className={ACTION_BTN_NEUTRAL}
       >
         <Plus size={16} />
       </button>

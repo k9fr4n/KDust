@@ -164,7 +164,12 @@ services:
   # Dès qu'une nouvelle image est détectée : pull silencieux + redémarrage.    #
   # -------------------------------------------------------------------------- #
   watchtower:
-    image: containrrr/watchtower:latest
+    # NOTE: containrrr/watchtower is unmaintained since 2024 — :latest ships an
+    # ancient Docker API client (1.25) that recent daemons reject with
+    # "client version 1.25 is too old. Minimum supported API version is 1.40".
+    # nickfedor/watchtower is the actively maintained community fork
+    # (drop-in compatible, same `com.centurylinklabs.watchtower.*` labels).
+    image: nickfedor/watchtower:latest
     container_name: watchtower
     restart: unless-stopped
     volumes:
@@ -174,6 +179,9 @@ services:
       # Watchtower les lit pour pouvoir puller des images privées
       - ${HOME}/.docker/config.json:/config.json:ro
     environment:
+      # Belt-and-braces: force a modern Docker API version on the client side
+      # so we don't rely on the image's default again if the fork ever drifts.
+      DOCKER_API_VERSION: "1.44"
       # Ne surveille QUE le conteneur kdust (pas watchtower lui-même, etc.)
       WATCHTOWER_SCOPE: kdust-autoupdate
       # Vérifie toutes les 5 minutes

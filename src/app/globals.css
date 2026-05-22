@@ -75,6 +75,12 @@ body { @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text
   to   { opacity: 1; }
 }
 @keyframes kd-pop-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+  /* No scale: a scale-transform promotes the element to a
+   * compositor layer for the duration of the animation, which
+   * leaves iOS Safari / Android Chrome with a stale touch
+   * hit-test geometry for any inner overflow-y-auto scroller
+   * until the next relayout (Franck 2026-05-22 mobile scroll
+   * bug). translateY alone doesn't trigger the issue. */
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0);    }
 }

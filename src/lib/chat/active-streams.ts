@@ -49,7 +49,30 @@ export type ActiveStream = {
    * with the live tab. Null until the agent surfaces any file.
    */
   generatedFiles: string | null;
+  /**
+   * Inline timeline replay buffer (Franck 2026-05-22, ADR-0017).
+   * Chronological array of {type:'text'|'cot'|'tool', ...} events
+   * built progressively in arrival order, with consecutive
+   * text/cot runs coalesced into the trailing node of the same
+   * type. Mirrors what the live SSE client builds locally so a
+   * passive observer (other tab, reload) sees the same
+   * interleaved feed. Survives only in memory — cleared on
+   * markStreamEnd; the persisted `Message.timeline` takes over
+   * once the turn is committed.
+   */
+  events: TimelineReplayEvent[];
 };
+
+/**
+ * Lighter-weight replay shape than `TimelineEvent` in `lib/dust/chat`
+ * to avoid pulling the server-only Dust module into clients that
+ * only need to consume the active-stream snapshot. Identical
+ * structurally so JSON.parse works without normalisation.
+ */
+export type TimelineReplayEvent =
+  | { type: 'text'; content: string }
+  | { type: 'cot'; content: string }
+  | { type: 'tool'; tool: string; params: unknown };
 
 const active = new Map<string, ActiveStream>();
 
@@ -61,7 +84,33 @@ export function markStreamStart(conversationId: string, userMessageSId: string) 
     cotBuffer: '',
     toolCalls: [],
     generatedFiles: null,
+    events: [],
   });
+}
+
+/**
+ * Append a timeline event to the replay buffer (Franck 2026-05-22,
+ * ADR-0017). Text and CoT runs are coalesced into the trailing node
+ * of the same type so the array stores event boundaries, not token
+ * boundaries — same logic as `streamAgentReply`'s in-process
+ * accumulator. No-op when the conversation is not actively streaming.
+ */
+export function appendStreamTimelineEvent(
+  conversationId: string,
+  ev: TimelineReplayEvent,
+) {
+  const s = active.get(conversationId);
+  if (!s) return;
+  if (ev.type === 'tool') {
+    s.events.push(ev);
+    return;
+  }
+  const last = s.events[s.events.length - 1];
+  if (last && last.type === ev.type) {
+    last.content += ev.content;
+  } else {
+    s.events.push(ev);
+  }
 }
 
 /**

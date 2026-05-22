@@ -46,6 +46,7 @@ import {
   streamAgentReply,
   toolInvocationsToJson,
   generatedFilesToJson,
+  timelineToJson,
   type StreamStats,
 } from '../../../dust/chat';
 import { getDustClient } from '../../../dust/client';
@@ -415,6 +416,9 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
               generatedFiles: agentStats
                 ? generatedFilesToJson(agentStats.generatedFiles)
                 : null,
+              timeline: agentStats
+                ? timelineToJson(agentStats.timeline)
+                : null,
               durationMs: agentStats?.durationMs ?? null,
             },
           ],
@@ -440,6 +444,9 @@ export async function runAgent(args: RunAgentArgs): Promise<RunAgentResult> {
                 : null,
               generatedFiles: agentStats
                 ? generatedFilesToJson(agentStats.generatedFiles)
+                : null,
+              timeline: agentStats
+                ? timelineToJson(agentStats.timeline)
                 : null,
               durationMs: agentStats?.durationMs ?? null,
             },

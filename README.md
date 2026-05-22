@@ -2031,3 +2031,108 @@ function.
 `exit code unknown` message should distinguish timeout-kill
 from "no such binary". The opaque label cost this run
 several steps of mis-diagnosis. Tracked separately.
+
+### ADR-0017 — Inline chronological message timeline in /chat (2026-05-22)
+
+**Status**: Proposed.
+
+**Context**. Dust streams an agent reply as a chronological mix
+of three event classes: generation tokens (text), chain-of-thought
+tokens (CoT), and tool invocations (`tool_approve_execution` /
+`agent_action_success`). The web reference rendering interleaves
+all three in arrival order — narration line, tool-call bar,
+narration, thinking block, tool-call bar, … — so the reader
+follows the agent's reasoning step by step.
+
+KDust currently flattens this into three independent buckets:
+`streamedText`, `cotText`, and `toolCalls[]` are stacked as three
+separate blocks in `_ChatClient.tsx`, and the persisted
+`Message.toolInvocations` JSON is rendered as a single grouped
+panel ABOVE the bubble in `ChatMessageBubble.tsx`. CoT is not
+persisted at all. The arrival order is available server-side
+(`src/lib/dust/chat.ts` SSE loop sees the events in order) but
+is discarded by the bucketing.
+
+**Decision**.
+
+1. Add a new column `Message.timeline String?` (nullable JSON).
+   For agent messages produced after this change, it carries the
+   full ordered event sequence:
+
+   ```jsonc
+   [
+     { "type": "text", "content": "Looking into the alerts…" },
+     { "type": "tool", "tool": "Mcp Gateway Thruk List Alerts",
+       "params": { "hostgroup": "core-prod" } },
+     { "type": "cot",  "content": "Let me recompute the UTC window…" },
+     { "type": "text", "content": "Recent events for that window:" },
+     { "type": "tool", "tool": "Mcp Gateway Thruk Recent Events",
+       "params": { "limit": 50 } }
+   ]
+   ```
+
+   Runs of consecutive `text` (or `cot`) tokens are concatenated
+   into a single timeline node — we record event boundaries, not
+   token boundaries, to keep the blob bounded.
+
+2. The legacy columns (`content`, `toolInvocations`, `streamStats`,
+   `toolCalls`, `toolNames`, `generatedFiles`) remain populated
+   exactly as today. `content` stays the canonical "final markdown
+   reply" used by exports, search, and any non-/chat surface.
+   `toolInvocations` keeps powering `/run/[id]` and analytics.
+   `timeline` is purely an additive rendering hint.
+
+3. Client rendering:
+   - Live: `_ChatClient.tsx` replaces the three bucket states with
+     a single `events: TimelineEvent[]` array. SSE handlers append
+     in arrival order; consecutive `token` / `cot` events fold into
+     the trailing node of the same type.
+   - Persisted: a new `MessageTimeline` component consumes
+     `timeline` when present. `ChatMessageBubble` falls back to the
+     legacy `ToolInvocationsPanel + bubble` layout for any row with
+     `timeline === null` (pre-ADR messages, no retroactive
+     backfill).
+
+4. Generated-files (`generatedFiles`) stay rendered as a separate
+   block BELOW the bubble, both live and persisted. They are not
+   part of the timeline.
+
+5. CoT is persisted inside `timeline` for /chat messages produced
+   after this change. No new dedicated column. The existing
+   redaction policy (no `secrets/redact` pass on CoT — symmetric
+   with today's live SSE) is unchanged; this preserves parity but
+   means CoT can now leak a previously-redacted-only-in-text secret
+   on reload of /chat history. Mitigation deferred to a follow-up
+   if it bites; tracked as a known limitation.
+
+6. No change to the Telegram bridge, the cron runner persistence,
+   the `/run/[id]` post-mortem, or any non-/chat surface. The
+   runner already persists `content + toolInvocations`; populating
+   `timeline` there is out of scope for this ADR (could be added
+   later trivially since `chat.ts` is shared, but the runner has no
+   inline-rendering surface that would consume it).
+
+**Consequences**.
+
+- **Pro** — /chat finally reflects the agent's actual reasoning
+  flow, matching the reference rendering Franck pinned.
+- **Pro** — Strictly additive at the data layer. Legacy rows
+  render with the old layout, no migration needed.
+- **Pro** — Single source of truth: ordering is recorded server-
+  side once, the client is a pure renderer.
+- **Con** — Larger `Message` rows (each agent message grows by
+  the size of its concatenated CoT + tool params, typically a few
+  KB but pathological CoT can push tens of KB). SQLite has no
+  hard limit at our scale; not worth bounding now.
+- **Con** — CoT persistence widens the surface area for secret
+  leakage on /chat reload (see point 5). Acceptable for the
+  internal-only deployment; revisit if KDust ever exposes /chat
+  outside the LAN.
+- **Con** — Two rendering paths for a transition period (legacy
+  rows + timeline rows). The fallback is mechanical and bounded
+  in `ChatMessageBubble`.
+
+**Rollback**. Drop the `MessageTimeline` component, restore the
+3-bucket live rendering in `_ChatClient.tsx`, ignore the
+`timeline` column at read time. Column stays nullable in the
+schema; no down-migration needed.

@@ -168,6 +168,18 @@ model Message {
   // list Dust shows in its own UI (download links + inline image
   // previews via /api/files/:sId). Null for legacy / file-less rows.
   generatedFiles String?
+  // Chronological event log of the agent turn (Franck 2026-05-22,
+  // ADR-0017). Ordered JSON array of `{type, ...}` events captured
+  // in arrival order from the Dust SSE stream:
+  //   - {type:'text', content}  — concatenated runs of generation_tokens
+  //   - {type:'cot',  content}  — concatenated runs of chain_of_thought
+  //   - {type:'tool', tool, params} — one per approved tool action
+  // Consumed by /chat to render an inline interleaved timeline that
+  // mirrors Dust's web UI. `content` and `toolInvocations` remain
+  // the canonical sources for non-/chat surfaces and analytics.
+  // Null for legacy rows: the renderer falls back to the pre-ADR
+  // grouped layout. No retroactive backfill.
+  timeline       String?
   // Wall-clock duration of the stream loop, milliseconds. Null for
   // legacy rows and when the stream was aborted.
   durationMs     Int?

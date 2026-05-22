@@ -99,9 +99,10 @@ export function TaskRunButton({
         onClick={onClick}
         disabled={busy}
         className="inline-flex items-center justify-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-green-300 dark:border-green-800 text-success-strong dark:text-green-400 hover:bg-success-subtle dark:hover:bg-green-950/30 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-        title={isGeneric ? 'Run now — pick a project' : 'Run now'}
+        title={isGeneric ? 'Run — pick a project' : 'Run'}
       >
-        <Play size={14} /> {busy ? 'Running…' : 'Run now'}
+        <Play size={14} />
+        <span className="hidden sm:inline">{busy ? 'Running…' : 'Run'}</span>
       </button>
       {msg && (
         <span className="text-xs text-slate-500 ml-2 self-center">{msg}</span>

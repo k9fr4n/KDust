@@ -9,7 +9,6 @@ import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { PageHeader } from '@/components/PageHeader';
-import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import type { Metadata } from 'next';
@@ -34,7 +33,7 @@ const CONV_PAGE_SIZE_CFG = {
 };
 
 type SearchProps = {
-  searchParams?: Promise<{ agent?: string; q?: string; page?: string }>;
+  searchParams?: Promise<{ q?: string; page?: string }>;
 };
 
 /**
@@ -57,14 +56,12 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   // holds the project's full fsPath post-migration. Filter on the
   // normalised value so legacy cookies (leaf name) still resolve.
   const cookieProjectFsPath = await getCurrentProjectFsPath();
-  const agentFilter = sp.agent ?? undefined;
   const q = (sp.q ?? '').trim();
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
   const PAGE_SIZE = await getAdaptivePageSize(CONV_PAGE_SIZE_CFG);
 
   const where: Record<string, unknown> = {};
   if (cookieProjectFsPath) where.projectName = cookieProjectFsPath;
-  if (agentFilter) where.agentSId = agentFilter;
   // Live search (Franck 2026-04-30): match the query against the
   // conversation title OR any message content. SQLite `contains`
   // is a LIKE filter; acceptable at current volume, FTS5 would be
@@ -90,12 +87,6 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
     }),
   ]);
 
-  const allAgents = await db.conversation.findMany({
-    select: { agentSId: true, agentName: true },
-    distinct: ['agentSId'],
-    take: 50,
-  });
-
   return (
     <div className="w-full">
       <ViewportProbe />
@@ -103,11 +94,6 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         icon={<MessageSquare size={20} />}
         title="Conversation"
         scope={cookieProject}
-        right={
-          <span className="text-sm text-slate-500">
-            {conversations.length} shown · {total.toLocaleString('fr-FR')} total
-          </span>
-        }
       />
 
       {/* Live search (Franck 2026-04-23 22:29). Replaces the old
@@ -120,30 +106,8 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
           needed anymore. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search by title…" />
-        {(q || agentFilter) && <ClearFiltersLink href="/conversation" />}
+        {q && <ClearFiltersLink href="/conversation" />}
       </div>
-
-      {allAgents.length > 1 && (
-        <div className="flex flex-wrap gap-2 mb-4 text-xs">
-          <span className="text-slate-500 self-center">
-            Agent: <span className="font-mono text-slate-700 dark:text-slate-300">{agentFilter ?? 'all'}</span>
-          </span>
-          <FilterPill href={buildHref({ agent: undefined, q })} active={!agentFilter}>
-            all agents
-          </FilterPill>
-          {allAgents
-            .sort((a, b) => (a.agentName ?? '').localeCompare(b.agentName ?? ''))
-            .map((a) => (
-              <FilterPill
-                key={a.agentSId}
-                href={buildHref({ agent: a.agentSId, q })}
-                active={agentFilter === a.agentSId}
-              >
-                {a.agentName ?? a.agentSId}
-              </FilterPill>
-            ))}
-        </div>
-      )}
 
       <div id="rows-anchor" />
       {conversations.length === 0 ? (
@@ -167,14 +131,14 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         </ul>
       )}
 
-      {/* Pagination keeps the active filters (agent, q) so paging
+      {/* Pagination keeps the active filters (q) so paging
           through a narrowed list works as expected. */}
       <Pagination
         page={page}
         pageSize={PAGE_SIZE}
         total={total}
         unit="conversations"
-        buildHref={(p) => buildHref({ agent: agentFilter, q, page: p })}
+        buildHref={(p) => buildHref({ q, page: p })}
       />
     </div>
   );
@@ -182,9 +146,8 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
 
 
 
-function buildHref({ agent, q, page }: { agent?: string; q?: string; page?: number }) {
+function buildHref({ q, page }: { q?: string; page?: number }) {
   const qs = new URLSearchParams();
-  if (agent) qs.set('agent', agent);
   if (q) qs.set('q', q);
   if (page && page > 1) qs.set('page', String(page));
   return `/conversation${qs.toString() ? `?${qs}` : ''}`;

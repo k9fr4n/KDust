@@ -631,7 +631,41 @@ export type ChatBubbleProps = {
    * (covers all pre-ADR rows; no retroactive backfill).
    */
   timelineJson?: string | null;
+  /**
+   * Wall-clock duration of the agent turn, milliseconds (agent
+   * rows only, Franck 2026-05-22). When timeline rendering is
+   * active the bubble wraps the timeline in a collapsed-by-default
+   * `<details>` headed by "Completed in <duration>", mirroring
+   * the Dust web reference: a finished turn collapses to a single
+   * line, click-to-expand reveals the chronological feed. Null
+   * degrades the label to a plain "Completed" (legacy rows or
+   * aborted streams).
+   */
+  durationMs?: number | null;
 };
+
+/**
+ * Format a wall-clock duration for the collapsed-turn header
+ * ("3s", "47s", "1min 23s", "12min 4s"). Drops the seconds unit
+ * once we hit the hour mark to keep the label short. Returns
+ * 'Completed' for non-positive / null inputs so the header stays
+ * sensible on aborted runs.
+ */
+function formatTurnDuration(ms: number | null | undefined): string {
+  if (!ms || ms <= 0 || !Number.isFinite(ms)) return 'Completed';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `Completed in ${totalSec}s`;
+  const totalMin = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (totalMin < 60) {
+    return sec === 0
+      ? `Completed in ${totalMin}min`
+      : `Completed in ${totalMin}min ${sec}s`;
+  }
+  const hr = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  return `Completed in ${hr}h ${min}min`;
+}
 
 function ChatMessageBubbleImpl(props: ChatBubbleProps) {
   const {
@@ -643,6 +677,7 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
     toolInvocationsJson,
     generatedFilesJson,
     timelineJson,
+    durationMs,
   } = props;
   const isUser = role === 'user';
   const timeline = useMemo(
@@ -714,8 +749,28 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
             retroactive backfill) and for user/system messages.
            */}
           {role === 'agent' && useTimeline ? (
+            // Collapsed-by-default turn wrapper (Franck 2026-05-22).
+            // Mirrors Dust's web rendering: a completed turn folds
+            // into a single "Completed in Xmin Ys ▸" header; the
+            // user expands to see the full chronological feed.
+            // During streaming the LIVE timeline is rendered
+            // separately in `_ChatClient.tsx` without this wrapper
+            // (always expanded with a blinking caret), so this
+            // branch is only reached for persisted (terminated)
+            // turns where collapsing is the right default.
             <div className="w-full max-w-full">
-              <MessageTimeline events={timeline} />
+              <details className="group w-full">
+                <summary
+                  className="cursor-pointer select-none flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 marker:hidden [&::-webkit-details-marker]:hidden hover:text-slate-700 dark:hover:text-slate-300"
+                >
+                  <span className="text-[10px] flex-none group-open:hidden">▸</span>
+                  <span className="text-[10px] flex-none hidden group-open:inline">▾</span>
+                  <span>{formatTurnDuration(durationMs)}</span>
+                </summary>
+                <div className="mt-1.5">
+                  <MessageTimeline events={timeline} />
+                </div>
+              </details>
             </div>
           ) : (
             <>

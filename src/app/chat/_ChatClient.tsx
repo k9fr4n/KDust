@@ -87,6 +87,15 @@ type Msg = {
    * pre-ADR rows triggers the legacy grouped layout fallback.
    */
   timeline?: string | null;
+  /**
+   * Wall-clock duration of the agent turn in milliseconds (agent
+   * rows only). Surfaced from Message.durationMs so the bubble
+   * can label the collapsed timeline header with a "Completed in
+   * Xmin Ys" affordance (Franck 2026-05-22). Null on legacy rows
+   * and on aborted streams; the header then degrades to a plain
+   * "Completed" label.
+   */
+  durationMs?: number | null;
 };
 
 /**
@@ -1797,6 +1806,7 @@ function ChatPageInner({
                   toolInvocationsJson={m.toolInvocations ?? null}
                   generatedFilesJson={m.generatedFiles ?? null}
                   timelineJson={m.timeline ?? null}
+                  durationMs={m.durationMs ?? null}
                 />
               );
             });

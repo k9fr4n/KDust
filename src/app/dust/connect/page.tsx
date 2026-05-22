@@ -1,8 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { LogIn } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { DocumentTitle } from '@/components/DocumentTitle';
+import { PageHeader } from '@/components/PageHeader';
 
 type Device = {
   device_code: string;
@@ -85,7 +87,7 @@ export default function DustConnect() {
   return (
     <div className="max-w-xl">
       <DocumentTitle title="Connect Dust" />
-      <h1 className="text-2xl font-bold mb-4">Connect to Dust</h1>
+      <PageHeader icon={<LogIn size={20} />} title="Connect to Dust" />
 
       {step === 'idle' && (
         <>

@@ -17,6 +17,7 @@ import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 import { getCurrentProject } from '@/lib/current-project';
 import { ConversationCard } from '@/components/ConversationCard';
 import { DocumentTitle } from '@/components/DocumentTitle';
+import { PageHeader } from '@/components/PageHeader';
 import { RunCard } from '@/components/RunCard';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
@@ -82,23 +83,18 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             "le titre des pages doit se retrouver dans la top bar,
             pas juste le nom de la catégorie". */}
         <DocumentTitle title={`${current.name} (${current.branch})`} />
-        {/* Dashboard header (Franck 2026-05-21 third pass): the
-            previous action cluster (Sync now + Settings) and the
-            git-identity panel below it were dropped. The project
-            switcher in the SideNav already exposes the same context
-            (selecting a project), `/settings/projects/:id` reaches
-            the editing surface, and the auto-sync cron keeps things
-            fresh \u2014 the manual controls had become noise on the
-            dashboard's first fold. */}
-        <div className="flex items-center gap-3 min-w-0">
-          <FolderGit2 size={20} className="text-slate-400 shrink-0" />
-          <h1 className="text-xl sm:text-2xl font-bold flex items-baseline gap-2 min-w-0">
-            <span className="truncate">{current.name}</span>
-            <span className="text-sm sm:text-base font-normal text-slate-500 font-mono truncate">
-              {current.branch}
-            </span>
-          </h1>
-        </div>
+        {/* Dashboard header lifted to the TopBar (Franck 2026-05-22):
+            "le titre des pages doit être dans la top bar, pas dans
+            la page". PageHeader portals to the bar's title slot;
+            the page body is now flush with its first content
+            section. The branch goes into `scope` so it renders as
+            "{project} · {branch}" in the bar, mirroring the
+            previous in-page layout. */}
+        <PageHeader
+          icon={<FolderGit2 size={20} />}
+          title={current.name}
+          scope={<span className="font-mono">{current.branch}</span>}
+        />
 
         <section className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <StatTile
@@ -216,7 +212,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <PageHeader title="Dashboard" />
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">

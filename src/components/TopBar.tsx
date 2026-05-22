@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { PageActionsSlot } from './PageActionsProvider';
+import { PageActionsSlot, PageTitleSlot } from './PageActionsProvider';
 
 /**
  * Global top bar (Franck 2026-05-21, second pass).
@@ -91,16 +91,31 @@ export function TopBar() {
       >
         K
       </button>
-      <span className="text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
-        {title}
-      </span>
+      {/*
+        Page title area (Franck 2026-05-22).
+        Two layers:
+          - <PageTitleSlot/>: portal target fed by <PageHeader> on
+            pages that opted into the "title-in-topbar" model. When
+            populated it shows `[icon] Title · scope` in-place.
+          - Fallback <span>: document.title-derived label, hidden
+            via CSS `:has()` as soon as the slot has children. This
+            keeps the bar useful on pages that don't render a
+            PageHeader (e.g. /chat, where the body owns its own
+            title) while avoiding a flash of duplicate text.
+      */}
+      <div className="flex items-center gap-2 min-w-0 flex-1 [&:has(#kdust-topbar-title:not(:empty))_.kdust-topbar-fallback]:hidden">
+        <PageTitleSlot />
+        <span className="kdust-topbar-fallback text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
+          {title}
+        </span>
+      </div>
       {/* Page-specific action cluster (icons). The portal target
           lives in <PageActionsSlot/> so pages can render directly
           into it via createPortal — see PageActionsProvider for
           the why (avoids re-rendering the K button on every parent
           render of the caller, which broke mobile clicks after a
           /chat visit). */}
-      <div className="ml-auto shrink-0">
+      <div className="shrink-0">
         <PageActionsSlot />
       </div>
     </header>

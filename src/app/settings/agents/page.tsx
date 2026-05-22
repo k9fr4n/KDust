@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { errMessage } from '@/lib/errors';
 import { DocumentTitle } from '@/components/DocumentTitle';
+import { PageHeader } from '@/components/PageHeader';
 
 type Agent = {
   sId: string;
@@ -341,27 +342,28 @@ export default function AgentsSettingsPage() {
         </Link>
       </div>
 
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Bot size={20} /> Agents
-        </h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={refresh}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 text-sm"
-            title="Refresh list"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
-          </button>
-          <button
-            onClick={() => setShowCreate((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm"
-          >
-            {showCreate ? <><X size={14} /> Cancel</> : <><Plus size={14} /> New agent</>}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Bot size={20} />}
+        title="Agents"
+        right={
+          <>
+            <button
+              onClick={refresh}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 text-sm"
+              title="Refresh list"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+            <button
+              onClick={() => setShowCreate((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm"
+            >
+              {showCreate ? <><X size={14} /> Cancel</> : <><Plus size={14} /> New agent</>}
+            </button>
+          </>
+        }
+      />
 
       {err && (
         <pre className="whitespace-pre-wrap text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded p-2">

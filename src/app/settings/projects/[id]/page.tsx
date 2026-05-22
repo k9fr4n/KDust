@@ -24,7 +24,8 @@
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X } from 'lucide-react';
+import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X, Folder } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { errMessage } from '@/lib/errors';
 import { UI_SAVE_RESET_MS } from '@/lib/constants';
 import { DocumentTitle } from '@/components/DocumentTitle';
@@ -297,6 +298,7 @@ export default function ProjectSettingsPage({
   return (
     <div className="space-y-6">
       <DocumentTitle title={p.name ? `${p.name} · Project` : 'Project'} />
+      <PageHeader icon={<Folder size={20} />} title="Project settings" scope={p.name} />
       {/* Breadcrumb */}
       <div className="text-sm">
         <Link href="/settings/projects" className="text-slate-500 hover:text-brand-600 inline-flex items-center gap-1">
@@ -305,8 +307,6 @@ export default function ProjectSettingsPage({
         <span className="text-slate-300 mx-2">·</span>
         <span className="font-semibold">{p.name}</span>
       </div>
-
-      <h1 className="text-2xl font-bold">Project settings</h1>
 
       {/* Identity + description.
           Collapsed into a single panel with a 2-col grid to save

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2, ScrollText, Pause, Play, Filter, Copy, Check, Download } from 'lucide-react';
 import { UI_FLASH_MS } from '@/lib/constants';
+import { PageHeader } from '@/components/PageHeader';
 
 type LogLevel = 'log' | 'info' | 'warn' | 'error';
 
@@ -271,16 +272,13 @@ export default function LogsView({ tz }: { tz: string }) {
           the row width on mobile, and button labels collapse to
           icon-only via `hidden sm:inline` (the `title` attribute
           stays for screen readers). */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-        <div className="flex items-center gap-2 min-w-0">
-          <ScrollText size={20} className="text-slate-400 shrink-0" />
-          <h1 className="text-xl sm:text-2xl font-bold truncate">Container logs</h1>
-          <span className="text-xs sm:text-sm text-slate-500 shrink-0">
-            {filtered.length} / {entries.length} lines
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto w-full sm:w-auto">
+      <PageHeader
+        icon={<ScrollText size={20} />}
+        title="Container logs"
+        scope={`${filtered.length} / ${entries.length} lines`}
+      />
+      <div className="mb-4">
+        <div className="flex flex-wrap items-center gap-2 w-full">
           <div className="relative flex-1 sm:flex-none min-w-0">
             <Filter size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
             <input

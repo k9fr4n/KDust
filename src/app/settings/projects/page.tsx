@@ -37,6 +37,7 @@ import {
   FolderPlus, Edit2, Move, Check,
 } from 'lucide-react';
 import { DocumentTitle } from '@/components/DocumentTitle';
+import { PageHeader } from '@/components/PageHeader';
 
 type P = {
   id: string;
@@ -376,16 +377,11 @@ function ProjectsPageInner() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/settings"
-          className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
-        >
-          <ArrowLeft size={14} /> Settings
-        </Link>
-        <div className="flex items-center justify-between flex-wrap gap-3 mt-2">
-          <h1 className="text-2xl font-bold">Projects</h1>
-          <div className="flex items-center gap-2">
+      <PageHeader
+        icon={<Folder size={20} />}
+        title="Projects"
+        right={
+          <>
             <button
               onClick={() => setShowFolders((v) => !v)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm"
@@ -399,8 +395,16 @@ function ProjectsPageInner() {
             >
               {showCreate ? <><X size={14} /> Cancel</> : <><Plus size={14} /> New project</>}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      />
+      <div>
+        <Link
+          href="/settings"
+          className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
+        >
+          <ArrowLeft size={14} /> Settings
+        </Link>
       </div>
 
       {showFolders && (

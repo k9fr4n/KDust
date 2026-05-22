@@ -29,7 +29,8 @@
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ChevronRight, MessageCircle, Settings } from 'lucide-react';
+import { ArrowLeft, ChevronRight, MessageCircle, Settings, Clock } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { db } from '@/lib/db';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
@@ -280,73 +281,62 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           viewports instead of overflowing horizontally. The
           buttons themselves also collapse to icon-only on <sm
           (see RunDetailActions + label spans below). */}
-      <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold">
-            Run <span className="font-mono text-lg">{run.id.slice(0, 8)}</span>
-          </h1>
-          <p className="text-sm text-slate-500">
-            {run.task ? run.task.name : '(task deleted)'}
-            {' · '}
-            started {formatDateTime(run.startedAt, tz)}
-            {run.finishedAt && (
-              <>
-                {' · '}
-                finished {formatDateTime(run.finishedAt, tz)}
-              </>
-            )}
-            {' · '}
-            {/* LiveDuration: ticks every second while running,
-                stops when finishedAt is set. Replaces the old
-                behaviour where the header had no elapsed-time
-                indicator during a long run. */}
-            <LiveDuration
-              startedAt={run.startedAt.toISOString()}
-              finishedAt={run.finishedAt ? run.finishedAt.toISOString() : null}
-            />
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Prominent link to the task config (Franck 2026-04-19
-              13:23). The breadcrumb row above already has the task
-              name, but users asked for an explicit button-style
-              affordance alongside \"Open chat\" so they can jump to
-              the task's settings/prompt without going back to
-              /run. */}
-          {run.task && (
-            <Link
-              href={`/task/${run.task.id}`}
-              className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
-              title="View task"
-            >
-              <Settings size={14} />
-              <span className="hidden sm:inline">View task</span>
-            </Link>
-          )}
-          {conv && (
-            // OpenConversationLink doesn't surface a `title` prop;
-            // wrap in a tooltip-only span for the icon-only mobile
-            // mode so users get the affordance label on long-press.
-            <span title="Open chat" className="inline-flex">
-              <OpenConversationLink
-                conversationId={conv.id}
-                className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-sm font-medium"
+      {/* Header lifted to the TopBar (Franck 2026-05-22): "Run
+          {short-sha}" + task-name scope go up via <PageHeader>;
+          action cluster (View task / Open chat / Rerun / Stop /
+          Delete) is portaled to the right side of the bar. The
+          started/finished/duration metadata paragraph stays in
+          the page body — it's volatile (LiveDuration ticks every
+          second) and reads better below the status chips. */}
+      <PageHeader
+        icon={<Clock size={20} />}
+        title={<>Run <span className="font-mono text-base">{run.id.slice(0, 8)}</span></>}
+        scope={run.task ? run.task.name : '(task deleted)'}
+        right={
+          <>
+            {run.task && (
+              <Link
+                href={`/task/${run.task.id}`}
+                className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
+                title="View task"
               >
-                <MessageCircle size={14} />
-                <span className="hidden sm:inline">Open chat</span>
-              </OpenConversationLink>
-            </span>
-          )}
-          {/* Run actions cluster (Franck 2026-05-04 reorder):
-              Rerun → Stop → Delete, rendered AFTER View task /
-              Open chat so the navigation buttons stay leftmost. */}
-          <RunDetailActions
-            runId={run.id}
-            taskId={run.taskId}
-            status={run.status}
-          />
-        </div>
-      </div>
+                <Settings size={14} />
+                <span className="hidden sm:inline">View task</span>
+              </Link>
+            )}
+            {conv && (
+              <span title="Open chat" className="inline-flex">
+                <OpenConversationLink
+                  conversationId={conv.id}
+                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-sm font-medium"
+                >
+                  <MessageCircle size={14} />
+                  <span className="hidden sm:inline">Open chat</span>
+                </OpenConversationLink>
+              </span>
+            )}
+            <RunDetailActions
+              runId={run.id}
+              taskId={run.taskId}
+              status={run.status}
+            />
+          </>
+        }
+      />
+      <p className="text-sm text-slate-500 mb-4">
+        started {formatDateTime(run.startedAt, tz)}
+        {run.finishedAt && (
+          <>
+            {' · '}
+            finished {formatDateTime(run.finishedAt, tz)}
+          </>
+        )}
+        {' · '}
+        <LiveDuration
+          startedAt={run.startedAt.toISOString()}
+          finishedAt={run.finishedAt ? run.finishedAt.toISOString() : null}
+        />
+      </p>
 
       {/* Status chips */}
       <div className="flex flex-wrap items-center gap-2 mb-6">

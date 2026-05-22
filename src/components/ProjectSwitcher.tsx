@@ -371,7 +371,15 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
               avoiding the iOS Safari rubber-band-then-stuck quirk. */}
           <div
             ref={listRef}
-            className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
+            // `touch-pan-y` forces touch-action: pan-y on this
+            // scroller. Without it, the kd-pop-in scale-transform on
+            // the parent popover leaves mobile browsers (iOS Safari
+            // + Android Chrome) with a stale hit-test geometry for
+            // touch-scroll until a relayout — Franck reported he
+            // had to pinch-zoom and back for scroll to engage
+            // (2026-05-22). Declaring touch-action explicitly on
+            // the scroller bypasses the ancestor-transform quirk.
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y p-1"
           >
             {/* "All projects" sentinel — always row 0 */}
             {(() => {

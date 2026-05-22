@@ -58,8 +58,10 @@ export function TaskDeleteButton({
       onClick={onClick}
       disabled={busy}
       className="inline-flex items-center justify-center gap-1.5 text-sm px-3 py-1.5 rounded-md border border-red-300 dark:border-red-800 text-danger-strong dark:text-red-400 hover:bg-danger-subtle dark:hover:bg-red-950/30 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+      title="Delete"
     >
-      <Trash2 size={14} /> Delete
+      <Trash2 size={14} />
+      <span className="hidden sm:inline">Delete</span>
     </button>
   );
 }

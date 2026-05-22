@@ -100,13 +100,18 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
               className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
               title={`${runCount.toLocaleString('fr-FR')} past run${runCount === 1 ? '' : 's'}`}
             >
-              <History size={14} /> History ({runCount.toLocaleString('fr-FR')})
+              <History size={14} />
+              <span className="hidden sm:inline">
+                History ({runCount.toLocaleString('fr-FR')})
+              </span>
             </Link>
             <Link
               href={`/task/${task.id}/edit`}
               className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              title="Edit"
             >
-              <Pencil size={14} /> Edit
+              <Pencil size={14} />
+              <span className="hidden sm:inline">Edit</span>
             </Link>
             <TaskDeleteButton id={task.id} name={task.name} mandatory={task.mandatory} />
           </>

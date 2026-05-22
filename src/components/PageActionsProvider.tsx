@@ -25,10 +25,25 @@ import { createPortal } from 'react-dom';
  */
 
 const SLOT_ID = 'kdust-topbar-actions';
+const TITLE_SLOT_ID = 'kdust-topbar-title';
 
 /** The DOM anchor TopBar mounts once at the right of the bar. */
 export function PageActionsSlot() {
   return <div id={SLOT_ID} className="flex items-center gap-1" />;
+}
+
+/**
+ * Title slot — twin of {@link PageActionsSlot} for the left side of
+ * the top bar. Pages opting into the "title-in-topbar" model use
+ * {@link usePageTitle} to portal an `[icon] Title · scope` cluster
+ * here; <TopBar> falls back to a document.title span when the slot
+ * is empty (CSS `:has` toggle, no React state churn — same rationale
+ * as the actions slot).
+ *
+ * Franck 2026-05-22: "le titre des pages doit être dans la top bar".
+ */
+export function PageTitleSlot() {
+  return <div id={TITLE_SLOT_ID} className="flex items-center gap-2 min-w-0" />;
 }
 
 // Backwards-compat aliases (were exported before v2). RootLayout
@@ -60,6 +75,21 @@ export function usePageActionsSlot(): ReactNode {
  * the calling component unmounts — no manual cleanup needed.
  */
 export function usePageActions(node: ReactNode): ReactNode {
+  return usePortalToSlot(node, SLOT_ID);
+}
+
+/**
+ * Title-side hook — same portal mechanism as {@link usePageActions}
+ * but targets the title slot on the left of the TopBar. Used by
+ * <PageHeader> to lift its `[icon] Title · scope` cluster out of
+ * the page body. Return value MUST be rendered by the caller so
+ * React keeps the portal alive while the page is mounted.
+ */
+export function usePageTitle(node: ReactNode): ReactNode {
+  return usePortalToSlot(node, TITLE_SLOT_ID);
+}
+
+function usePortalToSlot(node: ReactNode, slotId: string): ReactNode {
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const lookups = useRef(0);
 
@@ -69,7 +99,7 @@ export function usePageActions(node: ReactNode): ReactNode {
     // (~100ms); beyond that we assume the slot will never appear
     // (chromeless route).
     const findSlot = () => {
-      const el = document.getElementById(SLOT_ID);
+      const el = document.getElementById(slotId);
       if (el) {
         setTarget(el);
         return;
@@ -80,7 +110,7 @@ export function usePageActions(node: ReactNode): ReactNode {
       }
     };
     findSlot();
-  }, []);
+  }, [slotId]);
 
   if (!target) return null;
   return createPortal(node, target);

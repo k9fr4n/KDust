@@ -2,6 +2,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Settings as SettingsIcon } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/Button';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import type { AppConfig } from '@prisma/client';
@@ -54,6 +55,7 @@ export default function GlobalSettingsPage() {
   return (
     <div className="max-w-2xl space-y-4">
       <DocumentTitle title="Global settings" />
+      <PageHeader icon={<SettingsIcon size={20} className="text-brand-500" />} title="App Settings" />
       <div>
         <Link
           href="/settings"
@@ -61,9 +63,6 @@ export default function GlobalSettingsPage() {
         >
           <ArrowLeft size={14} /> Settings
         </Link>
-        <h1 className="text-2xl font-bold mt-2 flex items-center gap-2">
-          <SettingsIcon size={22} className="text-brand-500" /> App Settings
-        </h1>
         <p className="text-sm text-slate-500 mt-1">
           Application-wide configuration (Dust endpoint, WorkOS OAuth,
           default notifications).

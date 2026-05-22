@@ -6,10 +6,11 @@
 // the on-demand reachability probe.
 
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, KeyRound } from 'lucide-react';
 import { listIdentities } from '@/lib/ssh/identity';
 import { describeSshRuntime } from '@/lib/ssh/bootstrap';
 import { SshEditor } from './SshEditor';
+import { PageHeader } from '@/components/PageHeader';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,11 +24,11 @@ export default async function SshPage() {
   ]);
   return (
     <div className="max-w-4xl space-y-6">
+      <PageHeader icon={<KeyRound size={20} />} title="SSH" />
       <header className="space-y-1">
         <Link href="/settings" className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1">
           <ArrowLeft size={14} /> Settings
         </Link>
-        <h1 className="text-2xl font-bold">SSH</h1>
         <p className="text-sm text-slate-500">
           Self-hosted SSH identities for the git push pipeline. Private keys are
           stored encrypted (AES-256-GCM via <code className="mx-1 rounded bg-slate-100 dark:bg-slate-800 px-1">APP_ENCRYPTION_KEY</code>)

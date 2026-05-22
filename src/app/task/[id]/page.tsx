@@ -13,6 +13,7 @@ import { Pencil, History } from 'lucide-react';
 import { db } from '@/lib/db';
 import { TaskDeleteButton } from '@/components/TaskDeleteButton';
 import { TaskRunButton } from '@/components/TaskRunButton';
+import { PageHeader } from '@/components/PageHeader';
 import { resolveBranchPolicy } from '@/lib/branch-policy';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
@@ -80,38 +81,37 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
     // cap wasted horizontal space on wide screens. Parent layout
     // already provides horizontal padding.
     <div>
-      {/* Header (Franck 2026-05-01 mobile L3):
-          - <sm: title on its own row (break-words on long names),
-            action cluster wraps below right-aligned. The cluster
-            itself uses `flex-wrap` so 4 buttons can spill on 2
-            rows on extreme widths.
-          - sm+: original side-by-side layout. */}
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2 mb-2">
-        <h1 className="text-xl sm:text-2xl font-bold break-words min-w-0 flex-1">
-          {task.name}
-        </h1>
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end shrink-0">
-          <TaskRunButton
-            id={task.id}
-            name={task.name}
-            isGeneric={task.projectPath === null}
-          />
-          <Link
-            href={`/run?task=${task.id}`}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-            title={`${runCount.toLocaleString('fr-FR')} past run${runCount === 1 ? '' : 's'}`}
-          >
-            <History size={14} /> History ({runCount.toLocaleString('fr-FR')})
-          </Link>
-          <Link
-            href={`/task/${task.id}/edit`}
-            className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            <Pencil size={14} /> Edit
-          </Link>
-          <TaskDeleteButton id={task.id} name={task.name} mandatory={task.mandatory} />
-        </div>
-      </div>
+      {/* Header lifted to the TopBar (Franck 2026-05-22): task name
+          and the 4-button action cluster (Run / History / Edit /
+          Delete) portal up into the global bar via <PageHeader>.
+          The "Manual / Scheduled · agent …" metadata stays in-page
+          because it's context, not a title. */}
+      <PageHeader
+        title={task.name}
+        right={
+          <>
+            <TaskRunButton
+              id={task.id}
+              name={task.name}
+              isGeneric={task.projectPath === null}
+            />
+            <Link
+              href={`/run?task=${task.id}`}
+              className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              title={`${runCount.toLocaleString('fr-FR')} past run${runCount === 1 ? '' : 's'}`}
+            >
+              <History size={14} /> History ({runCount.toLocaleString('fr-FR')})
+            </Link>
+            <Link
+              href={`/task/${task.id}/edit`}
+              className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              <Pencil size={14} /> Edit
+            </Link>
+            <TaskDeleteButton id={task.id} name={task.name} mandatory={task.mandatory} />
+          </>
+        }
+      />
       <p className="text-sm text-slate-500 mb-4">
         {task.schedule === 'manual' ? 'Manual-trigger task' : `Scheduled: ${task.schedule} (${task.timezone})`}
         {' · agent '}

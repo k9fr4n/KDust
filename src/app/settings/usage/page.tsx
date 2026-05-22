@@ -4,6 +4,7 @@ import { resolveRange, type RangeKey } from '@/lib/usage/range';
 import { getAppTimezone } from '@/lib/config';
 import { formatDate } from '@/lib/format';
 import { TimeRangeSelector } from '@/components/TimeRangeSelector';
+import { PageHeader } from '@/components/PageHeader';
 import {
   ArrowLeft,
   BarChart3,
@@ -522,14 +523,11 @@ export default async function UsagePage({
         >
           <ArrowLeft size={14} /> Settings
         </Link>
-        <div className="mt-2 flex flex-wrap items-start gap-3">
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <BarChart3 size={22} className="text-brand-500" /> Usage dashboard
-          </h1>
-          <div className="ml-auto">
-            <TimeRangeSelector current={range.key as RangeKey} />
-          </div>
-        </div>
+        <PageHeader
+          icon={<BarChart3 size={20} className="text-brand-500" />}
+          title="Usage dashboard"
+          right={<TimeRangeSelector current={range.key as RangeKey} />}
+        />
         <p className="text-sm text-slate-500 mt-1">
           Complete stats on KDust activity against Dust. All data is
           sourced from the local KDust database — no workspace-admin

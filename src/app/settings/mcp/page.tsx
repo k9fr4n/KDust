@@ -16,13 +16,14 @@
 // the McpGatewayEditor client component which hits the JSON API.
 
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Plug } from 'lucide-react';
 import { listServers, listFilters } from '@/lib/mcp/gateway-repo';
 import { listSecrets } from '@/lib/secrets/repo';
 import { db } from '@/lib/db';
 import { McpGatewayEditor } from './McpGatewayEditor';
 import { listGatewayTools } from '@/lib/mcp/gateway-client';
 import { loadCatalogToolsBySlug } from '@/lib/mcp/catalog-yaml';
+import { PageHeader } from '@/components/PageHeader';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,6 +66,7 @@ export default async function McpSettingsPage() {
 
   return (
     <div className="max-w-5xl space-y-6">
+      <PageHeader icon={<Plug size={20} />} title="MCP Gateway" />
       <header className="space-y-1">
         <Link
           href="/settings"
@@ -72,7 +74,6 @@ export default async function McpSettingsPage() {
         >
           <ArrowLeft size={14} /> Settings
         </Link>
-        <h1 className="text-2xl font-bold">MCP Gateway</h1>
         <p className="text-sm text-slate-500">
           Docker MCP catalog servers exposed to your Dust agents,
           multiplexed through the sibling{' '}

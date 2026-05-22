@@ -8,10 +8,11 @@
 // confirmation dialogs.
 
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, KeyRound } from 'lucide-react';
 import { listSecrets } from '@/lib/secrets/repo';
 import { SecretsEditor } from './SecretsEditor';
 import { GitCliStatus } from './GitCliStatus';
+import { PageHeader } from '@/components/PageHeader';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,7 @@ export default async function SecretsPage() {
   const secrets = await listSecrets();
   return (
     <div className="max-w-4xl space-y-6">
+      <PageHeader icon={<KeyRound size={20} />} title="Secrets" />
       <header className="space-y-1">
         <Link
           href="/settings"
@@ -29,7 +31,6 @@ export default async function SecretsPage() {
         >
           <ArrowLeft size={14} /> Settings
         </Link>
-        <h1 className="text-2xl font-bold">Secrets</h1>
         <p className="text-sm text-slate-500">
           Credentials stored encrypted at rest (AES-256-GCM via
           <code className="mx-1 rounded bg-slate-100 dark:bg-slate-800 px-1">APP_ENCRYPTION_KEY</code>)

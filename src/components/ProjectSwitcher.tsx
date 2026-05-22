@@ -283,7 +283,12 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
               fades in via the keyframe defined in globals.css. */}
           <div
             onClick={() => setOpen(false)}
-            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-10"
+            // z-[55] sits ABOVE the mobile SideNav overlay (z-50) so
+            // the popover that follows (z-[60]) is fully reachable on
+            // touch devices — otherwise the sidebar caps the scroll
+            // gestures inside its 240px width and the popover renders
+            // partially behind it (Franck 2026-05-22 mobile-scroll bug).
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[55]"
             style={{ animation: 'kd-fade-in 120ms ease-out' }}
             aria-hidden
           />
@@ -309,7 +314,12 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
             // Franck 2026-05-21 bug. The list itself now uses
             // `flex-1 min-h-0 overflow-auto` so it scrolls inside
             // the capped popover.
-            'rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-30 flex flex-col ' +
+            // z-[60] keeps the popover above the mobile SideNav
+            // overlay (z-50). On desktop it's still on top of the
+            // sticky aside (z-30). Coupled with the z-[55] backdrop
+            // above, the panel is fully visible and scrollable on
+            // touch devices.
+            'rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-[60] flex flex-col ' +
             (iconOnly
               // Sidebar-collapsed: anchor to the right of the icon
               // (left-full + ml-2). Width matches the desktop default

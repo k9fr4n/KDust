@@ -57,6 +57,14 @@ function normalizeDocTitle(raw: string, pathname: string): string {
 export function TopBar() {
   const pathname = usePathname() ?? '/';
   const [title, setTitle] = useState<string>(() => pathnameLabel(pathname));
+  // Tracks whether <PageHeader> has portaled a title cluster into
+  // the slot. When true, we suppress the document.title fallback to
+  // avoid showing the page name twice (Franck 2026-05-22 bug: the
+  // previous CSS `:has(#slot:not(:empty))` toggle wasn't reliable
+  // across browsers / Tailwind compilation, so titles appeared both
+  // on the left — from the portal — and on the right — from the
+  // fallback span).
+  const [slotFilled, setSlotFilled] = useState(false);
 
   useEffect(() => {
     const titleEl = document.querySelector('title');
@@ -66,6 +74,16 @@ export function TopBar() {
       setTitle(normalizeDocTitle(document.title, pathname));
     });
     observer.observe(titleEl, { childList: true });
+    return () => observer.disconnect();
+  }, [pathname]);
+
+  useEffect(() => {
+    const slot = document.getElementById('kdust-topbar-title');
+    if (!slot) return;
+    const update = () => setSlotFilled(slot.childElementCount > 0);
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(slot, { childList: true });
     return () => observer.disconnect();
   }, [pathname]);
 
@@ -103,11 +121,13 @@ export function TopBar() {
             PageHeader (e.g. /chat, where the body owns its own
             title) while avoiding a flash of duplicate text.
       */}
-      <div className="flex items-center gap-2 min-w-0 flex-1 [&:has(#kdust-topbar-title:not(:empty))_.kdust-topbar-fallback]:hidden">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
         <PageTitleSlot />
-        <span className="kdust-topbar-fallback text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
-          {title}
-        </span>
+        {!slotFilled && (
+          <span className="text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
+            {title}
+          </span>
+        )}
       </div>
       {/* Page-specific action cluster (icons). The portal target
           lives in <PageActionsSlot/> so pages can render directly

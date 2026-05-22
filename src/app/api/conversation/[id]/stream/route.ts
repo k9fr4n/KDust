@@ -3,6 +3,7 @@ import {
   streamAgentReply,
   toolInvocationsToJson,
   generatedFilesToJson,
+  timelineToJson,
 } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
 import {
@@ -13,6 +14,7 @@ import {
   appendStreamCot,
   appendStreamToolCall,
   setStreamGeneratedFiles,
+  appendStreamTimelineEvent,
   isStreaming,
 } from '@/lib/chat/active-streams';
 
@@ -105,13 +107,30 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
               // passive observer (other tab, reopened chat) can
               // still see the running reply (Franck 2026-04-25 19:36).
               appendStreamContent(id, data);
+              appendStreamTimelineEvent(id, { type: 'text', content: data });
             } else if (kind === 'cot') {
               appendStreamCot(id, data);
+              appendStreamTimelineEvent(id, { type: 'cot', content: data });
             } else if (kind === 'tool_call') {
               // Same rationale, extended to tool invocations
               // (Franck 2026-04-25 19:45). Pills shown by the live
               // and passive consumers are then byte-identical.
               appendStreamToolCall(id, data);
+              // Mirror into the ordered timeline (ADR-0017). The
+              // SSE payload is `{tool, params}` JSON — parse defensively
+              // so a malformed frame can't break the replay state.
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed && typeof parsed.tool === 'string') {
+                  appendStreamTimelineEvent(id, {
+                    type: 'tool',
+                    tool: parsed.tool,
+                    params: parsed.params ?? null,
+                  });
+                }
+              } catch {
+                /* malformed — already counted on the live path */
+              }
             } else if (kind === 'generated_files') {
               // Mirror the latest full file list so a passive
               // observer can render the chips in sync with the
@@ -145,6 +164,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             toolNames: JSON.stringify(result.stats.toolNames),
             toolInvocations: toolInvocationsToJson(result.stats.toolInvocations),
             generatedFiles: generatedFilesToJson(result.stats.generatedFiles),
+            // Inline chronological timeline (Franck 2026-05-22,
+            // ADR-0017). Null when the turn produced no
+            // text/cot/tool events; the bubble then renders via the
+            // legacy grouped layout. Coexists with `content` and
+            // `toolInvocations` which remain canonical for non-/chat
+            // surfaces (search, exports, analytics, /run).
+            timeline: timelineToJson(result.stats.timeline),
             durationMs: result.stats.durationMs,
           },
         });

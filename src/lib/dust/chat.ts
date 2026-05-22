@@ -398,6 +398,22 @@ export async function postUserMessage(
  * It's a superset of the specialised counters (`toolCalls`, `genEvents`)
  * which are just pre-extracted for index-friendly SUM queries.
  */
+/**
+ * Inline timeline event (Franck 2026-05-22, ADR-0017). Captured in
+ * Dust SSE arrival order so /chat can render the agent's turn as a
+ * chronological mix of narration / chain-of-thought / tool calls,
+ * matching the reference web UI. Persisted on `Message.timeline`.
+ *
+ * Text and CoT runs are coalesced: consecutive `generation_tokens`
+ * (resp. `chain_of_thought`) classifications fold into the trailing
+ * node of the same `type`, so the array stores event boundaries —
+ * not token boundaries — keeping the row bounded.
+ */
+export type TimelineEvent =
+  | { type: 'text'; content: string }
+  | { type: 'cot'; content: string }
+  | { type: 'tool'; tool: string; params: unknown };
+
 export interface StreamStats {
   eventCounts: Record<string, number>;
   toolCalls: number;
@@ -410,6 +426,13 @@ export interface StreamStats {
    * (already truncated, see toolInvocationsToJson()) — JSON-safe.
    */
   toolInvocations: Array<{ tool: string; params: unknown }>;
+  /**
+   * Chronological timeline of the turn (Franck 2026-05-22, ADR-0017).
+   * Interleaved text / cot / tool events in arrival order. Powers
+   * the inline /chat rendering. Empty array when the agent produced
+   * nothing renderable (no tokens, no cot, no tool calls).
+   */
+  timeline: TimelineEvent[];
   /**
    * Files surfaced by the agent during this turn (Franck 2026-05-16).
    * Collected from every `agent_action_success.action.generatedFiles`
@@ -516,6 +539,62 @@ export function generatedFilesToJson(
 }
 
 /**
+ * Serialise a `StreamStats.timeline` array for SQLite storage on
+ * `Message.timeline` (Franck 2026-05-22, ADR-0017).
+ *
+ * Strategy:
+ * - Tool `params` are individually capped at 2 KB (same threshold as
+ *   `toolInvocationsToJson`) so a single fat call cannot dominate.
+ * - The whole array is then re-stringified with a hard 200 KB cap;
+ *   CoT can be verbose so we give it ~4× the toolInvocations budget.
+ *   If exceeded, we tail-truncate the array and append a sentinel
+ *   `{ type:'text', content:'…[timeline truncated]…' }` so the
+ *   renderer surfaces the loss instead of silently dropping data.
+ * Returns null when the array is empty so DB rows stay NULL and the
+ * client falls back to the legacy layout.
+ */
+export function timelineToJson(
+  timeline: TimelineEvent[] | null | undefined,
+): string | null {
+  if (!timeline || timeline.length === 0) return null;
+  const PER_PARAM_CAP = 2_000;
+  const TOTAL_CAP = 200_000;
+  const compact: TimelineEvent[] = timeline.map((ev) => {
+    if (ev.type === 'tool') {
+      let params: unknown = ev.params;
+      try {
+        const raw = JSON.stringify(params ?? null);
+        if (raw && raw.length > PER_PARAM_CAP) {
+          params = { _truncated: `${Math.round(raw.length / 1024)}kB` };
+        }
+      } catch {
+        params = { _unserialisable: true };
+      }
+      return { type: 'tool', tool: ev.tool, params };
+    }
+    return ev;
+  });
+  let out = JSON.stringify(compact);
+  if (out.length <= TOTAL_CAP) return out;
+  let lo = 0;
+  let hi = compact.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const candidate = JSON.stringify([
+      ...compact.slice(0, mid),
+      { type: 'text', content: '\n\n…[timeline truncated]…' } as TimelineEvent,
+    ]);
+    if (candidate.length <= TOTAL_CAP) lo = mid;
+    else hi = mid - 1;
+  }
+  out = JSON.stringify([
+    ...compact.slice(0, lo),
+    { type: 'text', content: '\n\n…[timeline truncated]…' } as TimelineEvent,
+  ]);
+  return out;
+}
+
+/**
  * Stream the agent's events in response to a user message. Calls
  * `onToken` for every text delta and returns the final, fully
  * concatenated reply once the stream resolves.
@@ -569,6 +648,26 @@ export async function streamAgentReply(
   // here too so callers (stream route, cron runner, telegram bridge)
   // can persist it on Message.toolInvocations.
   const toolInvocations: Array<{ tool: string; params: unknown }> = [];
+  /**
+   * Inline timeline (Franck 2026-05-22, ADR-0017). Captured in
+   * Dust SSE arrival order so /chat can render text / cot / tool
+   * events interleaved chronologically. Consecutive text-or-cot
+   * tokens fold into the trailing node of the same type via
+   * `pushTimelineToken()` below.
+   */
+  const timeline: TimelineEvent[] = [];
+  const pushTimelineToken = (type: 'text' | 'cot', chunk: string) => {
+    if (!chunk) return;
+    const last = timeline[timeline.length - 1];
+    if (last && last.type === type) {
+      last.content += chunk;
+    } else {
+      timeline.push({ type, content: chunk });
+    }
+  };
+  const pushTimelineTool = (tool: string, params: unknown) => {
+    timeline.push({ type: 'tool', tool, params });
+  };
   // Generated-files accumulator (Franck 2026-05-16). Dust emits the
   // full list on EVERY `agent_action_success` event for the
   // surrounding action, so multi-tool turns repeat fileIds across
@@ -751,6 +850,11 @@ export async function streamAgentReply(
     toolCalls: seenTypes.get('tool_call_started') ?? 0,
     toolNames: Array.from(toolNamesSet),
     toolInvocations: toolInvocations.slice(),
+    timeline: timeline.map((ev) =>
+      ev.type === 'tool'
+        ? { type: 'tool', tool: ev.tool, params: ev.params }
+        : { type: ev.type, content: ev.content },
+    ),
     generatedFiles: generatedFiles.slice(),
     genEvents: seenTypes.get('generation_tokens') ?? 0,
     durationMs: Date.now() - startedAt,
@@ -805,8 +909,10 @@ export async function streamAgentReply(
           ev.classification === 'closing_delimiter'
         ) {
           finalContent += ev.text;
+          pushTimelineToken('text', ev.text);
           onEvent('token', ev.text);
         } else if (ev.classification === 'chain_of_thought') {
+          pushTimelineToken('cot', ev.text);
           onEvent('cot', ev.text);
         }
         break;
@@ -825,6 +931,7 @@ export async function streamAgentReply(
           seenActionIds.add(ev.actionId);
           toolNamesSet.add(toolName);
           toolInvocations.push({ tool: toolName, params });
+          pushTimelineTool(toolName, params);
           onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
         }
         // Dust's frontend (Google LB) occasionally returns transient
@@ -871,6 +978,7 @@ export async function streamAgentReply(
           const params = ev.action.params ?? null;
           toolNamesSet.add(toolName);
           toolInvocations.push({ tool: toolName, params });
+          pushTimelineTool(toolName, params);
           onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
         }
         // Generated-files capture from action.generatedFiles

@@ -40,6 +40,7 @@ import {
   streamAgentReply,
   toolInvocationsToJson,
   generatedFilesToJson,
+  timelineToJson,
 } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
 import { listProjects } from '@/lib/projects';
@@ -1760,6 +1761,7 @@ async function handleTelegramMessageInner(msg: TgMessage): Promise<void> {
         toolNames: JSON.stringify(stats.toolNames),
         toolInvocations: toolInvocationsToJson(stats.toolInvocations),
         generatedFiles: generatedFilesToJson(stats.generatedFiles),
+        timeline: timelineToJson(stats.timeline),
         durationMs: stats.durationMs,
       },
     });

@@ -47,6 +47,14 @@ export async function GET(
      * tab driving the stream. (Franck 2026-05-16)
      */
     streamGeneratedFiles: active?.generatedFiles ?? null,
+    /**
+     * Inline timeline replay buffer (Franck 2026-05-22, ADR-0017).
+     * Ordered array of `{type:'text'|'cot'|'tool', ...}` events
+     * captured in Dust SSE arrival order. Powers the chronological
+     * /chat rendering for passive observers (other tab, mid-stream
+     * reload). Empty array when nothing has been streamed yet.
+     */
+    streamEvents: active?.events ?? [],
   });
 }
 

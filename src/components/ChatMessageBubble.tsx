@@ -16,7 +16,16 @@
  */
 'use client';
 import React, { Fragment, useEffect, useMemo, useState } from 'react';
-import { Copy, Check, Wrench, FileText, Download } from 'lucide-react';
+import {
+  Copy,
+  Check,
+  Wrench,
+  FileText,
+  Download,
+  Boxes,
+  ChevronRight,
+  Brain,
+} from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
 import { UI_FLASH_MS } from '@/lib/constants';
 import { useBlobDownload } from '@/lib/hooks/use-blob-download';
@@ -163,6 +172,26 @@ export function ToolInvocationsPanel({
 export type { ToolInvocation };
 
 /**
+ * Convert a Dust tool identifier ("fs_cli__search_files",
+ * "mcp_gateway__thruk_list_alerts", "list-skills") to a human-
+ * readable label like "Fs Cli Search Files" used as the timeline
+ * row title. We strip leading "mcp__" / "kdust__" prefixes the
+ * gateway sometimes adds, replace separators by spaces, and
+ * title-case every word. Conservative on length so a 4-segment
+ * name still fits one line on a narrow chat column.
+ */
+function prettifyToolName(raw: string): string {
+  return raw
+    .replace(/^mcp__/i, '')
+    .replace(/__/g, ' ')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+/**
  * Inline chronological timeline panel (Franck 2026-05-22, ADR-0017).
  *
  * Renders the agent's turn as a single ordered list interleaving
@@ -213,20 +242,34 @@ export function MessageTimeline({
           );
         }
         if (ev.type === 'cot') {
+          // Borderless, single-line collapsed by default; mirrors
+          // the tool-row shape so thinking blocks read as
+          // first-class entries in the chronological feed instead
+          // of looking like an afterthought.
           return (
             <li key={i} className="max-w-full">
-              <details className="text-xs text-slate-500 italic">
-                <summary className="cursor-pointer select-none">thinking…</summary>
-                <pre className="whitespace-pre-wrap mt-1 pl-3 border-l-2 border-slate-300 dark:border-slate-700 [overflow-wrap:anywhere]">
+              <details className="group max-w-full">
+                <summary
+                  className="cursor-pointer select-none flex items-center gap-2 py-0.5 text-[13px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 marker:hidden [&::-webkit-details-marker]:hidden"
+                >
+                  <Brain size={14} className="flex-none opacity-70" />
+                  <span className="italic flex-none">Thinking</span>
+                  <ChevronRight
+                    size={14}
+                    className="ml-auto flex-none transition-transform group-open:rotate-90 opacity-60"
+                  />
+                </summary>
+                <pre className="mt-1 ml-5 pl-3 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[12px] italic text-slate-500 dark:text-slate-400">
                   {ev.content}
                 </pre>
               </details>
             </li>
           );
         }
-        // Tool event — same visual contract as ToolInvocationsPanel
-        // rows so a turn that mixes timeline+legacy never looks
-        // discontinuous on screen.
+        // Tool event — match the Dust-web reference: single
+        // borderless row, leading "boxes" glyph, prettified name,
+        // optional inline hint, chevron on the right rotating on
+        // open. Whole row is the clickable affordance.
         let pretty: string;
         try {
           pretty = JSON.stringify(ev.params ?? null, null, 2);
@@ -235,42 +278,37 @@ export function MessageTimeline({
         }
         const hasParams = Boolean(pretty) && pretty !== 'null';
         const hint = summarizeParams(ev.params);
+        const label = prettifyToolName(ev.tool);
         return (
           <li key={i} className="max-w-full">
-            <details
-              className="group text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 max-w-full"
-            >
+            <details className="group max-w-full">
               <summary
                 className={
-                  'select-none flex items-center gap-1.5 marker:hidden [&::-webkit-details-marker]:hidden ' +
+                  'select-none flex items-center gap-2 py-0.5 text-[13px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 marker:hidden [&::-webkit-details-marker]:hidden ' +
                   (hasParams ? 'cursor-pointer' : 'cursor-default')
                 }
               >
-                <Wrench size={12} className="text-amber-500 flex-none" />
-                <span className="font-mono text-amber-700 dark:text-amber-400 flex-none">
-                  {ev.tool}
+                <Boxes size={14} className="flex-none opacity-70" />
+                <span className="flex-none" title={ev.tool}>
+                  {label}
                 </span>
                 {hint && (
                   <span
-                    className="text-slate-500 dark:text-slate-400 truncate font-mono text-[11px] min-w-0"
+                    className="text-slate-400 dark:text-slate-500 truncate font-mono text-[11px] min-w-0"
                     title={hint}
                   >
                     {hint}
                   </span>
                 )}
                 {hasParams && (
-                  <>
-                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] group-open:hidden flex-none">
-                      ▸
-                    </span>
-                    <span className="ml-auto text-slate-400 dark:text-slate-500 text-[10px] hidden group-open:inline flex-none">
-                      ▾
-                    </span>
-                  </>
+                  <ChevronRight
+                    size={14}
+                    className="ml-auto flex-none transition-transform group-open:rotate-90 opacity-60"
+                  />
                 )}
               </summary>
               {hasParams && (
-                <pre className="mt-1 pl-2 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-700 dark:text-slate-300">
+                <pre className="mt-1 ml-5 pl-3 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-600 dark:text-slate-400 font-mono">
                   {pretty}
                 </pre>
               )}
@@ -631,41 +669,7 @@ export type ChatBubbleProps = {
    * (covers all pre-ADR rows; no retroactive backfill).
    */
   timelineJson?: string | null;
-  /**
-   * Wall-clock duration of the agent turn, milliseconds (agent
-   * rows only, Franck 2026-05-22). When timeline rendering is
-   * active the bubble wraps the timeline in a collapsed-by-default
-   * `<details>` headed by "Completed in <duration>", mirroring
-   * the Dust web reference: a finished turn collapses to a single
-   * line, click-to-expand reveals the chronological feed. Null
-   * degrades the label to a plain "Completed" (legacy rows or
-   * aborted streams).
-   */
-  durationMs?: number | null;
 };
-
-/**
- * Format a wall-clock duration for the collapsed-turn header
- * ("3s", "47s", "1min 23s", "12min 4s"). Drops the seconds unit
- * once we hit the hour mark to keep the label short. Returns
- * 'Completed' for non-positive / null inputs so the header stays
- * sensible on aborted runs.
- */
-function formatTurnDuration(ms: number | null | undefined): string {
-  if (!ms || ms <= 0 || !Number.isFinite(ms)) return 'Completed';
-  const totalSec = Math.round(ms / 1000);
-  if (totalSec < 60) return `Completed in ${totalSec}s`;
-  const totalMin = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  if (totalMin < 60) {
-    return sec === 0
-      ? `Completed in ${totalMin}min`
-      : `Completed in ${totalMin}min ${sec}s`;
-  }
-  const hr = Math.floor(totalMin / 60);
-  const min = totalMin % 60;
-  return `Completed in ${hr}h ${min}min`;
-}
 
 function ChatMessageBubbleImpl(props: ChatBubbleProps) {
   const {
@@ -677,7 +681,6 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
     toolInvocationsJson,
     generatedFilesJson,
     timelineJson,
-    durationMs,
   } = props;
   const isUser = role === 'user';
   const timeline = useMemo(
@@ -749,28 +752,13 @@ function ChatMessageBubbleImpl(props: ChatBubbleProps) {
             retroactive backfill) and for user/system messages.
            */}
           {role === 'agent' && useTimeline ? (
-            // Collapsed-by-default turn wrapper (Franck 2026-05-22).
-            // Mirrors Dust's web rendering: a completed turn folds
-            // into a single "Completed in Xmin Ys ▸" header; the
-            // user expands to see the full chronological feed.
-            // During streaming the LIVE timeline is rendered
-            // separately in `_ChatClient.tsx` without this wrapper
-            // (always expanded with a blinking caret), so this
-            // branch is only reached for persisted (terminated)
-            // turns where collapsing is the right default.
+            // Inline timeline (Franck 2026-05-22, ADR-0017). The
+            // final answer text stays always visible; only tool
+            // calls and thinking rows are collapsed by default via
+            // their own per-row <details>. Same renderer as the
+            // live stream so nothing snaps when the turn finishes.
             <div className="w-full max-w-full">
-              <details className="group w-full">
-                <summary
-                  className="cursor-pointer select-none flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400 marker:hidden [&::-webkit-details-marker]:hidden hover:text-slate-700 dark:hover:text-slate-300"
-                >
-                  <span className="text-[10px] flex-none group-open:hidden">▸</span>
-                  <span className="text-[10px] flex-none hidden group-open:inline">▾</span>
-                  <span>{formatTurnDuration(durationMs)}</span>
-                </summary>
-                <div className="mt-1.5">
-                  <MessageTimeline events={timeline} />
-                </div>
-              </details>
+              <MessageTimeline events={timeline} />
             </div>
           ) : (
             <>

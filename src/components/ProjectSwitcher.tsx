@@ -123,31 +123,16 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     window.dispatchEvent(
       new CustomEvent('kdust:project-changed', { detail: { name } }),
     );
-    // Hard reload of the current page so every client component
-    // re-runs its useEffect data fetches with the new project scope.
-    // router.refresh() is a SOFT refresh — it re-runs server components
-    // and revalidates the RSC payload, but does NOT re-trigger client
-    // useEffects, which means data already loaded with the previous
-    // project would stay stale until manual interaction. A full reload
-    // is the only reliable cross-page guarantee that everything
-    // (conversations list, runs filter, audit slots, dashboard
-    // counters, MCP fs server handle, …) gets re-fetched against the
-    // new scope.
-    //
-    // Special case (Franck 2026-05-04): when the user is currently
-    // viewing a specific conversation (`/chat/<id>`), reloading would
-    // keep them on a conversation that belongs to the PREVIOUS project,
-    // which contradicts the mental model "switch project = fresh
-    // start". Detect that path shape and navigate to `/chat` instead
-    // so the user lands on a blank composer ready to open a NEW
-    // conversation in the freshly-selected project. The bare `/chat`
-    // page (no `[id]`) is unaffected and reloads in place.
-    const path = window.location.pathname;
-    if (/^\/chat\/[^/]+/.test(path)) {
-      window.location.assign('/chat');
-      return;
-    }
-    window.location.reload();
+    // Switching project = fresh start. Franck 2026-05-23: always
+    // land on the Dashboard regardless of the current route, so the
+    // user gets a clean entry point scoped to the new project (and
+    // every client component re-runs its data fetches via the full
+    // navigation). Using window.location.assign('/') instead of
+    // router.push because we WANT a full reload — router.refresh()
+    // is a soft refresh that does not re-trigger client useEffects,
+    // which would leave stale data (conversations list, MCP fs
+    // server handle, etc.) until manual interaction.
+    window.location.assign('/');
   };
 
   // Filtered + flattened project list (one entry per row, in the same

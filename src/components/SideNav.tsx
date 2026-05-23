@@ -259,9 +259,25 @@ function SideNavItem({
     );
   }
 
+  // Franck 2026-05-23: clicking the active menu item should reload
+  // the page (Next's <Link> is a no-op on same-route by design).
+  // Intercept the click when we're already on this route and force
+  // a hard navigation so server components re-render and client
+  // useEffects re-run with a fresh data set.
+  const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!active) return;
+    // Respect modifier-clicks / non-primary buttons (new-tab etc.).
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    window.location.assign(item.href);
+  };
+
   return (
     <Link
       href={item.href}
+      onClick={onClick}
       title={!expanded ? item.label : undefined}
       aria-current={active ? 'page' : undefined}
       className={

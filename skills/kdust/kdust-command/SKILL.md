@@ -1,6 +1,6 @@
 ---
 name: kdust-command
-description: Authoritative reference for the KDust runner container (the environment in which run_command actually executes). Covers pre-installed binaries (git, gh, glab, docker, curl, jq, yq, rg, python3, node, openssl, ssh, rsync), the no-root / uid 1000 / no-apt-get constraint, GitHub & GitLab auth via the Secret Manager (GITHUB_TOKEN / GITLAB_TOKEN / GITLAB_HOST), the python-venv-per-project pattern, the Docker-out-of-Docker (DooD) caveats, and when to prefer the structured fs-cli tools (read_file, edit_file, search_files, search_content) over shelling out via run_command. Read BEFORE running run_command whenever you are unsure what is installed, how to authenticate against a forge, or whether you can install something.
+description: Authoritative reference for the KDust runner container (the environment in which run_command actually executes). Covers pre-installed binaries (git, gh, glab, docker, curl, jq, yq, rg, ruff, python3, node, openssl, ssh, rsync), the no-root / uid 1000 / no-apt-get constraint, GitHub & GitLab auth via the Secret Manager (GITHUB_TOKEN / GITLAB_TOKEN / GITLAB_HOST), the python-venv-per-project pattern, the Docker-out-of-Docker (DooD) caveats, and when to prefer the structured fs-cli tools (read_file, edit_file, search_files, search_content) over shelling out via run_command. Read BEFORE running run_command whenever you are unsure what is installed, how to authenticate against a forge, or whether you can install something.
 ---
 
 # KDust runner environment

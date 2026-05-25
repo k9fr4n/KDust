@@ -72,6 +72,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_$(dpkg --print-architecture).deb" -o /tmp/glab.deb \
   && dpkg -i /tmp/glab.deb \
   && rm /tmp/glab.deb \
+  # ruff (Astral) — Python linter/formatter ultra-rapide. Installé via
+  # tarball statique officiel (github.com/astral-sh/ruff). Aucune dépendance
+  # Python : binaire self-contained. Pinned pour reproductibilité.
+  && RUFF_VERSION=0.15.14 \
+  && RUFF_ARCH="$(dpkg --print-architecture)" \
+  && case "$RUFF_ARCH" in \
+       amd64) RUFF_TRIPLE=x86_64-unknown-linux-gnu ;; \
+       arm64) RUFF_TRIPLE=aarch64-unknown-linux-gnu ;; \
+       *) echo "unsupported arch for ruff: $RUFF_ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-${RUFF_TRIPLE}.tar.gz" -o /tmp/ruff.tar.gz \
+  && tar -xzf /tmp/ruff.tar.gz -C /tmp \
+  && install -m 0755 "/tmp/ruff-${RUFF_TRIPLE}/ruff" /usr/local/bin/ruff \
+  && rm -rf /tmp/ruff.tar.gz "/tmp/ruff-${RUFF_TRIPLE}" \
   && apt-get purge -y gnupg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \

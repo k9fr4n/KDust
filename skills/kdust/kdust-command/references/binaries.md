@@ -30,6 +30,7 @@ bookworm-slim apt repos and float with rebuilds.
 | `gh` | cli.github.com repo | `gh` | reads `$GITHUB_TOKEN` |
 | `glab` | gitlab-org/cli release | `.deb` pinned | **v1.94.0**, reads `$GITLAB_TOKEN` + `$GITLAB_HOST` |
 | `yq` | mikefarah/yq release | static binary | **v4.44.3**, the Go v4 syntax (NOT the Python yq) |
+| `ruff` | astral-sh/ruff release | static binary | **v0.15.14**, Python linter + formatter (Rust). Self-contained, no Python deps. |
 
 ## NOT installed (common false friends)
 

@@ -314,13 +314,13 @@ Compensating controls:
 ### Custom server: `thruk-mcp` (Thruk / Naemon monitoring)
 
 - Slug: `thruk-mcp` (in `kdust-custom.yaml`)
-- Image: `ghcr.io/k9fr4n/thruk-mcp:latest` (currently `v1.3.0`) —
+- Image: `ghcr.io/k9fr4n/thruk-mcp:latest` (currently `v1.4.0`) —
   first-party, MIT ([k9fr4n/thruk-mcp](https://github.com/k9fr4n/thruk-mcp)).
   The image is gateway-ready out of the box (stdio default,
   non-root `USER`, no stdout banner) so **no wrapper image is
   required**, unlike `ews-mcp`. Pin a `sha256` digest once
   validated to neutralise Watchtower auto-update.
-- 39 tools across:
+- 43 tools across:
   - **Read — state** (9): `thruk_list_hosts`, `thruk_get_host`,
     `thruk_list_services`, `thruk_get_service`,
     `thruk_list_hostgroups`, `thruk_list_servicegroups`,
@@ -346,6 +346,18 @@ Compensating controls:
     `thruk_concurrent_failures` (sliding-window detection of
     multi-host outages), `thruk_recurring_problems` (chronic
     objects with repeated alerts over a window).
+  - **Read — availability / SLA** (3, v1.4):
+    `thruk_host_availability` (uptime % for a host over a
+    configurable window with optional `timeperiod` override
+    like `lastmonth`), `thruk_service_availability` (same for
+    a service: ok / warning / critical / unknown %),
+    `thruk_hostgroup_availability` (per-host or per-service
+    breakdown for a hostgroup, sorted worst-first).
+  - **Write — notifications control** (1, v1.4):
+    `thruk_notifications` (enable/disable notifications for a
+    host or service; `cascade=true` propagates to every service
+    of the host). Keep behind `THRUK_READ_ONLY=true` or an
+    explicit `THRUK_ENABLED_TOOLS` allowlist until validated.
   - **Write — downtime management** (8): `thruk_schedule_*_downtime`
     (host / service / hostgroup / servicegroup / propagated /
     host_services) + `thruk_delete_downtime` /

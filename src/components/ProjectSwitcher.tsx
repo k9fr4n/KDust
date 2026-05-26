@@ -61,13 +61,12 @@ function HighlightedPath({ path, query }: { path: string; query: string }) {
  * Smart project switcher (Franck 2026-05-27).
  *
  * Behaviour:
- *  - Trigger: shows the current project name (or "Switch project" placeholder
- *    when none is selected). No more "root" affordance — the route
- *    `/` is still reachable by URL / cookie absence, just not surfaced here.
- *  - Empty query: NO rows. The bar is intentionally empty by default
- *    (Franck 2026-05-27) — more affordances will land later. Recent-
- *    project tracking still runs in localStorage so we can light them
- *    up in a future iteration without a migration.
+ *  - Trigger: neutral label only ("Switch project"). The current
+ *    project name is NOT displayed here (Franck 2026-05-27, second
+ *    iteration) — it lives in the page header / sidebar instead.
+ *  - Empty query: up to 5 most-recently-used **folders OR projects**
+ *    (localStorage), classified at render time against the live
+ *    project list. Stale entries (deleted/moved) are silently skipped.
  *  - With query: smart search across **folders AND projects**. For each
  *    matching path prefix derived from project fsPaths, we emit one row.
  *    Example, query "ecritel":
@@ -87,6 +86,7 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
   const [current, setCurrent] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
+  const [recent, setRecent] = useState<string[]>([]);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -120,6 +120,7 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     if (open) {
       setQuery('');
       setActiveIdx(0);
+      setRecent(loadRecent());
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
@@ -136,10 +137,11 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     window.location.assign(`/${fsPath.replace(/^\/+/, '')}`);
   };
 
-  /** Folder pick: navigate only (ADR-0020 parity dashboard). No cookie
-   *  write — folders aren't projects and POST /api/current-project
-   *  would 404 on a non-project path. */
+  /** Folder pick: track in recents, navigate to the ADR-0020 parity
+   *  dashboard. No cookie write — folders aren't projects and POST
+   *  /api/current-project would 404 on a non-project path. */
   const navigateFolder = (path: string) => {
+    pushRecent(path);
     setOpen(false);
     window.location.assign(`/${path.replace(/^\/+/, '')}`);
   };
@@ -148,12 +150,47 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     | { kind: 'project'; project: Project; value: string; depth: number }
     | { kind: 'folder'; value: string; depth: number; count: number };
 
+  /** Classify a stored recent path as either a project, a folder
+   *  (with descendant count), or null when stale. */
+  const classify = (
+    path: string,
+  ): Row | null => {
+    const proj = projects.find((p) => (p.fsPath ?? p.name) === path);
+    if (proj) {
+      return {
+        kind: 'project',
+        project: proj,
+        value: path,
+        depth: path.split('/').filter(Boolean).length,
+      };
+    }
+    const prefix = path + '/';
+    const count = projects.filter((p) =>
+      (p.fsPath ?? p.name).startsWith(prefix),
+    ).length;
+    if (count === 0) return null;
+    return {
+      kind: 'folder',
+      value: path,
+      depth: path.split('/').filter(Boolean).length,
+      count,
+    };
+  };
+
   const rows = useMemo<Row[]>(() => {
     const q = query.trim().toLowerCase();
 
-    // ---- Empty query: no rows. The bar is intentionally bare by
-    // default (Franck 2026-05-27); more affordances land later.
-    if (!q) return [];
+    // ---- Empty query: up to 5 most-recent (folder or project) rows.
+    // Stale entries (project deleted, folder empty) are filtered out.
+    if (!q) {
+      const out: Row[] = [];
+      for (const v of recent) {
+        const r = classify(v);
+        if (r) out.push(r);
+        if (out.length >= RECENT_MAX) break;
+      }
+      return out;
+    }
 
     // ---- Smart search: enumerate every path prefix containing the query.
     // Folder rows are deduped; a prefix that exactly matches an existing
@@ -212,7 +249,10 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
       return va.localeCompare(vb);
     });
     return all;
-  }, [projects, query]);
+    // `classify` is derived from `projects` and is pure — safe to omit
+    // from deps to keep the memo stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, query, recent]);
 
   useEffect(() => {
     setActiveIdx((i) => Math.min(Math.max(i, 0), Math.max(rows.length - 1, 0)));
@@ -249,7 +289,9 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     }
   };
 
-  const triggerLabel = current ?? 'Switch project';
+  // Trigger label is intentionally neutral — the active project name
+  // is surfaced elsewhere (page header / sidebar), not here.
+  const triggerLabel = 'Switch project';
 
   return (
     <div ref={ref} className="relative">
@@ -260,17 +302,17 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
           aria-expanded={open}
           className="flex items-center justify-center h-10 w-full rounded-md text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
           title={triggerLabel}
-          aria-label={'Switch project (current: ' + triggerLabel + ')'}
+          aria-label={triggerLabel}
         >
-          <FolderGit2 size={18} />
+          <Search size={18} />
         </button>
       ) : (
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-2 h-9 px-3 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 w-full md:w-auto md:max-w-[200px] lg:max-w-[260px]"
+          className="flex items-center gap-2 h-9 px-3 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 w-full md:w-auto md:max-w-[200px] lg:max-w-[260px] text-slate-500 dark:text-slate-400"
           title={triggerLabel}
         >
-          <FolderGit2 size={14} className="shrink-0" />
+          <Search size={14} className="shrink-0" />
           <span className="truncate">{triggerLabel}</span>
           <ChevronDown size={14} className="text-slate-400 shrink-0" />
         </button>
@@ -326,6 +368,11 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
               ref={listRef}
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
             >
+              {!query && rows.length > 0 && (
+                <div className="px-3 pt-1 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
+                  Recent
+                </div>
+              )}
               {rows.map((r, i) => {
                 const isActive = i === activeIdx;
                 if (r.kind === 'folder') {
@@ -378,11 +425,12 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
               {projects.length === 0 && (
                 <p className="px-3 py-2 text-xs text-slate-500">No projects yet.</p>
               )}
-              {projects.length > 0 && !query && (
+              {projects.length > 0 && !query && rows.length === 0 && (
                 <p className="px-3 py-6 text-xs text-slate-400 text-center">
                   Type to search folders and projects.
                 </p>
               )}
+
               {projects.length > 0 && query && rows.length === 0 && (
                 <p className="px-3 py-3 text-xs text-slate-500 text-center">
                   No folder or project matches «{query}».

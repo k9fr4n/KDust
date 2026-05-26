@@ -1,9 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronRight } from 'lucide-react';
 import { PageActionsSlot, PageTitleSlot } from './PageActionsProvider';
 
 /**
@@ -46,72 +44,6 @@ function pathnameLabel(pathname: string): string {
     if (re.test(pathname)) return label;
   }
   return 'KDust';
-}
-
-// Reserved top-level segments that must NOT be treated as folder /
-// project segments. Mirrors RESERVED_URL_NAMES in folder-path.ts —
-// kept inline here so this client module has no server import.
-const RESERVED_SEGMENTS = new Set([
-  'chat', 'task', 'run', 'conversation', 'logs', 'about',
-  'settings', 'login', 'api', 'dust', '_next', 'favicon.ico',
-]);
-
-// Sub-page labels (last segment after the project / folder prefix).
-const SUBPAGE_LABELS: Record<string, string> = {
-  chat: 'Chat',
-  task: 'Tasks',
-  run: 'Runs',
-  conversation: 'Conversations',
-};
-
-type Crumb = { label: string; href: string };
-
-/**
- * Parse a pathname into a breadcrumb crumb list for the project-
- * scoped URL tree (ADR-0020). Returns null when the pathname is a
- * legacy / system route (e.g. /chat, /settings) — caller falls
- * back to the document.title-driven label.
- *
- * Examples:
- *   /Perso                                  → [Perso]
- *   /Perso/fsallet                          → [Perso, fsallet]
- *   /Perso/fsallet/KDust                    → [Perso, fsallet, KDust]
- *   /Perso/fsallet/KDust/chat               → [Perso, fsallet, KDust, Chat]
- *   /Perso/fsallet/KDust/chat/conv-id       → [Perso, fsallet, KDust, Chat, conv-id]
- *   /chat | /settings | /logs               → null (legacy / system)
- */
-function parseBreadcrumb(pathname: string): Crumb[] | null {
-  const parts = pathname.split('/').filter(Boolean);
-  if (parts.length === 0) return null;
-  if (RESERVED_SEGMENTS.has(parts[0])) return null;
-  const crumbs: Crumb[] = [];
-  // Up to 3 first segments are folder / project nodes; their label
-  // is the segment itself (URL slug == display name per the
-  // reserved-name validation).
-  const max = Math.min(parts.length, 3);
-  for (let i = 0; i < max; i++) {
-    const seg = parts[i];
-    if (RESERVED_SEGMENTS.has(seg)) break;
-    crumbs.push({
-      label: seg,
-      href: '/' + parts.slice(0, i + 1).join('/'),
-    });
-  }
-  // 4th segment, if a known sub-page, becomes the last crumb.
-  if (parts.length > crumbs.length) {
-    const sub = parts[crumbs.length];
-    const label = SUBPAGE_LABELS[sub];
-    if (label) {
-      // Build the sub-page href on top of the deepest project-scope
-      // crumb so clicking it brings the user back to the section
-      // root (instead of the deep [id] page).
-      crumbs.push({
-        label,
-        href: '/' + parts.slice(0, crumbs.length + 1).join('/'),
-      });
-    }
-  }
-  return crumbs.length > 0 ? crumbs : null;
 }
 
 function normalizeDocTitle(raw: string, pathname: string): string {
@@ -190,50 +122,15 @@ export function TopBar() {
             title) while avoiding a flash of duplicate text.
       */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
-        {(() => {
-          const crumbs = parseBreadcrumb(pathname);
-          if (crumbs && crumbs.length > 0) {
-            // Project-scoped URL — breadcrumb wins over the
-            // PageHeader portal and the document.title fallback.
-            return (
-              <nav
-                aria-label="Breadcrumb"
-                className="flex min-w-0 items-center gap-1 text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100"
-              >
-                {crumbs.map((c, i) => {
-                  const last = i === crumbs.length - 1;
-                  return (
-                    <span key={c.href} className="flex min-w-0 items-center gap-1">
-                      {i > 0 && (
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                      )}
-                      {last ? (
-                        <span className="truncate">{c.label}</span>
-                      ) : (
-                        <Link
-                          href={c.href}
-                          className="truncate text-slate-600 hover:text-slate-900 hover:underline dark:text-slate-300 dark:hover:text-slate-100"
-                        >
-                          {c.label}
-                        </Link>
-                      )}
-                    </span>
-                  );
-                })}
-              </nav>
-            );
-          }
-          return (
-            <>
-              <PageTitleSlot />
-              {!slotFilled && (
-                <span className="text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
-                  {title}
-                </span>
-              )}
-            </>
-          );
-        })()}
+        {/* Hierarchy path is rendered as the first line of the
+            page body via <ScopePath /> — the TopBar only carries
+            the page name (Franck 2026-05-26 22:50). */}
+        <PageTitleSlot />
+        {!slotFilled && (
+          <span className="text-sm font-semibold tracking-tight truncate min-w-0 text-slate-900 dark:text-slate-100">
+            {title}
+          </span>
+        )}
       </div>
       {/* Page-specific action cluster (icons). The portal target
           lives in <PageActionsSlot/> so pages can render directly

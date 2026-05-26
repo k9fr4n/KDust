@@ -53,13 +53,58 @@ type Item = {
   requiresProject?: boolean;
 };
 
-const ITEMS: Item[] = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/conversation', label: 'Conversation', icon: MessageSquare },
-  { href: '/chat', label: 'Chat', icon: MessagesSquare },
-  { href: '/run', label: 'Run', icon: Activity },
-  { href: '/task', label: 'Task', icon: Clock },
+/**
+ * Item.href stored as a sub-page slug (or '' for Dashboard). The
+ * actual link is built at render time by prefixing the current
+ * scope path (ADR-0020 follow-up, Franck 2026-05-26 22:06): on
+ * `/Perso/fsallet/KDust/<sub>` the Chat tab points at
+ * `/Perso/fsallet/KDust/chat`, not the legacy /chat. That way
+ * clicking a menu entry preserves the breadcrumb and gives the
+ * folder views the same Chat/Task/Run/Conversation tabs as a
+ * project.
+ */
+type ItemSlug = '' | 'conversation' | 'chat' | 'run' | 'task';
+
+const ITEMS: Array<Omit<Item, 'href'> & { slug: ItemSlug }> = [
+  { slug: '',             label: 'Dashboard',    icon: LayoutDashboard },
+  { slug: 'conversation', label: 'Conversation', icon: MessageSquare },
+  { slug: 'chat',         label: 'Chat',         icon: MessagesSquare },
+  { slug: 'run',          label: 'Run',          icon: Activity },
+  { slug: 'task',         label: 'Task',         icon: Clock },
 ];
+
+// Mirrors RESERVED_URL_NAMES from src/lib/folder-path.ts — duplicated
+// here so this client module has no server import. Keep in sync.
+const RESERVED_SEGMENTS = new Set([
+  'chat', 'task', 'run', 'conversation', 'logs', 'about',
+  'settings', 'login', 'api', 'dust', '_next', 'favicon.ico',
+]);
+
+/**
+ * Extract the scope prefix from a pathname (up to 3 leading
+ * non-reserved segments). Used to prefix the SideNav items so the
+ * active hierarchy node carries through the menu.
+ *
+ *   /Perso/fsallet/KDust            \u2192 /Perso/fsallet/KDust
+ *   /Perso/fsallet/KDust/chat       \u2192 /Perso/fsallet/KDust
+ *   /Perso/fsallet/task             \u2192 /Perso/fsallet
+ *   /chat | /settings | /logs       \u2192 ''  (legacy / system route)
+ */
+function scopePrefixFromPath(pathname: string): string {
+  const parts = pathname.split('/').filter(Boolean);
+  const head: string[] = [];
+  for (const p of parts) {
+    if (RESERVED_SEGMENTS.has(p)) break;
+    head.push(p);
+    if (head.length === 3) break;
+  }
+  return head.length ? '/' + head.join('/') : '';
+}
+
+function buildItemHref(prefix: string, slug: ItemSlug): string {
+  if (!slug) return prefix || '/';
+  return prefix ? `${prefix}/${slug}` : `/${slug}`;
+}
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
@@ -201,15 +246,21 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
-          {ITEMS.map((it) => (
-            <SideNavItem
-              key={it.href}
-              item={it}
-              pathname={pathname}
-              expanded={expanded}
-              disabled={!!it.requiresProject && !projectScoped}
-            />
-          ))}
+          {(() => {
+            const prefix = scopePrefixFromPath(pathname);
+            return ITEMS.map((it) => {
+              const href = buildItemHref(prefix, it.slug);
+              return (
+                <SideNavItem
+                  key={it.slug || 'dashboard'}
+                  item={{ href, label: it.label, icon: it.icon, requiresProject: it.requiresProject }}
+                  pathname={pathname}
+                  expanded={expanded}
+                  disabled={!!it.requiresProject && !projectScoped}
+                />
+              );
+            });
+          })()}
         </nav>
 
         <div className="border-t border-slate-200 dark:border-slate-800 p-2 flex flex-col gap-1">

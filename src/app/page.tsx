@@ -114,7 +114,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
   // Root  : list L1 folders  (db.folder where parentId=null)
   // Folder: list direct children (sub-folders + projects)
   // Project: no children section (the dashboard tiles are the focus).
-  type ChildLink = { key: string; href: string; label: string; sub?: string };
+  type ChildLink = { key: string; href: string; label: string; sub?: string; parent?: boolean };
   let children: ChildLink[] = [];
   if (scope.kind === 'root') {
     const l1 = await db.folder.findMany({
@@ -129,6 +129,22 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       sub: `${f._count.children}/${f._count.projects}`,
     }));
   } else if (scope.kind === 'folder') {
+    // Parent navigation tile (Franck 2026-05-26 22:06): on a
+    // non-root folder, surface a back-to-parent shortcut at the
+    // head of the children section so the user does not need to
+    // rely on the breadcrumb or the browser back button.
+    const parts = scope.fsPath.split('/').filter(Boolean);
+    const parentFsPath = parts.slice(0, -1).join('/');
+    const parentHref = parentFsPath ? `/${parentFsPath}` : '/';
+    const parentLabel = parentFsPath
+      ? parts[parts.length - 2]
+      : 'Root';
+    children.push({
+      key: 'parent',
+      href: parentHref,
+      label: `\u2191 ${parentLabel}`,
+      parent: true,
+    });
     const [subfolders, projs] = await Promise.all([
       db.folder.findMany({
         where: { parentId: scope.folder.id },
@@ -200,9 +216,14 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
               <Link
                 key={c.key}
                 href={c.href}
-                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600"
+                className={
+                  'inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition ' +
+                  (c.parent
+                    ? 'border-slate-300 bg-slate-50 text-slate-600 hover:border-slate-400 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600')
+                }
               >
-                <FolderGit2 size={14} className="text-amber-500" />
+                {!c.parent && <FolderGit2 size={14} className="text-amber-500" />}
                 {c.label}
                 {c.sub ? <span className="text-xs text-slate-400">({c.sub})</span> : null}
               </Link>

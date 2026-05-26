@@ -193,6 +193,13 @@ export async function PATCH(
     if (typeof body.name !== 'string') {
       return badRequest('name must be a string');
     }
+    // ADR-0020: project leaf names cannot collide with top-level URL
+    // segments. Apply BEFORE renameProject so an invalid name never
+    // mutates disk.
+    const { isReservedName } = await import('@/lib/folder-path');
+    if (isReservedName(body.name)) {
+      return badRequest(`"${body.name}" is a reserved URL segment (ADR-0020)`);
+    }
     const r = await renameProject(id, body.name);
     if (!r.ok) {
       const status =

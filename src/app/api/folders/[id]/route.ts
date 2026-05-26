@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { renameFolder, deleteFolderIfEmpty } from '@/lib/folder-ops';
+import { isReservedName } from '@/lib/folder-path';
 import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
@@ -39,6 +40,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (name.length === 0) return badRequest('name is required');
   if (name.length > 64) return badRequest('name is too long (max 64 chars)');
   if (!NAME_RE.test(name)) return badRequest(NAME_HINT);
+  // ADR-0020: reserved URL segments cannot be used as folder names.
+  if (isReservedName(name)) {
+    return badRequest(`"${name}" is a reserved URL segment (ADR-0020)`);
+  }
   const r = await renameFolder(id, name);
   if (!r.ok) {
     const status =

@@ -2136,3 +2136,112 @@ is discarded by the bucketing.
 3-bucket live rendering in `_ChatClient.tsx`, ignore the
 `timeline` column at read time. Column stays nullable in the
 schema; no down-migration needed.
+
+### ADR-0020 — Project-scoped URLs & folder aggregation (2026-05-26)
+
+**Status**. Accepted (Franck 2026-05-26).
+
+**Context**. Every page lived at a flat top-level route
+(`/chat`, `/task`, `/run`, `/conversation`) and the active
+project was carried implicitly via the `kdust_project` cookie.
+Users could not tell from the URL or the browser tab which
+project they were looking at; bookmarks and shared links lost
+the project scope; and the folder hierarchy (depth-2, ADR in
+`src/lib/folder-path.ts`) was visible only in the project
+switcher, never as a navigable tree.
+
+**Decision**. Reflect the folder/project hierarchy in URLs and
+titles. Folders and projects share the same UI shape (Dashboard
++ `chat` / `conversation` / `run` / `task` tabs); folder views
+aggregate their descendants in **read-only** mode.
+
+1. **URL shape — fixed segments, depth ≤ 3.**
+
+   ```
+   /                         → global dashboard + L1 folder list
+   /<l1>                     → folder dashboard (L2s + projects)
+   /<l1>/<l2>                → folder dashboard (projects)
+   /<l1>/<l2>/<project>      → project dashboard
+   /<…above>/chat            → chat (scoped)
+   /<…above>/chat/[id]
+   /<…above>/conversation
+   /<…above>/run
+   /<…above>/run/[id]
+   /<…above>/task
+   /<…above>/task/new        (project leaf only — disabled on folders)
+   /<…above>/task/[id]
+   ```
+
+   Implementation: `src/app/[l1]/[l2]/[project]/<sub>/page.tsx`
+   trees. Folder pages live at `src/app/[l1]/page.tsx` and
+   `src/app/[l1]/[l2]/page.tsx`. The catch-all option was
+   rejected to keep RSC file-per-route benefits and explicit
+   typing.
+
+2. **Reserved names blacklist.** L1/L2 folder names AND project
+   names cannot match (case-insensitive) any of: `chat`, `task`,
+   `run`, `conversation`, `logs`, `about`, `settings`, `login`,
+   `api`, `dust`, `_next`, `favicon.ico`. Enforced in
+   `POST/PATCH /api/folders` and `POST/PATCH /api/projects`,
+   plus a validator exported from `src/lib/folder-path.ts` so
+   creation forms can pre-flight.
+
+3. **Folder = read-only aggregate.** A folder view filters by
+   `projectPath` (resp. `projectName` for conversations) using
+   `startsWith('<fsPath>/')` OR exact match. Creation buttons
+   (`New chat`, `New task`, `New run`) are disabled with a
+   tooltip ("Pick a project") on folder routes. The `New` flow
+   stays on project-leaf routes only.
+
+4. **Generic tasks everywhere.** Tasks with `projectPath = null`
+   appear at the top of every `/…/task` listing (root, folder,
+   project), per the existing `/task` page convention.
+
+5. **Cookie role.** `kdust_project` is **not** the source of
+   truth anymore: the URL is. The cookie is updated server-side
+   on every project-leaf page visit ("last visited") so that:
+   - Telegram bridge & MCP `current-project` keep working.
+   - Top-level legacy routes (`/chat`, `/task`, `/run`,
+     `/conversation`) keep their existing behaviour: if a cookie
+     is set, they render the same view as before (no redirect);
+     otherwise they render the all-projects mode.
+
+   No legacy URL redirect is performed (Franck 2026-05-26).
+
+6. **`ProjectSwitcher` becomes a navigation.** Selecting a
+   project navigates to `/<fsPath>` instead of `POST
+   /api/current-project + reload('/')`. The cookie write happens
+   server-side on the destination page. `Clear` returns to `/`.
+
+7. **Breadcrumb-driven title.** `TopBar` renders a clickable
+   breadcrumb derived from the URL: each segment links to its
+   ancestor (`/Perso`, `/Perso/fsallet`, `/Perso/fsallet/KDust`)
+   followed by the page label (`Chat`). `document.title` keeps
+   the template `<page> · KDust` for browser-tab readability
+   (e.g. `Chat — Perso/fsallet/KDust · KDust`).
+
+**Consequences**.
+
++ URLs and tab titles convey project scope; bookmarks and
+  shared links preserve it.
++ Folders become first-class browsable nodes — no extra UI to
+  learn (same tabs as a project).
++ The cookie keeps working for non-URL contexts (Telegram,
+  MCP).
+- The `[l1]/[l2]/[project]` subtree duplicates the route folder
+  structure of `chat`, `conversation`, `run`, `task`. Each
+  `page.tsx` re-exports the existing client component,
+  parametrised by `projectPath` resolved from URL params.
+  Tolerable given that client components are reused as-is.
+- Two filter modes coexist in DB queries (exact for projects,
+  `startsWith` for folders). Centralised in a `scopedWhere`
+  helper to avoid drift.
+- Reserved-name validation introduces a (very small) chance of
+  rejecting an existing pre-migration folder/project. A
+  boot-time check in `src/instrumentation.ts` warns to the log
+  buffer; no hard rename forced.
+
+**Rollback**. Delete the `[l1]/[l2]/[project]` subtree and the
+folder pages. `ProjectSwitcher` reverts to the cookie+reload
+behaviour (one-line patch). The reserved-name validator can
+stay (harmless). Cookie semantics are unchanged.

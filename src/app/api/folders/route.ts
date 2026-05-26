@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { classifyFolderDepth } from '@/lib/folder-path';
+import { classifyFolderDepth, isReservedName } from '@/lib/folder-path';
 import { badRequest, conflict } from "@/lib/api/responses";
 import { errCode } from '@/lib/errors';
 
@@ -87,6 +87,12 @@ export async function POST(req: Request) {
   if (name.length === 0) return badRequest('name is required');
   if (name.length > 64) return badRequest('name is too long (max 64 chars)');
   if (!NAME_RE.test(name)) return badRequest(NAME_HINT);
+  // ADR-0020: reserved URL segments cannot be used as folder
+  // names — they'd collide with the `/<l1>/<l2>/<project>/<sub>`
+  // routing introduced in May 2026.
+  if (isReservedName(name)) {
+    return badRequest(`"${name}" is a reserved URL segment (ADR-0020)`);
+  }
 
   if (parentId) {
     // Only root folders may host children. depth==='root' covers

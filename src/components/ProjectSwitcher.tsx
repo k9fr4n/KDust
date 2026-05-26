@@ -114,25 +114,25 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
   }, [open]);
 
   const select = async (name: string | null) => {
+    // ADR-0020 (Franck 2026-05-26): the URL is the source of truth.
+    // Navigate to /<fsPath> (or '/' for "All projects"); the
+    // middleware then mirrors kdust_project cookie from the path
+    // for legacy contexts (Telegram bridge, MCP current-project).
+    // We KEEP the POST /api/current-project so legacy clients
+    // already counting on it (and the cookie write when name=null)
+    // observe consistent state on the way out.
     await apiSend('POST', '/api/current-project', { name });
     if (name) pushRecent(name);
     setCurrent(name);
     setOpen(false);
-    // Notify any in-page listener that wants to react WITHOUT a reload
-    // (e.g. the chat side-pane re-fetches its conversation list).
     window.dispatchEvent(
       new CustomEvent('kdust:project-changed', { detail: { name } }),
     );
-    // Switching project = fresh start. Franck 2026-05-23: always
-    // land on the Dashboard regardless of the current route, so the
-    // user gets a clean entry point scoped to the new project (and
-    // every client component re-runs its data fetches via the full
-    // navigation). Using window.location.assign('/') instead of
-    // router.push because we WANT a full reload — router.refresh()
-    // is a soft refresh that does not re-trigger client useEffects,
-    // which would leave stale data (conversations list, MCP fs
-    // server handle, etc.) until manual interaction.
-    window.location.assign('/');
+    // Full reload (assign) instead of router.push: same rationale as
+    // before — client useEffects need to re-run with the new project
+    // context (chat MCP handles, conversation list, …).
+    const target = name ? `/${name.replace(/^\/+/, '')}` : '/';
+    window.location.assign(target);
   };
 
   // Filtered + flattened project list (one entry per row, in the same

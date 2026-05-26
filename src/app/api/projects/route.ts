@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
-import { computeProjectFsPath } from '@/lib/folder-path';
+import { computeProjectFsPath, isReservedName } from '@/lib/folder-path';
 import { badRequest, conflict } from "@/lib/api/responses";
 import { errCode } from '@/lib/errors';
 
@@ -48,6 +48,12 @@ export async function GET() {
 export async function POST(req: Request) {
   const parsed = Input.safeParse(await req.json());
   if (!parsed.success) return badRequest(parsed.error.format());
+
+  // ADR-0020: project leaf names cannot collide with top-level URL
+  // segments (chat / task / run / conversation / settings / …).
+  if (isReservedName(parsed.data.name)) {
+    return badRequest(`"${parsed.data.name}" is a reserved URL segment (ADR-0020)`);
+  }
 
   // Normalize: empty gitUrl strings become null so the runtime
   // (sync / push pipeline / buildGitLinks) can use a single

@@ -91,6 +91,64 @@ export async function resolveProjectByPathOrName(value: string): Promise<Project
   return db.project.findFirst({ where: { name: value } });
 }
 
+// ---------------------------------------------------------------
+// Reserved names (ADR-0020, 2026-05-26).
+//
+// L1/L2 folder names AND project names must NOT collide with any
+// top-level URL segment owned by the app, otherwise the new
+// `/<l1>/<l2>/<project>/<sub>` routing collapses ambiguously with
+// the legacy `/chat`, `/task`, `/run`, `/conversation`, `/logs`,
+// `/about`, `/settings`, `/login`, `/api`, `/dust` routes.
+//
+// Comparison is case-insensitive. Validation is enforced at the
+// API layer (POST/PATCH on /api/folders and /api/projects) and
+// pre-flighted from creation forms. A boot-time scan in
+// `src/instrumentation.ts` warns when pre-migration data collides
+// — no hard rename is forced.
+// ---------------------------------------------------------------
+
+export const RESERVED_URL_NAMES: readonly string[] = [
+  'chat',
+  'task',
+  'run',
+  'conversation',
+  'logs',
+  'about',
+  'settings',
+  'login',
+  'api',
+  'dust',
+  '_next',
+  'favicon.ico',
+];
+
+/** Case-insensitive membership check. */
+export function isReservedName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return RESERVED_URL_NAMES.includes(n);
+}
+
+/**
+ * Validate a folder/project leaf name against the reserved list AND
+ * against a minimal URL-segment shape (no slash, no leading dot, no
+ * whitespace, length 1..64). Returns null on success or a short
+ * error message on failure. Consumers compose this with their own
+ * (more permissive) shape rules.
+ */
+export function validateUrlSafeName(name: string): string | null {
+  if (typeof name !== 'string') return 'name must be a string';
+  const trimmed = name.trim();
+  if (!trimmed) return 'name is required';
+  if (trimmed.length > 64) return 'name too long (max 64)';
+  if (/[\\/]/.test(trimmed)) return 'name cannot contain a slash';
+  if (/\s/.test(trimmed)) return 'name cannot contain whitespace';
+  if (trimmed.startsWith('.')) return 'name cannot start with a dot';
+  if (isReservedName(trimmed)) {
+    return `"${trimmed}" is a reserved URL segment (ADR-0020)`;
+  }
+  return null;
+}
+
 /**
  * Folder validation helpers for API layer (Phase 2, 2026-04-27).
  * Centralises the depth-2 invariant check so /api/folders POST/PATCH

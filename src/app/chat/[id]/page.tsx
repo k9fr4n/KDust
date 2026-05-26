@@ -1,5 +1,8 @@
 import { db } from '@/lib/db';
 import ChatClient from '../_ChatClient';
+import { getCurrentScope } from '@/lib/project-url';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * /chat/[id] — deep-link to a specific conversation.
@@ -29,5 +32,17 @@ export default async function ChatDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <ChatClient initialConversationId={id} />;
+  const scope = await getCurrentScope();
+  return (
+    <ChatClient
+      initialConversationId={id}
+      initialScope={{
+        kind: scope.kind,
+        fsPath: scope.fsPath,
+        projectName: scope.kind === 'project' ? scope.project.fsPath : null,
+        defaultAgentSId:
+          scope.kind === 'project' ? scope.project.defaultAgentSId ?? null : null,
+      }}
+    />
+  );
 }

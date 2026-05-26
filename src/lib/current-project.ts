@@ -6,7 +6,7 @@ export const CURRENT_PROJECT_COOKIE = 'kdust_project';
 
 /**
  * Returns the currently selected project (multi-tenant) from the
- * cookie, or null when in "All projects" mode (cookie missing or
+ * cookie, or null when in "root" mode (cookie missing or
  * invalid).
  *
  * Since 2026-04-27 (Phase 1 folder hierarchy), the cookie stores the

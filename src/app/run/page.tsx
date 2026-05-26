@@ -524,7 +524,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                       <OpenConversationLink> still POSTs to
                       /api/conversation/:id/open first to set the project
                       cookie before navigating, otherwise the /chat guard
-                      bounces the user when coming from "All Projects".
+                      bounces the user when coming from "root".
                     */}
                     <div className="inline-flex items-center gap-1">
                       {(() => {

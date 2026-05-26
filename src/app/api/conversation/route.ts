@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { createDustConversation } from '@/lib/dust/chat';
@@ -7,8 +8,26 @@ import { badRequest } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
 
-export async function GET() {
-  const project = await getCurrentProjectName();
+export async function GET(req: Request) {
+  // ADR-0020 follow-up (Franck 2026-05-26 21:29): the chat
+  // sidebar passes the active hierarchy node as query params so
+  // the listing matches the page URL (folder \u2192 startsWith,
+  // project \u2192 exact, root \u2192 no filter). When both query params
+  // are absent we fall back to the legacy cookie-based filter.
+  const url = new URL(req.url);
+  const scopeKind = url.searchParams.get('scopeKind');
+  const scope = url.searchParams.get('scope');
+  let where: Prisma.ConversationWhereInput | undefined;
+  if (scopeKind === 'project' && scope) {
+    where = { projectName: scope };
+  } else if (scopeKind === 'folder' && scope) {
+    where = { projectName: { startsWith: `${scope}/` } };
+  } else if (scopeKind === 'root') {
+    where = undefined;
+  } else {
+    const project = await getCurrentProjectName();
+    where = project ? { projectName: project } : undefined;
+  }
   // Fetch conversations + current DustSession.workspaceId in
   // parallel. Workspace id is used by the /chat UI to build
   // correct https://dust.tt/w/<wsSId>/\u2026 links; without it we'd
@@ -16,7 +35,7 @@ export async function GET() {
   // afoH8Y2BIz.
   const [conversations, dustSession] = await Promise.all([
     db.conversation.findMany({
-      where: project ? { projectName: project } : undefined,
+      where,
       orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
       select: {
         id: true,

@@ -146,22 +146,49 @@ function fullTime(iso?: string | null): string {
  * segment + this prop gives us shareable URLs without breaking
  * the existing ?prompt= deep-link path.
  */
+/**
+ * Hierarchy node the chat is rendering under (ADR-0020 follow-up,
+ * Franck 2026-05-26 21:29). Mirrored from the server-side
+ * `ResolvedScope` so the client knows which project (if any) is
+ * bound, AND which folder fsPath the sidebar should narrow to in
+ * folder mode. Passed in from the matching server page so we skip
+ * the `/api/projects/current` round-trip on mount and operate the
+ * right MCP-ensure / compose logic without guessing.
+ */
+export type ChatInitialScope = {
+  kind: 'root' | 'folder' | 'project';
+  /** Folder or project fsPath; '' at root. */
+  fsPath: string;
+  /** Project fsPath when kind='project', else null. Used as the
+   *  initial `currentProject` and to short-circuit MCP ensure. */
+  projectName: string | null;
+  /** Project-level default agent override (kind='project' only). */
+  defaultAgentSId: string | null;
+};
+
 export default function ChatPage({
   initialConversationId,
+  initialScope,
 }: {
   initialConversationId: string | null;
+  initialScope: ChatInitialScope;
 }) {
   return (
     <Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading chat…</div>}>
-      <ChatPageInner initialConversationId={initialConversationId} />
+      <ChatPageInner
+        initialConversationId={initialConversationId}
+        initialScope={initialScope}
+      />
     </Suspense>
   );
 }
 
 function ChatPageInner({
   initialConversationId,
+  initialScope,
 }: {
   initialConversationId: string | null;
+  initialScope: ChatInitialScope;
 }) {
   /**
    * Disable body-level scrolling while /chat is mounted
@@ -286,7 +313,14 @@ function ChatPageInner({
    */
   const [streamGeneratedFiles, setStreamGeneratedFiles] = useState<GeneratedFile[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [currentProject, setCurrentProject] = useState<string | null>(null);
+  // Initial project comes from the server-resolved scope (ADR-0020
+  // follow-up). null when scope is folder/root \u2014 the chat then runs
+  // in MCP-less mode (no fs-cli / task-runner / gateway / skills),
+  // composer still works, new conversations are created with
+  // projectName=null (same as the legacy "All projects" path).
+  const [currentProject, setCurrentProject] = useState<string | null>(
+    initialScope.projectName,
+  );
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
   const [mcpStatus, setMcpStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
   // Chat-mode task-runner MCP serverId (Franck 2026-04-25 11:31).
@@ -462,7 +496,16 @@ function ChatPageInner({
   const router = useRouter();
 
   const refreshConvs = async () => {
-    const r = await fetch('/api/conversation');
+    // Scope the sidebar to the server-resolved hierarchy node
+    // (ADR-0020 follow-up). The API accepts `scope` (fsPath) and
+    // `scopeKind` query params and falls back to its legacy
+    // cookie-based filter when both are absent.
+    const qs = new URLSearchParams();
+    if (initialScope.kind !== 'root') {
+      qs.set('scopeKind', initialScope.kind);
+      qs.set('scope', initialScope.fsPath);
+    }
+    const r = await fetch(`/api/conversation${qs.toString() ? `?${qs}` : ''}`);
     const j = await r.json();
     setConvs(j.conversations ?? []);
     // Workspace sId travels on the same payload so we only pay
@@ -698,26 +741,31 @@ function ChatPageInner({
         // rather than crash the page.
       }
     }
-    // Detect current project from cookie and start MCP fs server for it
-    void fetch('/api/projects/current')
-      .then((r) => (r.ok ? r.json() : { name: null }))
-      .then(async (j) => {
-        const name = j?.name ?? null;
-        setCurrentProject(name);
-        // Project-level default agent (Franck 2026-04-19 19:13).
-        // Overrides the generic list[0] auto-fallback but yields to
-        // any stronger claim ('user' manual pick, 'conv' from an
-        // open conversation). Skipped entirely when the URL points
-        // at a specific conversation.
-        const defAgent = j?.project?.defaultAgentSId as string | null | undefined;
-        const requested = initialConversationId ?? searchParams.get('id');
-        if (defAgent && !requested) {
-          setAgentPickedBy((p) => {
-            if (p === 'user' || p === 'conv') return p;
-            setAgentSId(defAgent);
-            return 'auto';
-          });
-        }
+    // ADR-0020 follow-up: project + default-agent come from the
+    // server-resolved scope passed in as a prop, so we skip the
+    // /api/projects/current round-trip entirely. MCPs are only
+    // ensured when scope.kind === 'project' \u2014 folder / root modes
+    // run MCP-less (no fs-cli, no task-runner, no gateway, no
+    // skills). The composer still works in those modes but the
+    // resulting conversation is created with projectName=null,
+    // matching the legacy "All projects" path.
+    void (async () => {
+      const name = initialScope.projectName;
+      const defAgent = initialScope.defaultAgentSId;
+      // Project-level default agent (Franck 2026-04-19 19:13).
+      // Overrides the generic list[0] auto-fallback but yields to
+      // any stronger claim ('user' manual pick, 'conv' from an
+      // open conversation). Skipped entirely when the URL points
+      // at a specific conversation.
+      const requested = initialConversationId ?? searchParams.get('id');
+      if (defAgent && !requested) {
+        setAgentPickedBy((p) => {
+          if (p === 'user' || p === 'conv') return p;
+          setAgentSId(defAgent);
+          return 'auto';
+        });
+      }
+      {
         if (name) {
           setMcpStatus('starting');
           // Mount-time parallel ensure of both MCPs. Same rationale
@@ -774,8 +822,8 @@ function ChatPageInner({
             console.warn('[chat] skills MCP ensure failed at mount; chat will run without skill tools');
           }
         }
-      })
-      .catch(() => {});
+      }
+    })().catch(() => {});
     // Mount-only effect: hydrate the initial conversation + project
     // context, then ensure both MCP servers exactly once. The deps
     // we read inside (initialConversationId is a prop snapshot,

@@ -210,9 +210,43 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     }),
   ]);
 
+  // L1 folder list for the project-scoped URL tree (ADR-0020).
+  // Rendered as a horizontal card row near the top so the user can
+  // jump into the hierarchy without going through the project
+  // switcher dropdown. Empty list = no folders yet — the section
+  // is skipped to keep the dashboard tight.
+  const l1Folders = await db.folder.findMany({
+    where: { parentId: null },
+    orderBy: { name: 'asc' },
+    include: { _count: { select: { projects: true, children: true } } },
+  });
+
   return (
     <div className="space-y-6">
       <PageHeader title="Dashboard" />
+
+      {l1Folders.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            Folders
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {l1Folders.map((f) => (
+              <a
+                key={f.id}
+                href={`/${f.name}`}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600"
+              >
+                <FolderGit2 size={14} className="text-amber-500" />
+                {f.name}
+                <span className="text-xs text-slate-400">
+                  ({f._count.children}/{f._count.projects})
+                </span>
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">

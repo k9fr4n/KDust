@@ -64,16 +64,21 @@ function HighlightedPath({ path, query }: { path: string; query: string }) {
  *  - Trigger: shows the current project name (or "Switch project" placeholder
  *    when none is selected). No more "root" affordance — the route
  *    `/` is still reachable by URL / cookie absence, just not surfaced here.
- *  - Empty query: the 5 most recently used projects (localStorage), padded
- *    with the most-recently-created projects if fewer than 5 recents exist.
+ *  - Empty query: NO rows. The bar is intentionally empty by default
+ *    (Franck 2026-05-27) — more affordances will land later. Recent-
+ *    project tracking still runs in localStorage so we can light them
+ *    up in a future iteration without a migration.
  *  - With query: smart search across **folders AND projects**. For each
  *    matching path prefix derived from project fsPaths, we emit one row.
  *    Example, query "ecritel":
  *      ecritel                          (folder)
  *      ecritel/Interne                  (folder)
  *      ecritel/Interne/Interne          (project)
- *    Folder rows refine the query when clicked (set the input to
- *    "<folder>/" + keep focus); project rows navigate.
+ *    Clicking ANY row navigates to the corresponding dashboard
+ *    (`/<path>`). Folder dashboards are served via ADR-0020 parity
+ *    (`src/app/[l1]/page.tsx`, `src/app/[l1]/[l2]/page.tsx`). The
+ *    current-project cookie is set ONLY for project clicks — folders
+ *    aren't projects, so we skip the POST and just navigate.
  *  - iconOnly trigger preserved for the collapsed sidebar.
  */
 export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {}) {
@@ -82,7 +87,6 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
   const [current, setCurrent] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
-  const [recent, setRecent] = useState<string[]>([]);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -98,7 +102,6 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
 
   useEffect(() => {
     void refresh();
-    setRecent(loadRecent());
     const onChanged = () => void refresh();
     window.addEventListener('kdust:project-changed', onChanged);
     return () => window.removeEventListener('kdust:project-changed', onChanged);
@@ -117,46 +120,40 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     if (open) {
       setQuery('');
       setActiveIdx(0);
-      setRecent(loadRecent());
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
 
-  const select = async (name: string) => {
-    await apiSend('POST', '/api/current-project', { name });
-    pushRecent(name);
-    setCurrent(name);
+  /** Project pick: persist cookie, broadcast, navigate to project dashboard. */
+  const selectProject = async (fsPath: string) => {
+    await apiSend('POST', '/api/current-project', { name: fsPath });
+    pushRecent(fsPath);
+    setCurrent(fsPath);
     setOpen(false);
     window.dispatchEvent(
-      new CustomEvent('kdust:project-changed', { detail: { name } }),
+      new CustomEvent('kdust:project-changed', { detail: { name: fsPath } }),
     );
-    const target = `/${name.replace(/^\/+/, '')}`;
-    window.location.assign(target);
+    window.location.assign(`/${fsPath.replace(/^\/+/, '')}`);
+  };
+
+  /** Folder pick: navigate only (ADR-0020 parity dashboard). No cookie
+   *  write — folders aren't projects and POST /api/current-project
+   *  would 404 on a non-project path. */
+  const navigateFolder = (path: string) => {
+    setOpen(false);
+    window.location.assign(`/${path.replace(/^\/+/, '')}`);
   };
 
   type Row =
-    | { kind: 'recent'; project: Project; value: string }
     | { kind: 'project'; project: Project; value: string; depth: number }
     | { kind: 'folder'; value: string; depth: number; count: number };
 
   const rows = useMemo<Row[]>(() => {
     const q = query.trim().toLowerCase();
 
-    // ---- Empty query: 5 recents, padded with most-recently-created.
-    if (!q) {
-      const recentMatched = recent
-        .map((v) => projects.find((p) => (p.fsPath ?? p.name) === v))
-        .filter((p): p is Project => Boolean(p));
-      const remaining = projects.filter(
-        (p) => !recentMatched.some((r) => r.id === p.id),
-      );
-      const padded = [...recentMatched, ...remaining].slice(0, RECENT_MAX);
-      return padded.map<Row>((p) => ({
-        kind: 'recent',
-        project: p,
-        value: p.fsPath ?? p.name,
-      }));
-    }
+    // ---- Empty query: no rows. The bar is intentionally bare by
+    // default (Franck 2026-05-27); more affordances land later.
+    if (!q) return [];
 
     // ---- Smart search: enumerate every path prefix containing the query.
     // Folder rows are deduped; a prefix that exactly matches an existing
@@ -215,7 +212,7 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
       return va.localeCompare(vb);
     });
     return all;
-  }, [projects, query, recent]);
+  }, [projects, query]);
 
   useEffect(() => {
     setActiveIdx((i) => Math.min(Math.max(i, 0), Math.max(rows.length - 1, 0)));
@@ -229,13 +226,10 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
 
   const activate = (r: Row) => {
     if (r.kind === 'folder') {
-      // Refine the query in place — keep the popover open and refocus.
-      setQuery(r.value + '/');
-      setActiveIdx(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      navigateFolder(r.value);
       return;
     }
-    void select(r.value);
+    void selectProject(r.value);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -332,12 +326,6 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
               ref={listRef}
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
             >
-              {!query && rows.length > 0 && (
-                <div className="px-3 pt-1 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
-                  Recently used
-                </div>
-              )}
-
               {rows.map((r, i) => {
                 const isActive = i === activeIdx;
                 if (r.kind === 'folder') {
@@ -390,6 +378,11 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
               {projects.length === 0 && (
                 <p className="px-3 py-2 text-xs text-slate-500">No projects yet.</p>
               )}
+              {projects.length > 0 && !query && (
+                <p className="px-3 py-6 text-xs text-slate-400 text-center">
+                  Type to search folders and projects.
+                </p>
+              )}
               {projects.length > 0 && query && rows.length === 0 && (
                 <p className="px-3 py-3 text-xs text-slate-500 text-center">
                   No folder or project matches «{query}».
@@ -398,8 +391,8 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-800 px-3 py-1.5 text-[10px] text-slate-400 flex items-center justify-between">
-              <span>↑↓ navigate · ↵ select · esc close</span>
-              <span>{query ? `${rows.length} match${rows.length === 1 ? '' : 'es'}` : 'recent'}</span>
+              <span>↑↓ navigate · ↵ open · esc close</span>
+              <span>{query ? `${rows.length} match${rows.length === 1 ? '' : 'es'}` : ''}</span>
             </div>
           </div>
         </>

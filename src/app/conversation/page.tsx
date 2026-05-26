@@ -1,6 +1,6 @@
 import { MessageSquare } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
+import { getCurrentScope, scopedWhere, buildProjectUrl } from '@/lib/project-url';
 // OpenConversationLink is still used by ConversationCard under the
 // hood; we render ConversationCard directly now so we inherit the
 // always-visible pin / delete action cluster (Franck 2026-04-20 17:45).
@@ -51,17 +51,15 @@ type SearchProps = {
  */
 export default async function ConversationsPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
-  const cookieProject = await getCurrentProjectName();
-  // Phase 1 folder hierarchy (2026-04-27): Conversation.projectName
-  // holds the project's full fsPath post-migration. Filter on the
-  // normalised value so legacy cookies (leaf name) still resolve.
-  const cookieProjectFsPath = await getCurrentProjectFsPath();
+  // ADR-0020: scope is resolved from the URL when this page is
+  // rendered under /[l1]/.../conversation; falls back to the
+  // kdust_project cookie for the legacy /conversation route.
+  const scope = await getCurrentScope();
   const q = (sp.q ?? '').trim();
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
   const PAGE_SIZE = await getAdaptivePageSize(CONV_PAGE_SIZE_CFG);
 
-  const where: Record<string, unknown> = {};
-  if (cookieProjectFsPath) where.projectName = cookieProjectFsPath;
+  const where: Record<string, unknown> = { ...scopedWhere('projectName', scope) };
   // Live search (Franck 2026-04-30): match the query against the
   // conversation title OR any message content. SQLite `contains`
   // is a LIKE filter; acceptable at current volume, FTS5 would be
@@ -93,7 +91,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
       <PageHeader
         icon={<MessageSquare size={20} />}
         title="Conversation"
-        scope={cookieProject}
+        scope={scope.kind === 'root' ? undefined : scope.fsPath}
       />
 
       {/* Live search (Franck 2026-04-23 22:29). Replaces the old
@@ -106,7 +104,7 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
           needed anymore. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search by title…" />
-        {q && <ClearFiltersLink href="/conversation" />}
+        {q && <ClearFiltersLink href={buildScopedBase(scope, 'conversation')} />}
       </div>
 
       <div id="rows-anchor" />
@@ -138,17 +136,33 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
         pageSize={PAGE_SIZE}
         total={total}
         unit="conversations"
-        buildHref={(p) => buildHref({ q, page: p })}
+        buildHref={(p) => buildHref(scope, { q, page: p })}
       />
     </div>
   );
 }
 
+/**
+ * Base path for the conversation list under the active scope.
+ * Used by ClearFiltersLink and the pagination href builder so all
+ * intra-page links preserve the URL prefix (legacy /conversation,
+ * folder /<l1>/.../conversation, project /<l1>/<l2>/<project>/conversation).
+ */
+function buildScopedBase(
+  scope: { kind: 'root' | 'folder' | 'project'; fsPath: string },
+  sub: string,
+): string {
+  if (scope.kind === 'root') return `/${sub}`;
+  return buildProjectUrl(scope.fsPath, sub);
+}
 
-
-function buildHref({ q, page }: { q?: string; page?: number }) {
+function buildHref(
+  scope: { kind: 'root' | 'folder' | 'project'; fsPath: string },
+  { q, page }: { q?: string; page?: number },
+) {
   const qs = new URLSearchParams();
   if (q) qs.set('q', q);
   if (page && page > 1) qs.set('page', String(page));
-  return `/conversation${qs.toString() ? `?${qs}` : ''}`;
+  const base = buildScopedBase(scope, 'conversation');
+  return `${base}${qs.toString() ? `?${qs}` : ''}`;
 }

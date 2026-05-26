@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Clock, ChevronUp, ChevronDown } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
+import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
 import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import { Pagination } from '@/components/Pagination';
@@ -108,10 +108,9 @@ function normaliseSort(raw?: string): SortKey {
 export default async function TasksPage({ searchParams }: SearchProps) {
   const sp = (await searchParams) ?? {};
   const tz = await getAppTimezone();
-  const cookieProject = await getCurrentProjectName();
-  // Phase 1 folder hierarchy: filter on canonical fsPath, not the
-  // raw cookie value (which may be a legacy leaf name pre-migration).
-  const cookieProjectFsPath = await getCurrentProjectFsPath();
+  // ADR-0020: scope from URL (folder / project) with cookie
+  // fallback for the legacy /task route.
+  const scope = await getCurrentScope();
   const q = (sp.q ?? '').trim();
   const kind: UiKind = normaliseKind(sp.kind);
   const enabled: EnabledFlag = sp.enabled ?? 'all';
@@ -123,26 +122,30 @@ export default async function TasksPage({ searchParams }: SearchProps) {
 
   const where: Prisma.TaskWhereInput = {};
   if (q) where.name = { contains: q };
-  // Visibility rule (Franck 2026-04-29): generic tasks (templates,
-  // projectPath=null) are runnable on any project, so they must
-  // appear in the project-scoped task list alongside the bound
-  // tasks of that project. The 'kind' filter still lets the user
-  // isolate one or the other explicitly.
+  // Project scope (ADR-0020 \u00a74): generic tasks (projectPath=null)
+  // surface in every scope alongside the in-scope bound tasks. The
+  // `kind` filter still lets the user narrow to one or the other.
   //
-  //   cookie set + kind=generic  → only generics
-  //   cookie set + kind=project  → only this project's bound tasks
-  //   cookie set + kind=all/automation/audit → this project's
-  //                              bound tasks ∪ generics
-  //   no cookie  + kind=generic  → only generics
-  //   no cookie  + kind=project  → all bound tasks (any project)
-  //   no cookie  + kind=all/...  → no projectPath filter
-  if (cookieProjectFsPath) {
+  //   project scope  + kind=generic  \u2192 only generics
+  //   project scope  + kind=project  \u2192 exact projectPath
+  //   project scope  + kind=all/\u2026   \u2192 exact projectPath \u222a generics
+  //   folder scope   + kind=generic  \u2192 only generics
+  //   folder scope   + kind=project  \u2192 projectPath startsWith folder
+  //   folder scope   + kind=all/\u2026   \u2192 descendants \u222a generics
+  //   root           + kind=generic  \u2192 only generics
+  //   root           + kind=project  \u2192 all bound tasks
+  //   root           + kind=all/\u2026   \u2192 no projectPath filter
+  const scopedTask: Prisma.TaskWhereInput | null =
+    scope.kind === 'project' ? { projectPath: scope.fsPath }
+    : scope.kind === 'folder' ? { projectPath: { startsWith: `${scope.fsPath}/` } }
+    : null;
+  if (scopedTask) {
     if (kind === 'generic') {
       where.projectPath = null;
     } else if (kind === 'project') {
-      where.projectPath = cookieProjectFsPath;
+      Object.assign(where, scopedTask);
     } else {
-      where.OR = [{ projectPath: cookieProjectFsPath }, { projectPath: null }];
+      where.OR = [scopedTask, { projectPath: null }];
     }
   } else {
     if (kind === 'generic') where.projectPath = null;
@@ -249,7 +252,8 @@ export default async function TasksPage({ searchParams }: SearchProps) {
     if (merged.sort !== 'lastRun') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
     if (merged.page > 1) qs.set('page', String(merged.page));
-    return `/task${qs.toString() ? `?${qs}` : ''}`;
+    const base = scope.kind === 'root' ? '/task' : buildProjectUrl(scope.fsPath, 'task');
+    return `${base}${qs.toString() ? `?${qs}` : ''}`;
   };
   /** Build the href for a column header click: flip dir on same col, else asc/desc default. */
   const sortHref = (col: SortKey) => {
@@ -269,7 +273,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       <PageHeader
         icon={<Clock size={20} />}
         title="Task"
-        scope={cookieProject}
+        scope={scope.kind === 'root' ? undefined : scope.fsPath}
         right={
           <>
             <Link

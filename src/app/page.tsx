@@ -9,12 +9,11 @@ import {
   XCircle,
   PlayCircle,
   AlertTriangle,
-  Pin,
 } from 'lucide-react';
 import { db } from '@/lib/db';
 import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 
-import { getCurrentProject } from '@/lib/current-project';
+import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
 import { ConversationCard } from '@/components/ConversationCard';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import { PageHeader } from '@/components/PageHeader';
@@ -33,220 +32,157 @@ type DashboardProps = { searchParams?: Promise<{ reason?: string }> };
 export default async function Dashboard({ searchParams }: DashboardProps) {
   const sp = (await searchParams) ?? {};
   const reason = sp.reason;
-  const current = await getCurrentProject();
+  // ADR-0020 (folder/project parity, Franck 2026-05-26 21:14):
+  // a SINGLE rendering path, scoped by the active hierarchy node.
+  // Scope resolution priority:
+  //   URL `/<l1>/[<l2>/[<project>]]/...` > kdust_project cookie > root.
+  const scope = await getCurrentScope();
 
-  if (current) {
-    // --- Project-scoped dashboard ---
-    // Phase 1 folder hierarchy (2026-04-27): tasks/conversations are
-    // joined to a project by `fsPath` (full slash path under
-    // /projects), not the leaf `name`. Use fsPath when set; legacy
-    // fallback on `name` for un-migrated rows.
-    const projKey = current.fsPath ?? current.name;
-    const projectRunsFilter = { task: { is: { projectPath: projKey } } };
-    const [
-      nbCrons,
-      nbConvs,
-      nbRunsTotal,
-      nbRunsSuccess,
-      nbRunsFailed,
-      nbRunsRunning,
-      nbPinned,
-      recentRuns,
-      recentConvs,
-    ] = await Promise.all([
-      db.task.count({ where: { projectPath: projKey } }),
-      db.conversation.count({ where: { projectName: projKey } }),
-      db.taskRun.count({ where: projectRunsFilter }),
-      db.taskRun.count({ where: { ...projectRunsFilter, status: 'success' } }),
-      db.taskRun.count({ where: { ...projectRunsFilter, status: 'failed' } }),
-      db.taskRun.count({ where: { ...projectRunsFilter, status: 'running' } }),
-      db.conversation.count({ where: { projectName: projKey, pinned: true } }),
-      db.taskRun.findMany({
-        where: projectRunsFilter,
-        orderBy: { startedAt: 'desc' },
-        take: DASHBOARD_RECENT_LIMIT,
-        include: { task: { select: { name: true } } },
-      }),
-      db.conversation.findMany({
-        where: { projectName: projKey },
-        orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
-        take: DASHBOARD_RECENT_LIMIT,
-      }),
-    ]);
+  // --- Build the Prisma where clauses for the active scope ------
+  const taskWhere =
+    scope.kind === 'project' ? { projectPath: scope.fsPath } :
+    scope.kind === 'folder'  ? { projectPath: { startsWith: `${scope.fsPath}/` } } :
+    {};
+  const convWhere =
+    scope.kind === 'project' ? { projectName: scope.fsPath } :
+    scope.kind === 'folder'  ? { projectName: { startsWith: `${scope.fsPath}/` } } :
+    {};
+  // For runs we OR over TaskRun.projectPath AND the linked task's
+  // projectPath so legacy rows (pre-2026-04-29) and generic-task
+  // runs both surface in the right scope.
+  const runWhere =
+    scope.kind === 'root' ? {} :
+    scope.kind === 'project'
+      ? {
+          OR: [
+            { projectPath: scope.fsPath },
+            { AND: [{ projectPath: null }, { task: { is: { projectPath: scope.fsPath } } }] },
+          ],
+        }
+      : {
+          OR: [
+            { projectPath: { startsWith: `${scope.fsPath}/` } },
+            { AND: [{ projectPath: null }, { task: { is: { projectPath: { startsWith: `${scope.fsPath}/` } } } }] },
+          ],
+        };
 
-    return (
-      <div className="space-y-6">
-        {/* Override the server-side metadata.title ('Dashboard') with
-            the actual page heading (project name + branch) so the
-            global <TopBar> mirrors what the user reads in the first
-            row of the page. Franck 2026-05-21 (fourth pass):
-            "le titre des pages doit se retrouver dans la top bar,
-            pas juste le nom de la catégorie". */}
-        <DocumentTitle title={`${current.name} (${current.branch})`} />
-        {/* Dashboard header lifted to the TopBar (Franck 2026-05-22):
-            "le titre des pages doit être dans la top bar, pas dans
-            la page". PageHeader portals to the bar's title slot;
-            the page body is now flush with its first content
-            section. The branch goes into `scope` so it renders as
-            "{project} · {branch}" in the bar, mirroring the
-            previous in-page layout. */}
-        <PageHeader
-          icon={<FolderGit2 size={20} />}
-          title={current.name}
-          scope={<span className="font-mono">{current.branch}</span>}
-        />
-
-        <section className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <StatTile
-            href="/conversation"
-            value={nbConvs}
-            label="conversations"
-            color="blue"
-            icon={<MessageSquare size={18} />}
-            subtle={nbPinned > 0 ? `${nbPinned} pinned` : undefined}
-          />
-          <StatTile
-            href="/task"
-            value={nbCrons}
-            label="tasks"
-            color="purple"
-            icon={<Clock size={18} />}
-          />
-          <StatTile
-            href="/run"
-            value={nbRunsTotal}
-            label="total runs"
-            color="slate"
-            icon={<Activity size={18} />}
-          />
-          <StatTile
-            href="/run?status=success"
-            value={nbRunsSuccess}
-            label="successful"
-            color="green"
-            icon={<CheckCircle2 size={18} />}
-          />
-          <StatTile
-            href="/run?status=failed"
-            value={nbRunsFailed}
-            label="failed"
-            color="red"
-            icon={<XCircle size={18} />}
-          />
-          <StatTile
-            href="/run?status=running"
-            value={nbRunsRunning}
-            label="running now"
-            color="amber"
-            icon={<PlayCircle size={18} />}
-            pulse={nbRunsRunning > 0}
-          />
-        </section>
-
-        {/* Secondary quick links (Franck 2026-05-01 mobile L2):
-            split out of the main stat grid so the 2x3 / 3x2 tile
-            grid stays visually homogeneous. These are pure nav
-            shortcuts, not metrics. */}
-        <nav className="flex flex-wrap gap-2 text-sm">
-          <Link
-            href="/run?status=aborted"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-orange-400 hover:text-orange-600 dark:hover:text-orange-400 transition-colors"
-          >
-            <AlertTriangle size={14} className="text-orange-500" />
-            See aborted runs
-          </Link>
-          <Link
-            href="/conversation?project=_global"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-800 hover:border-slate-400 transition-colors"
-          >
-            <Pin size={14} className="text-slate-400" />
-            Global conversations
-          </Link>
-        </nav>
-
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <SectionLink href="/conversation" icon={<MessageSquare size={16} />} label="Recent conversations" />
-            <RecentConvs items={recentConvs} />
-          </div>
-          <div>
-            <SectionLink href="/run" icon={<Clock size={16} />} label="Recent runs" />
-            <RecentRuns items={recentRuns} />
-          </div>
-        </section>
-      </div>
-    );
-  }
-
-  // --- Global dashboard (no project selected) ---
+  // --- Single batch of queries, irrespective of scope -----------
   const [
+    nbConvs,
     nbCrons,
-    nbConv,
     nbRunsTotal,
     nbRunsSuccess,
     nbRunsFailed,
     nbRunsRunning,
     nbRunsAborted,
     nbProjectsDb,
+    nbPinned,
     recentConvs,
     recentRuns,
   ] = await Promise.all([
-    db.task.count(),
-    db.conversation.count(),
-    db.taskRun.count(),
-    db.taskRun.count({ where: { status: 'success' } }),
-    db.taskRun.count({ where: { status: 'failed' } }),
-    db.taskRun.count({ where: { status: 'running' } }),
-    db.taskRun.count({ where: { status: 'aborted' } }),
-    db.project.count(),
-    db.conversation.findMany({ orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }], take: DASHBOARD_RECENT_LIMIT }),
+    db.conversation.count({ where: convWhere }),
+    db.task.count({ where: taskWhere }),
+    db.taskRun.count({ where: runWhere }),
+    db.taskRun.count({ where: { ...runWhere, status: 'success' } }),
+    db.taskRun.count({ where: { ...runWhere, status: 'failed' } }),
+    db.taskRun.count({ where: { ...runWhere, status: 'running' } }),
+    db.taskRun.count({ where: { ...runWhere, status: 'aborted' } }),
+    // Project count for the active scope: descendants under a
+    // folder, exact match for a project (always 1), all rows at
+    // root. Used by the "projects" tile.
+    db.project.count({
+      where:
+        scope.kind === 'project' ? { fsPath: scope.fsPath } :
+        scope.kind === 'folder'  ? { fsPath: { startsWith: `${scope.fsPath}/` } } :
+        {},
+    }),
+    db.conversation.count({ where: { ...convWhere, pinned: true } }),
+    db.conversation.findMany({
+      where: convWhere,
+      orderBy: [{ pinned: 'desc' }, { updatedAt: 'desc' }],
+      take: DASHBOARD_RECENT_LIMIT,
+    }),
     db.taskRun.findMany({
-      // Pinned runs float to the top (Franck 2026-04-20 18:04).
+      where: runWhere,
       orderBy: [{ pinned: 'desc' }, { startedAt: 'desc' }],
       take: DASHBOARD_RECENT_LIMIT,
-      include: {
-        task: { select: { id: true, name: true, projectPath: true } },
-      },
+      include: { task: { select: { id: true, name: true, projectPath: true } } },
     }),
   ]);
 
-  // L1 folder list for the project-scoped URL tree (ADR-0020).
-  // Rendered as a horizontal card row near the top so the user can
-  // jump into the hierarchy without going through the project
-  // switcher dropdown. Empty list = no folders yet — the section
-  // is skipped to keep the dashboard tight.
-  const l1Folders = await db.folder.findMany({
-    where: { parentId: null },
-    orderBy: { name: 'asc' },
-    include: { _count: { select: { projects: true, children: true } } },
-  });
+  // --- Children navigation (root & folder scopes) ---------------
+  // Root  : list L1 folders  (db.folder where parentId=null)
+  // Folder: list direct children (sub-folders + projects)
+  // Project: no children section (the dashboard tiles are the focus).
+  type ChildLink = { key: string; href: string; label: string; sub?: string };
+  let children: ChildLink[] = [];
+  if (scope.kind === 'root') {
+    const l1 = await db.folder.findMany({
+      where: { parentId: null },
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { projects: true, children: true } } },
+    });
+    children = l1.map((f) => ({
+      key: `f-${f.id}`,
+      href: `/${f.name}`,
+      label: f.name,
+      sub: `${f._count.children}/${f._count.projects}`,
+    }));
+  } else if (scope.kind === 'folder') {
+    const [subfolders, projs] = await Promise.all([
+      db.folder.findMany({
+        where: { parentId: scope.folder.id },
+        orderBy: { name: 'asc' },
+        include: { _count: { select: { projects: true, children: true } } },
+      }),
+      db.project.findMany({
+        where: { folderId: scope.folder.id },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, fsPath: true },
+      }),
+    ]);
+    children = [
+      ...subfolders.map((f) => ({
+        key: `f-${f.id}`,
+        href: `/${scope.fsPath}/${f.name}`,
+        label: f.name,
+        sub: `${f._count.children}/${f._count.projects}`,
+      })),
+      ...projs.map((p) => ({
+        key: `p-${p.id}`,
+        href: buildProjectUrl(p.fsPath ?? `${scope.fsPath}/${p.name}`),
+        label: p.name,
+      })),
+    ];
+  }
+
+  // --- Header data + per-scope URL bases ------------------------
+  const base = {
+    conversation: scope.kind === 'root' ? '/conversation' : buildProjectUrl(scope.fsPath, 'conversation'),
+    task:         scope.kind === 'root' ? '/task'         : buildProjectUrl(scope.fsPath, 'task'),
+    run:          scope.kind === 'root' ? '/run'          : buildProjectUrl(scope.fsPath, 'run'),
+  };
+  const headerTitle =
+    scope.kind === 'project' ? scope.project.name :
+    scope.kind === 'folder'  ? scope.folder.name :
+    'Dashboard';
+  const headerScope =
+    scope.kind === 'project' ? <span className="font-mono">{scope.project.branch}</span> :
+    scope.kind === 'folder'  ? scope.fsPath :
+    undefined;
+  const documentTitle =
+    scope.kind === 'project' ? `${scope.project.name} (${scope.project.branch})` :
+    scope.kind === 'folder'  ? scope.fsPath :
+    null;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Dashboard" />
-
-      {l1Folders.length > 0 && (
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Folders
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {l1Folders.map((f) => (
-              <a
-                key={f.id}
-                href={`/${f.name}`}
-                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600"
-              >
-                <FolderGit2 size={14} className="text-amber-500" />
-                {f.name}
-                <span className="text-xs text-slate-400">
-                  ({f._count.children}/{f._count.projects})
-                </span>
-              </a>
-            ))}
-          </div>
-        </section>
-      )}
+      {documentTitle ? <DocumentTitle title={documentTitle} /> : null}
+      <PageHeader
+        icon={<FolderGit2 size={20} />}
+        title={headerTitle}
+        scope={headerScope}
+      />
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -254,51 +190,76 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         </div>
       )}
 
+      {children.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            {scope.kind === 'root' ? 'Folders' : 'Children'}
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {children.map((c) => (
+              <Link
+                key={c.key}
+                href={c.href}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600"
+              >
+                <FolderGit2 size={14} className="text-amber-500" />
+                {c.label}
+                {c.sub ? <span className="text-xs text-slate-400">({c.sub})</span> : null}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile
-          href="/conversation"
-          value={nbConv}
+          href={base.conversation}
+          value={nbConvs}
           label="conversations"
           color="blue"
           icon={<MessageSquare size={18} />}
+          subtle={nbPinned > 0 ? `${nbPinned} pinned` : undefined}
         />
         <StatTile
-          href="/task"
+          href={base.task}
           value={nbCrons}
           label="tasks"
           color="purple"
           icon={<Clock size={18} />}
         />
         <StatTile
-          href="/run"
+          href={base.run}
           value={nbRunsTotal}
           label="total runs"
           color="slate"
           icon={<Activity size={18} />}
         />
+        {/* Projects tile: meaningful only at root / folder scope. */}
+        {scope.kind !== 'project' && (
+          <StatTile
+            href="/settings/projects"
+            value={nbProjectsDb}
+            label="projects"
+            color="teal"
+            icon={<FolderGit2 size={18} />}
+          />
+        )}
         <StatTile
-          href="/settings/projects"
-          value={nbProjectsDb}
-          label="projects"
-          color="teal"
-          icon={<FolderGit2 size={18} />}
-        />
-        <StatTile
-          href="/run?status=success"
+          href={`${base.run}?status=success`}
           value={nbRunsSuccess}
           label="successful"
           color="green"
           icon={<CheckCircle2 size={18} />}
         />
         <StatTile
-          href="/run?status=failed"
+          href={`${base.run}?status=failed`}
           value={nbRunsFailed}
           label="failed"
           color="red"
           icon={<XCircle size={18} />}
         />
         <StatTile
-          href="/run?status=running"
+          href={`${base.run}?status=running`}
           value={nbRunsRunning}
           label="running now"
           color="amber"
@@ -306,7 +267,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           pulse={nbRunsRunning > 0}
         />
         <StatTile
-          href="/run?status=aborted"
+          href={`${base.run}?status=aborted`}
           value={nbRunsAborted}
           label="aborted"
           color="orange"
@@ -316,15 +277,14 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div>
-          <SectionLink href="/conversation" icon={<MessageSquare size={16} />} label="Recent conversations" />
+          <SectionLink href={base.conversation} icon={<MessageSquare size={16} />} label="Recent conversations" />
           <RecentConvs items={recentConvs} />
         </div>
         <div>
-          <SectionLink href="/run" icon={<Clock size={16} />} label="Recent runs" />
+          <SectionLink href={base.run} icon={<Clock size={16} />} label="Recent runs" />
           <RecentRuns items={recentRuns} />
         </div>
       </section>
-
     </div>
   );
 }

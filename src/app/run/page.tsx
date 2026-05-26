@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
-import { getCurrentProjectName, getCurrentProjectFsPath } from '@/lib/current-project';
+import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
 import {
   Clock,
   MessageCircle,
@@ -163,12 +163,11 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   const PAGE_SIZE = await getAdaptivePageSize(RUNS_PAGE_SIZE_CFG);
   const sort: SortKey = normaliseSort(sp.sort);
   const dir: SortDir = sp.dir === 'asc' ? 'asc' : 'desc';
-  // currentProject is the cookie value (used for UI scope label),
-  // currentProjectFsPath is the canonical fsPath used in DB filters
-  // — they agree post-migration, and the helper auto-normalises
-  // legacy cookies that still hold a leaf name.
-  const currentProject = await getCurrentProjectName();
-  const currentProjectFsPath = await getCurrentProjectFsPath();
+  // ADR-0020: scope from URL (folder / project) with cookie
+  // fallback for the legacy /run route. Folder scope filters with
+  // a startsWith clause against TaskRun.projectPath AND the linked
+  // task.projectPath (legacy runs without projectPath).
+  const scope = await getCurrentScope();
 
   // Free-text search across the fields users most commonly want to find
   // runs by: cron name, git branch, commit sha, or the live status
@@ -211,11 +210,22 @@ export default async function RunsPage({ searchParams }: SearchProps) {
   //
   // Composed via AND because qClause may also carry an OR; spreading
   // two top-level OR keys in the same object would silently lose one.
-  const projectClause: Prisma.TaskRunWhereInput | undefined = currentProjectFsPath
+  // Compose project / folder scope. Generic-task runs (TaskRun
+  // projectPath=null) inherit their owning task's projectPath, so
+  // we OR a fallback on task.projectPath for pre-2026-04-29 rows.
+  const scopedProjectPath: Prisma.TaskRunWhereInput['projectPath'] | null =
+    scope.kind === 'project' ? scope.fsPath
+    : scope.kind === 'folder' ? { startsWith: `${scope.fsPath}/` }
+    : null;
+  const scopedTaskProjectPath: Prisma.TaskWhereInput['projectPath'] | null =
+    scope.kind === 'project' ? scope.fsPath
+    : scope.kind === 'folder' ? { startsWith: `${scope.fsPath}/` }
+    : null;
+  const projectClause: Prisma.TaskRunWhereInput | undefined = scopedProjectPath
     ? {
         OR: [
-          { projectPath: currentProjectFsPath },
-          { AND: [{ projectPath: null }, { task: { is: { projectPath: currentProjectFsPath } } }] },
+          { projectPath: scopedProjectPath },
+          { AND: [{ projectPath: null }, { task: { is: { projectPath: scopedTaskProjectPath! } } }] },
         ],
       }
     : undefined;
@@ -316,7 +326,8 @@ export default async function RunsPage({ searchParams }: SearchProps) {
     if (merged.sort !== 'started') qs.set('sort', merged.sort);
     if (merged.dir !== 'desc') qs.set('dir', merged.dir);
     if (merged.page > 1) qs.set('page', String(merged.page));
-    return `/run${qs.toString() ? `?${qs}` : ''}`;
+    const base = scope.kind === 'root' ? '/run' : buildProjectUrl(scope.fsPath, 'run');
+    return `${base}${qs.toString() ? `?${qs}` : ''}`;
   };
 
   const sortHref = (col: SortKey) => {
@@ -337,7 +348,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       <PageHeader
         icon={<Clock size={20} />}
         title="Run"
-        scope={currentProject}
+        scope={scope.kind === 'root' ? undefined : scope.fsPath}
         right={
           <RunsAutoRefresh />
         }
@@ -347,7 +358,11 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           (status/task/sort/dir) are preserved automatically. */}
       <div className="mb-4 flex gap-2">
         <LiveSearchInput placeholder="Search task name, branch, commit, status message…" />
-        {(q || statusFilter || taskFilter) && <ClearFiltersLink href="/run" />}
+        {(q || statusFilter || taskFilter) && (
+          <ClearFiltersLink
+            href={scope.kind === 'root' ? '/run' : buildProjectUrl(scope.fsPath, 'run')}
+          />
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4 text-xs">
@@ -360,7 +375,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
           return (
             <FilterPill
               key={s}
-              href={`/run${qs.toString() ? `?${qs}` : ''}`}
+              href={`${scope.kind === 'root' ? '/run' : buildProjectUrl(scope.fsPath, 'run')}${qs.toString() ? `?${qs}` : ''}`}
               active={active}
             >
               {s}
@@ -369,7 +384,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
         })}
         {taskFilter && (
           <Link
-            href={`/run${
+            href={`${scope.kind === 'root' ? '/run' : buildProjectUrl(scope.fsPath, 'run')}${
               new URLSearchParams({
                 ...(statusFilter ? { status: statusFilter } : {}),
                 ...(q ? { q } : {}),

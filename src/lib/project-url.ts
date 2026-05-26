@@ -13,9 +13,11 @@
 // and by the breadcrumb / TopBar code paths.
 // ---------------------------------------------------------------
 
+import { headers } from 'next/headers';
 import { db } from './db';
 import type { Project, Folder } from '@prisma/client';
 import { isReservedName } from './folder-path';
+import { getCurrentProjectFsPath } from './current-project';
 
 export type ResolvedScope =
   | { kind: 'root'; fsPath: ''; folder: null; project: null }
@@ -73,6 +75,65 @@ export async function resolveScopeFromSegments(
   const project = await db.project.findUnique({ where: { fsPath } });
   if (!project) return null;
   return { kind: 'project', fsPath, folder: l2, project };
+}
+
+/**
+ * Resolve the current request's scope from the URL pathname
+ * (propagated by middleware as `x-pathname`), with a fallback to
+ * the `kdust_project` cookie when the URL is not project-scoped.
+ *
+ * Priority (highest first):
+ *   1. URL `/<l1>/<l2>/<project>/...`  → kind='project'
+ *   2. URL `/<l1>/<l2>/...`            → kind='folder' (L2)
+ *   3. URL `/<l1>/...`                 → kind='folder' (L1)
+ *   4. Cookie `kdust_project=<fsPath>` → kind='project'
+ *   5. (none)                          → kind='root'
+ *
+ * Reserved segments (chat, settings, …) are skipped — a path like
+ * `/chat` falls through to cookie / root. The folder / project
+ * existence is verified against the DB (returns null if any
+ * segment fails to resolve, falling back to cookie or root).
+ *
+ * Used by the shared page bodies (Dashboard, tasks, runs,
+ * conversations) so each page renders the same UI scoped to the
+ * caller's hierarchy node \u2014 ADR-0020 \u00a7 folder/project parity
+ * (Franck 2026-05-26 21:14).
+ */
+export async function getCurrentScope(): Promise<ResolvedScope> {
+  // 1\u20133: try URL-derived scope
+  try {
+    const hdrs = await headers();
+    const pathname = hdrs.get('x-pathname') ?? '';
+    const parts = pathname.split('/').filter(Boolean);
+    // Take up to 3 leading non-reserved segments. Stop at the first
+    // reserved one (sub-page tail).
+    const head: string[] = [];
+    for (const p of parts) {
+      if (isReservedName(p)) break;
+      head.push(p);
+      if (head.length === 3) break;
+    }
+    if (head.length > 0) {
+      const resolved = await resolveScopeFromSegments(head);
+      if (resolved) return resolved;
+    }
+  } catch {
+    // headers() can throw in some test contexts; fall through.
+  }
+  // 4: cookie fallback
+  const fsPath = await getCurrentProjectFsPath();
+  if (fsPath) {
+    const project = await db.project.findUnique({ where: { fsPath } });
+    if (project) {
+      const parts = fsPath.split('/');
+      const folder = parts.length >= 2
+        ? await db.folder.findFirst({ where: { name: parts[parts.length - 2] } })
+        : null;
+      return { kind: 'project', fsPath, folder, project };
+    }
+  }
+  // 5: root
+  return { kind: 'root', fsPath: '', folder: null, project: null };
 }
 
 /**
@@ -163,4 +224,44 @@ export function scopedWhere<F extends string>(
     F,
     { startsWith: string }
   >;
+}
+
+/**
+ * Variant of scopedWhere() that ALSO accepts rows where the field
+ * is null. Used by the task list (ADR-0020 \u00a74: generic tasks
+ * surface in every scope) and by the run list (generic-task runs
+ * dispatched against a project must show up under that project).
+ *
+ * Returns a `where` fragment shaped as `{ OR: [...] }` so the
+ * caller can compose it under AND with other filters.
+ *
+ *   scopedOrNullWhere('projectPath', { kind:'project', fsPath:'a/b/c' })
+ *     \u2192 { OR: [{ projectPath: 'a/b/c' }, { projectPath: null }] }
+ *
+ *   scopedOrNullWhere('projectPath', { kind:'folder', fsPath:'a/b' })
+ *     \u2192 { OR: [{ projectPath: { startsWith: 'a/b/' } },
+ *                  { projectPath: null }] }
+ *
+ *   scopedOrNullWhere('projectPath', { kind:'root', fsPath: '' })
+ *     \u2192 {} (no filter)
+ */
+export function scopedOrNullWhere<F extends string>(
+  field: F,
+  scope: { kind: ResolvedScope['kind']; fsPath: string },
+): { OR: Array<Record<F, string | null | { startsWith: string }>> } | Record<string, never> {
+  if (scope.kind === 'root') return {};
+  if (scope.kind === 'project') {
+    return {
+      OR: [
+        { [field]: scope.fsPath } as Record<F, string>,
+        { [field]: null } as Record<F, null>,
+      ],
+    };
+  }
+  return {
+    OR: [
+      { [field]: { startsWith: `${scope.fsPath}/` } } as Record<F, { startsWith: string }>,
+      { [field]: null } as Record<F, null>,
+    ],
+  };
 }

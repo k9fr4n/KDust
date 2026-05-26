@@ -8,6 +8,7 @@ import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { PageHeader } from '@/components/PageHeader';
+import { ScopePath } from '@/components/ScopePath';
 import { FilterPill } from '@/components/FilterPill';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
@@ -272,8 +273,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
       <ViewportProbe />
       <PageHeader
         icon={<Clock size={20} />}
-        title="Task"
-        scope={scope.kind === 'root' ? undefined : scope.fsPath}
+        title="Tasks"
         right={
           <>
             <Link
@@ -285,6 +285,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
           </>
         }
       />
+      <ScopePath fsPath={scope.fsPath} />
 
       {/* Live search \u2014 see LiveSearchInput for rationale. Sibling
           filter params (kind/enabled/status/sort/dir) are preserved

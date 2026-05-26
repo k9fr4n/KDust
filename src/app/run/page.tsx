@@ -18,6 +18,7 @@ import { Pagination } from '@/components/Pagination';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { RunActions } from '@/components/RunActions';
 import { PageHeader } from '@/components/PageHeader';
+import { ScopePath } from '@/components/ScopePath';
 import { LiveDuration } from '@/components/LiveDuration';
 import { getAppTimezone } from '@/lib/config';
 import { formatDateTime } from '@/lib/format';
@@ -347,12 +348,12 @@ export default async function RunsPage({ searchParams }: SearchProps) {
       <ViewportProbe />
       <PageHeader
         icon={<Clock size={20} />}
-        title="Run"
-        scope={scope.kind === 'root' ? undefined : scope.fsPath}
+        title="Runs"
         right={
           <RunsAutoRefresh />
         }
       />
+      <ScopePath fsPath={scope.fsPath} />
 
       {/* Live search \u2014 see LiveSearchInput for rationale. Siblings
           (status/task/sort/dir) are preserved automatically. */}

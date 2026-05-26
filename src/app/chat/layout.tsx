@@ -2,7 +2,7 @@
  * /chat layout — project scope is OPTIONAL.
  *
  * Until Franck 2026-04-19 17:48 this layout redirected to the
- * dashboard whenever no project cookie was set ("All Projects").
+ * dashboard whenever no project cookie was set ("root").
  * We removed that guard so users can hold a project-less chat
  * session:
  *   - no project cookie        → new conversations are created

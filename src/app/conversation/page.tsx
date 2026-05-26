@@ -47,7 +47,7 @@ type SearchProps = {
  *
  * Project scope: driven by the top navbar project selector
  * (kdust_project cookie). No per-page project filter UI.
- *   - no cookie ("All projects") → every conversation, global + all projects
+ *   - no cookie ("root") → every conversation, global + all projects
  *   - cookie set                 → only that project's conversations
  */
 export default async function ConversationsPage({ searchParams }: SearchProps) {

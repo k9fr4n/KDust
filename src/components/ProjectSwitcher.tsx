@@ -1,12 +1,12 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, FolderGit2, Check, Search, History } from 'lucide-react';
+import { ChevronDown, FolderGit2, Folder, Check, Search } from 'lucide-react';
 import { apiGet, apiSend } from '@/lib/api/client';
 
 type Project = { id: string; name: string; branch: string; fsPath: string | null };
 
 const RECENT_KEY = 'kdust:recent-projects';
-const RECENT_MAX = 3;
+const RECENT_MAX = 5;
 
 function loadRecent(): string[] {
   if (typeof window === 'undefined') return [];
@@ -30,7 +30,7 @@ function pushRecent(value: string) {
   }
 }
 
-/** Render a project path with matched substrings highlighted (case-insensitive). */
+/** Render a path with matched substrings highlighted (case-insensitive). */
 function HighlightedPath({ path, query }: { path: string; query: string }) {
   if (!query) return <>{path}</>;
   const q = query.toLowerCase();
@@ -58,12 +58,23 @@ function HighlightedPath({ path, query }: { path: string; query: string }) {
 }
 
 /**
- * iconOnly (Franck 2026-05-21 #3): when the sidebar is collapsed,
- * we want a 40\u00d740 icon trigger that opens the SAME combobox popover
- * \u2014 without expanding the sidebar. The popover then anchors to the
- * right of the icon (`left-full ml-2`) so it never gets clipped by
- * the 56px sidebar. All other behaviour (recent list, keyboard nav,
- * fetch flow) is preserved.
+ * Smart project switcher (Franck 2026-05-27).
+ *
+ * Behaviour:
+ *  - Trigger: shows the current project name (or "Switch project" placeholder
+ *    when none is selected). No more "root" affordance — the route
+ *    `/` is still reachable by URL / cookie absence, just not surfaced here.
+ *  - Empty query: the 5 most recently used projects (localStorage), padded
+ *    with the most-recently-created projects if fewer than 5 recents exist.
+ *  - With query: smart search across **folders AND projects**. For each
+ *    matching path prefix derived from project fsPaths, we emit one row.
+ *    Example, query "ecritel":
+ *      ecritel                          (folder)
+ *      ecritel/Interne                  (folder)
+ *      ecritel/Interne/Interne          (project)
+ *    Folder rows refine the query when clicked (set the input to
+ *    "<folder>/" + keep focus); project rows navigate.
+ *  - iconOnly trigger preserved for the collapsed sidebar.
  */
 export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {}) {
   const [open, setOpen] = useState(false);
@@ -102,109 +113,130 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     return () => window.removeEventListener('click', onClick);
   }, [open]);
 
-  // Reset transient state when (re-)opening; autofocus the search field.
   useEffect(() => {
     if (open) {
       setQuery('');
       setActiveIdx(0);
       setRecent(loadRecent());
-      // next tick — input is mounted only when open is true
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
 
-  const select = async (name: string | null) => {
-    // ADR-0020 (Franck 2026-05-26): the URL is the source of truth.
-    // Navigate to /<fsPath> (or '/' for "All projects"); the
-    // middleware then mirrors kdust_project cookie from the path
-    // for legacy contexts (Telegram bridge, MCP current-project).
-    // We KEEP the POST /api/current-project so legacy clients
-    // already counting on it (and the cookie write when name=null)
-    // observe consistent state on the way out.
+  const select = async (name: string) => {
     await apiSend('POST', '/api/current-project', { name });
-    if (name) pushRecent(name);
+    pushRecent(name);
     setCurrent(name);
     setOpen(false);
     window.dispatchEvent(
       new CustomEvent('kdust:project-changed', { detail: { name } }),
     );
-    // Full reload (assign) instead of router.push: same rationale as
-    // before — client useEffects need to re-run with the new project
-    // context (chat MCP handles, conversation list, …).
-    const target = name ? `/${name.replace(/^\/+/, '')}` : '/';
+    const target = `/${name.replace(/^\/+/, '')}`;
     window.location.assign(target);
   };
 
-  // Filtered + flattened project list (one entry per row, in the same
-  // order they appear in the dropdown). Used to drive keyboard nav.
-  // The "All projects" sentinel is index 0; recent entries follow when
-  // the search field is empty; remaining projects close the list.
-  const { rows, groupedView } = useMemo(() => {
+  type Row =
+    | { kind: 'recent'; project: Project; value: string }
+    | { kind: 'project'; project: Project; value: string; depth: number }
+    | { kind: 'folder'; value: string; depth: number; count: number };
+
+  const rows = useMemo<Row[]>(() => {
     const q = query.trim().toLowerCase();
-    const filtered = q
-      ? projects.filter((p) => (p.fsPath ?? p.name).toLowerCase().includes(q))
-      : projects;
 
-    type Row =
-      | { kind: 'all' }
-      | { kind: 'recent'; project: Project; value: string }
-      | { kind: 'project'; project: Project; value: string };
-
-    const rows: Row[] = [{ kind: 'all' }];
-
-    // Recent section is hidden while searching to keep results tight.
-    let recentProjects: Project[] = [];
-    if (!q && recent.length > 0) {
-      recentProjects = recent
+    // ---- Empty query: 5 recents, padded with most-recently-created.
+    if (!q) {
+      const recentMatched = recent
         .map((v) => projects.find((p) => (p.fsPath ?? p.name) === v))
         .filter((p): p is Project => Boolean(p));
-      for (const p of recentProjects) {
-        rows.push({ kind: 'recent', project: p, value: p.fsPath ?? p.name });
-      }
+      const remaining = projects.filter(
+        (p) => !recentMatched.some((r) => r.id === p.id),
+      );
+      const padded = [...recentMatched, ...remaining].slice(0, RECENT_MAX);
+      return padded.map<Row>((p) => ({
+        kind: 'recent',
+        project: p,
+        value: p.fsPath ?? p.name,
+      }));
     }
 
-    // When NOT searching: group by L1/L2 folder path (option a).
-    // When searching: flat list, alpha-sorted on the full fsPath, so
-    // matches are easy to scan regardless of folder depth.
-    let groupedView: Map<string, Project[]> | null = null;
-    if (q) {
-      const sorted = [...filtered].sort((a, b) =>
-        (a.fsPath ?? a.name).localeCompare(b.fsPath ?? b.name),
-      );
-      for (const p of sorted) {
-        rows.push({ kind: 'project', project: p, value: p.fsPath ?? p.name });
-      }
-    } else {
-      const groups = new Map<string, Project[]>();
-      for (const p of filtered) {
-        const parts = (p.fsPath ?? p.name).split('/');
-        const k =
-          parts.length >= 2 ? parts.slice(0, parts.length - 1).join('/') : '(unfiled)';
-        if (!groups.has(k)) groups.set(k, []);
-        groups.get(k)!.push(p);
-      }
-      groupedView = groups;
-      for (const g of [...groups.keys()].sort()) {
-        for (const p of groups.get(g)!) {
-          rows.push({ kind: 'project', project: p, value: p.fsPath ?? p.name });
+    // ---- Smart search: enumerate every path prefix containing the query.
+    // Folder rows are deduped; a prefix that exactly matches an existing
+    // project's fsPath is emitted as a `project` row (not `folder`).
+    const projectByPath = new Map<string, Project>();
+    for (const p of projects) projectByPath.set(p.fsPath ?? p.name, p);
+
+    const folderCounts = new Map<string, number>();
+    const seenFolders = new Set<string>();
+    const projectRows: Row[] = [];
+    const folderRows: Row[] = [];
+
+    for (const p of projects) {
+      const full = p.fsPath ?? p.name;
+      const parts = full.split('/').filter(Boolean);
+      for (let i = 1; i <= parts.length; i++) {
+        const prefix = parts.slice(0, i).join('/');
+        if (!prefix.toLowerCase().includes(q)) continue;
+        const isExactProject = projectByPath.has(prefix) && i === parts.length;
+        if (isExactProject) {
+          // emit once per distinct project
+          if (!seenFolders.has(`__proj:${prefix}`)) {
+            seenFolders.add(`__proj:${prefix}`);
+            projectRows.push({
+              kind: 'project',
+              project: projectByPath.get(prefix)!,
+              value: prefix,
+              depth: i,
+            });
+          }
+        } else {
+          folderCounts.set(prefix, (folderCounts.get(prefix) ?? 0) + 1);
         }
       }
     }
+    for (const [path, count] of folderCounts) {
+      folderRows.push({
+        kind: 'folder',
+        value: path,
+        depth: path.split('/').filter(Boolean).length,
+        count,
+      });
+    }
 
-    return { rows, groupedView };
+    // Sort: by depth asc, then alpha. Folders and projects interleaved
+    // by depth so the user sees the natural hierarchy:
+    //   ecritel (folder) -> ecritel/Interne (folder) ->
+    //   ecritel/Interne/Interne (project)
+    const all = [...folderRows, ...projectRows];
+    all.sort((a, b) => {
+      const da = 'depth' in a ? a.depth : 0;
+      const db = 'depth' in b ? b.depth : 0;
+      if (da !== db) return da - db;
+      const va = 'value' in a ? a.value : '';
+      const vb = 'value' in b ? b.value : '';
+      return va.localeCompare(vb);
+    });
+    return all;
   }, [projects, query, recent]);
 
-  // Clamp active index whenever the row set changes.
   useEffect(() => {
     setActiveIdx((i) => Math.min(Math.max(i, 0), Math.max(rows.length - 1, 0)));
   }, [rows.length]);
 
-  // Keep the highlighted row in view during keyboard nav.
   useEffect(() => {
     if (!open) return;
     const el = listRef.current?.querySelector<HTMLElement>(`[data-row="${activeIdx}"]`);
     el?.scrollIntoView({ block: 'nearest' });
   }, [activeIdx, open]);
+
+  const activate = (r: Row) => {
+    if (r.kind === 'folder') {
+      // Refine the query in place — keep the popover open and refocus.
+      setQuery(r.value + '/');
+      setActiveIdx(0);
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+    void select(r.value);
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -216,25 +248,18 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const r = rows[activeIdx];
-      if (!r) return;
-      void select(r.kind === 'all' ? null : r.value);
+      if (r) activate(r);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setOpen(false);
     }
   };
 
-  // Index of each row in the flat `rows` array — used both as React key
-  // and to wire the keyboard-driven highlight.
-  const rowIndex = (predicate: (r: (typeof rows)[number]) => boolean) =>
-    rows.findIndex(predicate);
-
-  const triggerLabel = current ?? 'All projects';
+  const triggerLabel = current ?? 'Switch project';
 
   return (
     <div ref={ref} className="relative">
       {iconOnly ? (
-        // Sidebar collapsed: 40\u00d740 icon-only trigger.
         <button
           onClick={() => setOpen((v) => !v)}
           aria-haspopup="dialog"
@@ -248,14 +273,10 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
       ) : (
         <button
           onClick={() => setOpen((v) => !v)}
-          // h-9 matches the other sidebar/header controls so all
-          // elements sit on the same baseline.
           className="flex items-center gap-2 h-9 px-3 rounded-md text-sm border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 w-full md:w-auto md:max-w-[200px] lg:max-w-[260px]"
           title={triggerLabel}
         >
           <FolderGit2 size={14} className="shrink-0" />
-          {/* Show the FULL fsPath so same-named leaves stay distinguishable.
-              Truncation kicks in via max-w + truncate when paths are long. */}
           <span className="truncate">{triggerLabel}</span>
           <ChevronDown size={14} className="text-slate-400 shrink-0" />
         </button>
@@ -263,202 +284,95 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
 
       {open && (
         <>
-          {/* GitLab-style dim backdrop: click anywhere outside the
-              panel to close. Sits below the panel (z-10 vs z-30) and
-              fades in via the keyframe defined in globals.css. */}
           <div
             onClick={() => setOpen(false)}
-            // z-[55] sits ABOVE the mobile SideNav overlay (z-50) so
-            // the popover that follows (z-[60]) is fully reachable on
-            // touch devices — otherwise the sidebar caps the scroll
-            // gestures inside its 240px width and the popover renders
-            // partially behind it (Franck 2026-05-22 mobile-scroll bug).
             className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[55]"
             style={{ animation: 'kd-fade-in 120ms ease-out' }}
             aria-hidden
           />
-        <div
-          // Positioning rationale (Franck 2026-05-01):
-          // - Mobile (<md): the trigger is offset from the left edge
-          //   by [burger + logo], so anchoring the panel on `left-0`
-          //   of the trigger pushes its 560px width past the right
-          //   edge of the viewport — phantom horizontal scrollbar.
-          //   We escape the trigger's frame with `fixed` and center
-          //   the panel via `left-3 right-3 mx-auto` (NOT
-          //   `-translate-x-1/2`, because the kd-pop-in keyframe
-          //   animates `transform` and would clobber the X centering
-          //   for 140ms — visible "snap to center" bug).
-          // - md+: keep the original behaviour (anchored under the
-          //   trigger, GitLab-style).
-          className={
-            // The vertical cap (max-h-[calc(100dvh-…)]) keeps the
-            // popover inside the viewport on short / landscape mobile
-            // screens. Without it the popover overflows the bottom of
-            // the viewport (the inner list had a static 420px cap)
-            // and there's no way to reach the lower entries \u2014
-            // Franck 2026-05-21 bug. The list itself now uses
-            // `flex-1 min-h-0 overflow-auto` so it scrolls inside
-            // the capped popover.
-            // z-[60] keeps the popover above the mobile SideNav
-            // overlay (z-50). On desktop it's still on top of the
-            // sticky aside (z-30). Coupled with the z-[55] backdrop
-            // above, the panel is fully visible and scrollable on
-            // touch devices.
-            'rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-[60] flex flex-col ' +
-            (iconOnly
-              // Sidebar-collapsed: anchor to the right of the icon
-              // (left-full + ml-2). Width matches the desktop default
-              // (560px) but clamps to the remaining viewport on the
-              // right side. Top-0 aligns the popover with the icon
-              // rather than the document. Height capped to the
-              // viewport minus ~2rem of breathing room.
-              ? 'absolute left-full top-0 ml-2 w-[560px] max-w-[calc(100vw-5rem)] max-h-[calc(100dvh-2rem)]'
-              // Default (sidebar-expanded or any non-sidebar caller).
-              // top-[3.75rem] on mobile \u2192 cap height to viewport - 5rem.
-              : 'fixed left-3 right-3 top-[3.75rem] mx-auto max-w-[560px] max-h-[calc(100dvh-5rem)] md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:mx-0 md:w-[560px] md:max-w-[calc(100vw-2rem)] md:max-h-[calc(100dvh-5rem)]')
-          }
-          style={{ animation: 'kd-pop-in 140ms ease-out' }}
-        >
-          {/* Search header */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800">
-            <Search size={14} className="text-slate-400 shrink-0" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setActiveIdx(0);
-              }}
-              onKeyDown={onKeyDown}
-              placeholder="Search project..."
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
-            />
-            {query && (
-              <button
-                onClick={() => {
-                  setQuery('');
-                  inputRef.current?.focus();
-                }}
-                className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                aria-label="Clear search"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-
-          {/* Scrollable list. flex-1 + min-h-0 makes it fill the
-              remaining vertical space inside the (now-capped)
-              popover; overflow-y-auto handles the actual scrolling.
-              `overscroll-contain` prevents the touch scroll from
-              chaining into the body once we hit the top/bottom,
-              avoiding the iOS Safari rubber-band-then-stuck quirk. */}
           <div
-            ref={listRef}
-            className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
+            className={
+              'rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xl z-[60] flex flex-col ' +
+              (iconOnly
+                ? 'absolute left-full top-0 ml-2 w-[560px] max-w-[calc(100vw-5rem)] max-h-[calc(100dvh-2rem)]'
+                : 'fixed left-3 right-3 top-[3.75rem] mx-auto max-w-[560px] max-h-[calc(100dvh-5rem)] md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:mx-0 md:w-[560px] md:max-w-[calc(100vw-2rem)] md:max-h-[calc(100dvh-5rem)]')
+            }
+            style={{ animation: 'kd-pop-in 140ms ease-out' }}
           >
-            {/* "All projects" sentinel — always row 0 */}
-            {(() => {
-              const idx = rowIndex((r) => r.kind === 'all');
-              const isActive = idx === activeIdx;
-              return (
+            {/* Smart search bar */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 dark:border-slate-800">
+              <Search size={14} className="text-slate-400 shrink-0" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActiveIdx(0);
+                }}
+                onKeyDown={onKeyDown}
+                placeholder="Search folders and projects..."
+                className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
+              />
+              {query && (
                 <button
-                  data-row={idx}
-                  onMouseEnter={() => setActiveIdx(idx)}
-                  onClick={() => select(null)}
-                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded ${
-                    isActive ? 'bg-slate-100 dark:bg-slate-800' : ''
-                  }`}
+                  onClick={() => {
+                    setQuery('');
+                    inputRef.current?.focus();
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  aria-label="Clear search"
                 >
-                  <span>All projects</span>
-                  {current === null && <Check size={14} className="text-green-600" />}
+                  ✕
                 </button>
-              );
-            })()}
+              )}
+            </div>
 
-            {/* Recent (only when not searching) */}
-            {!query &&
-              rows.some((r) => r.kind === 'recent') && (
-                <>
-                  <div className="border-t border-slate-200 dark:border-slate-800 my-1" />
-                  <div className="flex items-center gap-1 px-3 pt-1 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
-                    <History size={10} />
-                    Recently used
-                  </div>
-                  {rows.map((r, i) =>
-                    r.kind === 'recent' ? (
-                      <button
-                        key={`recent-${r.project.id}`}
-                        data-row={i}
-                        onMouseEnter={() => setActiveIdx(i)}
-                        onClick={() => select(r.value)}
-                        className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded ${
-                          i === activeIdx ? 'bg-slate-100 dark:bg-slate-800' : ''
-                        }`}
-                      >
-                        <span className="flex items-center gap-2 min-w-0">
-                          <FolderGit2 size={14} className="text-slate-400 shrink-0" />
-                          <span className="truncate">{r.value}</span>
-                          <span className="text-xs text-slate-500 shrink-0">
-                            ({r.project.branch})
-                          </span>
-                        </span>
-                        {current === r.value && <Check size={14} className="text-green-600" />}
-                      </button>
-                    ) : null,
-                  )}
-                </>
+            <div
+              ref={listRef}
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1"
+            >
+              {!query && rows.length > 0 && (
+                <div className="px-3 pt-1 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
+                  Recently used
+                </div>
               )}
 
-            {/* Project list — grouped (no query) or flat (with query) */}
-            {rows.some((r) => r.kind === 'project') && (
-              <div className="border-t border-slate-200 dark:border-slate-800 my-1" />
-            )}
-
-            {!query && groupedView ? (
-              [...groupedView.keys()].sort().map((g) => (
-                <div key={g}>
-                  <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
-                    {g}
-                  </div>
-                  {groupedView.get(g)!.map((p) => {
-                    const value = p.fsPath ?? p.name;
-                    const i = rowIndex(
-                      (r) => r.kind === 'project' && r.project.id === p.id,
-                    );
-                    const isActive = i === activeIdx;
-                    return (
-                      <button
-                        key={p.id}
-                        data-row={i}
-                        onMouseEnter={() => setActiveIdx(i)}
-                        onClick={() => select(value)}
-                        className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded ${
-                          isActive ? 'bg-slate-100 dark:bg-slate-800' : ''
-                        }`}
-                      >
-                        <span className="flex items-center gap-2 min-w-0">
-                          <FolderGit2 size={14} className="text-slate-400 shrink-0" />
-                          <span className="truncate">{p.name}</span>
-                          <span className="text-xs text-slate-500 shrink-0">({p.branch})</span>
+              {rows.map((r, i) => {
+                const isActive = i === activeIdx;
+                if (r.kind === 'folder') {
+                  return (
+                    <button
+                      key={`folder-${r.value}`}
+                      data-row={i}
+                      onMouseEnter={() => setActiveIdx(i)}
+                      onClick={() => activate(r)}
+                      className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded ${
+                        isActive ? 'bg-slate-100 dark:bg-slate-800' : ''
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <Folder size={14} className="text-slate-400 shrink-0" />
+                        <span className="truncate">
+                          <HighlightedPath path={r.value} query={query} />
                         </span>
-                        {current === value && <Check size={14} className="text-green-600" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
-            ) : query ? (
-              rows.map((r, i) =>
-                r.kind === 'project' ? (
+                      </span>
+                      <span className="text-[10px] text-slate-400 shrink-0">
+                        {r.count} project{r.count === 1 ? '' : 's'}
+                      </span>
+                    </button>
+                  );
+                }
+                // recent or project row — both navigate.
+                const p = r.project;
+                return (
                   <button
-                    key={r.project.id}
+                    key={`p-${p.id}-${r.kind}`}
                     data-row={i}
                     onMouseEnter={() => setActiveIdx(i)}
-                    onClick={() => select(r.value)}
+                    onClick={() => activate(r)}
                     className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm rounded ${
-                      i === activeIdx ? 'bg-slate-100 dark:bg-slate-800' : ''
+                      isActive ? 'bg-slate-100 dark:bg-slate-800' : ''
                     }`}
                   >
                     <span className="flex items-center gap-2 min-w-0">
@@ -466,35 +380,28 @@ export function ProjectSwitcher({ iconOnly = false }: { iconOnly?: boolean } = {
                       <span className="truncate">
                         <HighlightedPath path={r.value} query={query} />
                       </span>
-                      <span className="text-xs text-slate-500 shrink-0">
-                        ({r.project.branch})
-                      </span>
+                      <span className="text-xs text-slate-500 shrink-0">({p.branch})</span>
                     </span>
                     {current === r.value && <Check size={14} className="text-green-600" />}
                   </button>
-                ) : null,
-              )
-            ) : null}
+                );
+              })}
 
-            {/* Empty states */}
-            {projects.length === 0 && (
-              <p className="px-3 py-2 text-xs text-slate-500">No projects yet.</p>
-            )}
-            {projects.length > 0 &&
-              query &&
-              !rows.some((r) => r.kind === 'project') && (
+              {projects.length === 0 && (
+                <p className="px-3 py-2 text-xs text-slate-500">No projects yet.</p>
+              )}
+              {projects.length > 0 && query && rows.length === 0 && (
                 <p className="px-3 py-3 text-xs text-slate-500 text-center">
-                  No project matches «{query}».
+                  No folder or project matches «{query}».
                 </p>
               )}
-          </div>
+            </div>
 
-          {/* Footer hint */}
-          <div className="border-t border-slate-200 dark:border-slate-800 px-3 py-1.5 text-[10px] text-slate-400 flex items-center justify-between">
-            <span>↑↓ navigate · ↵ select · esc close</span>
-            <span>{projects.length} project{projects.length === 1 ? '' : 's'}</span>
+            <div className="border-t border-slate-200 dark:border-slate-800 px-3 py-1.5 text-[10px] text-slate-400 flex items-center justify-between">
+              <span>↑↓ navigate · ↵ select · esc close</span>
+              <span>{query ? `${rows.length} match${rows.length === 1 ? '' : 'es'}` : 'recent'}</span>
+            </div>
           </div>
-        </div>
         </>
       )}
     </div>

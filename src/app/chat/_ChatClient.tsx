@@ -317,7 +317,7 @@ function ChatPageInner({
   // follow-up). null when scope is folder/root \u2014 the chat then runs
   // in MCP-less mode (no fs-cli / task-runner / gateway / skills),
   // composer still works, new conversations are created with
-  // projectName=null (same as the legacy "All projects" path).
+  // projectName=null (same as the legacy "root" path).
   const [currentProject, setCurrentProject] = useState<string | null>(
     initialScope.projectName,
   );
@@ -748,7 +748,7 @@ function ChatPageInner({
     // run MCP-less (no fs-cli, no task-runner, no gateway, no
     // skills). The composer still works in those modes but the
     // resulting conversation is created with projectName=null,
-    // matching the legacy "All projects" path.
+    // matching the legacy "root" path.
     void (async () => {
       const name = initialScope.projectName;
       const defAgent = initialScope.defaultAgentSId;

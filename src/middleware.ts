@@ -35,19 +35,38 @@ const CURRENT_PROJECT_COOKIE = 'kdust_project';
  * Folder URLs (1 or 2 segments) leave the cookie untouched: the
  * folder pages drive their filtering from URL params, not cookie.
  */
-function candidateProjectFsPath(pathname: string): string | null {
-  // Strip leading slash, drop trailing empty segment.
+/**
+ * Classify a pathname against the project cookie:
+ *  - 'set'   when URL is a 3-segment project leaf -> sync cookie
+ *  - 'clear' when URL is `/` (explicit root) or a 1-2 segment
+ *            folder URL -> kill cookie so a later visit to a
+ *            reserved-only legacy route (/chat, /task, ...) does
+ *            NOT snap back to the previous project via the cookie
+ *            fallback. Franck 2026-05-27 bug.
+ *  - 'keep'  otherwise (reserved-only paths: /chat, /task, /api,
+ *            ...). The cookie remains the source of truth there.
+ */
+type CookieAction =
+  | { action: 'set'; fsPath: string }
+  | { action: 'clear' }
+  | { action: 'keep' };
+
+function classifyForCookie(pathname: string): CookieAction {
   const parts = pathname.split('/').filter(Boolean);
-  if (parts.length < 3) return null;
-  const [a, b, c] = parts;
-  if (
-    RESERVED_SEGMENTS.has(a) ||
-    RESERVED_SEGMENTS.has(b) ||
-    RESERVED_SEGMENTS.has(c)
-  ) {
-    return null;
+  if (parts.length === 0) return { action: 'clear' };
+  // Count leading non-reserved segments (stop at the first reserved
+  // one - sub-page tail starts there).
+  let lead = 0;
+  for (const p of parts) {
+    if (RESERVED_SEGMENTS.has(p)) break;
+    lead++;
+    if (lead === 3) break;
   }
-  return `${a}/${b}/${c}`;
+  if (lead === 0) return { action: 'keep' };
+  if (lead >= 3) {
+    return { action: 'set', fsPath: `${parts[0]}/${parts[1]}/${parts[2]}` };
+  }
+  return { action: 'clear' };
 }
 
 /**
@@ -59,23 +78,31 @@ function candidateProjectFsPath(pathname: string): string | null {
  */
 function withPathname(req: NextRequest, res: NextResponse): NextResponse {
   res.headers.set('x-pathname', req.nextUrl.pathname);
-  // ADR-0020: sync the kdust_project cookie with project-leaf URLs.
-  // Only touched when the path looks like /<l1>/<l2>/<project>/...
-  // (non-reserved segments). Folder URLs are skipped. Invalid
-  // candidates (e.g. typo'd project name) are still written — the
-  // downstream resolver returns null when the fsPath does not
-  // resolve to a real project, so legacy /chat etc. simply render
-  // in "no project" mode after the typo. No DB hit in middleware.
-  const candidate = candidateProjectFsPath(req.nextUrl.pathname);
-  if (candidate) {
-    const existing = req.cookies.get(CURRENT_PROJECT_COOKIE)?.value;
-    if (existing !== candidate) {
-      res.cookies.set(CURRENT_PROJECT_COOKIE, candidate, {
+  // ADR-0020 + Franck 2026-05-27 fix: keep the kdust_project cookie
+  // in sync with the URL.
+  //  - Project-leaf URL  -> set cookie (legacy chat/MCP/Telegram
+  //    keep working without touching them).
+  //  - Root / folder URL -> CLEAR cookie so a later visit to a
+  //    reserved-only route (/chat, /task, ...) cannot snap back
+  //    to the previous project via the cookie fallback.
+  //  - Reserved-only URL -> keep cookie (intentional fallback).
+  const decision = classifyForCookie(req.nextUrl.pathname);
+  const existing = req.cookies.get(CURRENT_PROJECT_COOKIE)?.value;
+  if (decision.action === 'set') {
+    if (existing !== decision.fsPath) {
+      res.cookies.set(CURRENT_PROJECT_COOKIE, decision.fsPath, {
         httpOnly: false,
         sameSite: 'lax',
         path: '/',
         maxAge: 60 * 60 * 24 * 365,
       });
+    }
+  } else if (decision.action === 'clear') {
+    if (existing) {
+      // Explicit root / folder navigation: the previous project is
+      // no longer the active scope. Cookie must not leak into the
+      // next legacy reserved-only route.
+      res.cookies.delete(CURRENT_PROJECT_COOKIE);
     }
   }
   return res;

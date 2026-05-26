@@ -105,6 +105,16 @@ export async function getCurrentScope(): Promise<ResolvedScope> {
     const hdrs = await headers();
     const pathname = hdrs.get('x-pathname') ?? '';
     const parts = pathname.split('/').filter(Boolean);
+    // The URL `/` is an EXPLICIT root scope (Franck 2026-05-26
+    // 23:03): when the user clicks the "root" breadcrumb crumb
+    // from a project page, the cookie fallback below would
+    // otherwise scope the Dashboard right back to the project and
+    // the click would look like a no-op. Legacy reserved-only
+    // routes (`/task`, `/run`, `/conversation`) still honour the
+    // cookie because they need a default scope to filter against.
+    if (parts.length === 0) {
+      return { kind: 'root', fsPath: '', folder: null, project: null };
+    }
     // Take up to 3 leading non-reserved segments. Stop at the first
     // reserved one (sub-page tail).
     const head: string[] = [];

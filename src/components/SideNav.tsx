@@ -106,6 +106,51 @@ function buildItemHref(prefix: string, slug: ItemSlug): string {
   return prefix ? `${prefix}/${slug}` : `/${slug}`;
 }
 
+const PROJECT_COOKIE = 'kdust_project';
+
+/**
+ * Best-effort read of the `kdust_project` cookie set by the
+ * middleware on every project-leaf URL visit. Used to keep the
+ * SideNav anchored to the user's last project context when the
+ * current URL has no scope segments (e.g. /conversation/<id>,
+ * /run/<id>) — Franck 2026-05-26 23:37: "quand je reviens sur
+ * Dashboard depuis une conv ou un run je suis à la racine alors
+ * que je devrais être sur le projet".
+ *
+ * Reads `document.cookie` directly (the cookie is httpOnly:false
+ * per src/middleware.ts). Returns '' when unavailable.
+ */
+function readProjectCookie(): string {
+  if (typeof document === 'undefined') return '';
+  const m = document.cookie.match(
+    new RegExp('(?:^|; )' + PROJECT_COOKIE + '=([^;]*)'),
+  );
+  if (!m) return '';
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Resolve the effective scope prefix for the SideNav items.
+ *
+ *   pathname === '/'            → '' (explicit root, no cookie)
+ *   pathname has scope segments → use them (URL is authoritative)
+ *   else (reserved-only path)   → fall back to the kdust_project
+ *                                 cookie so legacy URLs like
+ *                                 /conversation/<id> or /run/<id>
+ *                                 still link back to the project
+ *                                 dashboard the user came from.
+ */
+function effectivePrefix(pathname: string, projectCookie: string): string {
+  if (pathname === '/') return '';
+  const fromUrl = scopePrefixFromPath(pathname);
+  if (fromUrl) return fromUrl;
+  return projectCookie ? '/' + projectCookie : '';
+}
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -124,6 +169,18 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
   const [desktopExpanded, setDesktopExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname() ?? '/';
+
+  // Read the kdust_project cookie on mount so we can resolve the
+  // SideNav prefix on reserved-only routes (/conversation/<id>,
+  // /run/<id>, ...). Kept in state to avoid a hydration mismatch:
+  // the SSR pass has no document, the client refreshes it on
+  // mount and re-renders. Re-sync on every pathname change so
+  // that navigating to a project URL (which the middleware
+  // refreshes the cookie on) picks up the new value.
+  const [projectCookie, setProjectCookie] = useState('');
+  useEffect(() => {
+    setProjectCookie(readProjectCookie());
+  }, [pathname]);
 
   // Restore desktop preference on mount.
   useEffect(() => {
@@ -247,7 +304,7 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
 
         <nav className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
           {(() => {
-            const prefix = scopePrefixFromPath(pathname);
+            const prefix = effectivePrefix(pathname, projectCookie);
             return ITEMS.map((it) => {
               const href = buildItemHref(prefix, it.slug);
               return (

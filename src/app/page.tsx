@@ -15,9 +15,9 @@ import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 
 import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
 import { ConversationCard } from '@/components/ConversationCard';
-import { DocumentTitle } from '@/components/DocumentTitle';
 import { PageHeader } from '@/components/PageHeader';
 import { RunCard } from '@/components/RunCard';
+import { ScopePath } from '@/components/ScopePath';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
 // on pin/delete events from other tabs.
@@ -114,7 +114,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
   // Root  : list L1 folders  (db.folder where parentId=null)
   // Folder: list direct children (sub-folders + projects)
   // Project: no children section (the dashboard tiles are the focus).
-  type ChildLink = { key: string; href: string; label: string; sub?: string; parent?: boolean };
+  type ChildLink = { key: string; href: string; label: string; sub?: string };
   let children: ChildLink[] = [];
   if (scope.kind === 'root') {
     const l1 = await db.folder.findMany({
@@ -129,22 +129,9 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       sub: `${f._count.children}/${f._count.projects}`,
     }));
   } else if (scope.kind === 'folder') {
-    // Parent navigation tile (Franck 2026-05-26 22:06): on a
-    // non-root folder, surface a back-to-parent shortcut at the
-    // head of the children section so the user does not need to
-    // rely on the breadcrumb or the browser back button.
-    const parts = scope.fsPath.split('/').filter(Boolean);
-    const parentFsPath = parts.slice(0, -1).join('/');
-    const parentHref = parentFsPath ? `/${parentFsPath}` : '/';
-    const parentLabel = parentFsPath
-      ? parts[parts.length - 2]
-      : 'Root';
-    children.push({
-      key: 'parent',
-      href: parentHref,
-      label: `\u2191 ${parentLabel}`,
-      parent: true,
-    });
+    // Parent navigation is now surfaced by <ScopePath /> at the
+    // top of the page body (Franck 2026-05-26 22:28) — no more
+    // dedicated "parent" tile in the children section.
     const [subfolders, projs] = await Promise.all([
       db.folder.findMany({
         where: { parentId: scope.folder.id },
@@ -178,27 +165,15 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     task:         scope.kind === 'root' ? '/task'         : buildProjectUrl(scope.fsPath, 'task'),
     run:          scope.kind === 'root' ? '/run'          : buildProjectUrl(scope.fsPath, 'run'),
   };
-  const headerTitle =
-    scope.kind === 'project' ? scope.project.name :
-    scope.kind === 'folder'  ? scope.folder.name :
-    'Dashboard';
-  const headerScope =
-    scope.kind === 'project' ? <span className="font-mono">{scope.project.branch}</span> :
-    scope.kind === 'folder'  ? scope.fsPath :
-    undefined;
-  const documentTitle =
-    scope.kind === 'project' ? `${scope.project.name} (${scope.project.branch})` :
-    scope.kind === 'folder'  ? scope.fsPath :
-    null;
-
+  // ADR-0020 follow-up (Franck 2026-05-26 22:28): the page title in
+  // the TopBar is the page name (Dashboard) regardless of scope.
+  // The hierarchy path is rendered as the first line of the body
+  // via <ScopePath />, and the document.title falls back to the
+  // route-level metadata ("Dashboard · KDust").
   return (
     <div className="space-y-6">
-      {documentTitle ? <DocumentTitle title={documentTitle} /> : null}
-      <PageHeader
-        icon={<FolderGit2 size={20} />}
-        title={headerTitle}
-        scope={headerScope}
-      />
+      <PageHeader icon={<FolderGit2 size={20} />} title="Dashboard" />
+      <ScopePath fsPath={scope.fsPath} />
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -216,14 +191,9 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
               <Link
                 key={c.key}
                 href={c.href}
-                className={
-                  'inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition ' +
-                  (c.parent
-                    ? 'border-slate-300 bg-slate-50 text-slate-600 hover:border-slate-400 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600')
-                }
+                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 px-3 py-1.5 text-sm font-medium shadow-sm transition"
               >
-                {!c.parent && <FolderGit2 size={14} className="text-amber-500" />}
+                <FolderGit2 size={14} className="text-amber-500" />
                 {c.label}
                 {c.sub ? <span className="text-xs text-slate-400">({c.sub})</span> : null}
               </Link>

@@ -9,6 +9,7 @@ import { Pagination } from '@/components/Pagination';
 import { ViewportProbe } from '@/components/ViewportProbe';
 import { LiveSearchInput } from '@/components/LiveSearchInput';
 import { PageHeader } from '@/components/PageHeader';
+import { ScopePath } from '@/components/ScopePath';
 import { ClearFiltersLink } from '@/components/ClearFiltersLink';
 import { getAdaptivePageSize } from '@/lib/adaptive-page-size';
 import type { Metadata } from 'next';
@@ -90,9 +91,9 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
       <ViewportProbe />
       <PageHeader
         icon={<MessageSquare size={20} />}
-        title="Conversation"
-        scope={scope.kind === 'root' ? undefined : scope.fsPath}
+        title="Conversations"
       />
+      <ScopePath fsPath={scope.fsPath} />
 
       {/* Live search (Franck 2026-04-23 22:29). Replaces the old
           form + submit button with a debounced input that updates

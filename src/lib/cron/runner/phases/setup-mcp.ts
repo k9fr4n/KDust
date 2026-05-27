@@ -171,5 +171,19 @@ export async function runSetupMcp(
     console.warn(`[cron] mcp-gateway register failed: ${(e as Error).message}`);
   }
 
+  // passwordpusher (Franck 2026-05-27). Project-agnostic singleton.
+  // Attached unconditionally to every TaskRun so any task can push
+  // a secret without needing a per-task flag. Failure is non-fatal:
+  // typically means the PASSWORDPUSHER_TOKEN Secret hasn't been
+  // created yet — the run proceeds, the agent just sees no tool.
+  try {
+    const { getPasswordPusherServerId } = await import('../../../mcp/registry');
+    const pwId = await getPasswordPusherServerId();
+    mcpServerIds = [...(mcpServerIds ?? []), pwId];
+    console.log(`[cron] passwordpusher serverId=${pwId}`);
+  } catch (e) {
+    console.warn(`[cron] passwordpusher register failed: ${(e as Error).message}`);
+  }
+
   return mcpServerIds;
 }

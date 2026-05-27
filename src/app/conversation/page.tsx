@@ -1,6 +1,6 @@
 import { MessageSquare } from 'lucide-react';
 import { db } from '@/lib/db';
-import { getCurrentScope, scopedWhere, buildProjectUrl } from '@/lib/project-url';
+import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
 // OpenConversationLink is still used by ConversationCard under the
 // hood; we render ConversationCard directly now so we inherit the
 // always-visible pin / delete action cluster (Franck 2026-04-20 17:45).
@@ -60,16 +60,45 @@ export default async function ConversationsPage({ searchParams }: SearchProps) {
   const page = Math.max(1, parseInt(sp.page ?? '1', 10) || 1);
   const PAGE_SIZE = await getAdaptivePageSize(CONV_PAGE_SIZE_CFG);
 
-  const where: Record<string, unknown> = { ...scopedWhere('projectName', scope) };
+  // Scope filter — Conversation.projectName can equal a FOLDER
+  // fsPath when the chat was opened at folder scope (`/<l1>/<l2>/chat`
+  // creates a conv with projectName='<l1>/<l2>'). The generic
+  // `scopedWhere` helper only matches descendants (`startsWith
+  // '<fsPath>/'`) which is correct for Task.projectPath / Run rows
+  // (always project-leaf) but excludes folder-attached conversations
+  // here. We inline the folder OR(self, descendants) — same logic as
+  // GET /api/conversation. Franck 2026-05-27 bug fix.
+  const scopeWhere: Record<string, unknown> = (() => {
+    if (scope.kind === 'root') return {};
+    if (scope.kind === 'project') return { projectName: scope.fsPath };
+    return {
+      OR: [
+        { projectName: scope.fsPath },
+        { projectName: { startsWith: `${scope.fsPath}/` } },
+      ],
+    };
+  })();
+  const where: Record<string, unknown> = { ...scopeWhere };
   // Live search (Franck 2026-04-30): match the query against the
   // conversation title OR any message content. SQLite `contains`
   // is a LIKE filter; acceptable at current volume, FTS5 would be
   // the next step if latency degrades.
+  //
+  // When the scope already injected an OR (folder mode), we can't
+  // simply overwrite `where.OR` — that would drop the scope filter.
+  // Compose with AND instead. Franck 2026-05-27.
   if (q) {
-    where.OR = [
+    const qOr = [
       { title: { contains: q } },
       { messages: { some: { content: { contains: q } } } },
     ];
+    if (where.OR) {
+      const existingOr = where.OR;
+      delete where.OR;
+      where.AND = [{ OR: existingOr }, { OR: qOr }];
+    } else {
+      where.OR = qOr;
+    }
   }
 
   // Parallel count + page fetch. count() respects the `where` so

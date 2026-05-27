@@ -2414,3 +2414,132 @@ to fold them back under L2 leaves before the API rejects them again.
 - Reserved URL segments (ADR-0020): unchanged.
 - Run-depth cap, secrets redaction, no public ingress: unchanged.
 - No `dust.db` migration, no `prisma db push` required on deploy.
+
+### ADR-0023 — Middleware rewrite for unbounded-depth routing (2026-05-27)
+
+**Status**: Accepted (2026-05-27, Franck).
+
+**Context**. ADR-0020 introduced the `/<l1>/<l2>/<project>/<sub>`
+project-scoped URL layout. The implementation used Next.js App
+Router directory-based dynamic segments: `src/app/[l1]/...`,
+`src/app/[l1]/[l2]/...`, `src/app/[l1]/[l2]/[project]/...`. Each
+sub-page (chat / task / run / conversation, plus their `[id]` /
+`new` / `edit` children) was duplicated **three times** (root,
+L1, L2) as one-line re-exports of the cookie-scoped route under
+`src/app/<sub>/page.tsx`. The shared body reads `x-pathname`
+(propagated by middleware) and calls `getCurrentScope()` to resolve
+the scope from the URL.
+
+ADR-0022 lifts the depth-2 cap on folders. The directory-based
+route tree cannot express arbitrary depth — Next.js routes are
+fixed at file-system layout time. We need a routing strategy that
+matches **unbounded depth without code duplication**.
+
+**Decision**. Drop the duplicated `[l1]/...` and `[l1]/[l2]/...`
+route trees entirely. Use **middleware rewrite** to forward
+scoped requests to the existing single set of root-level routes:
+
+```
+/<scope-segs…>/             → rewrite to /
+/<scope-segs…>/chat         → rewrite to /chat
+/<scope-segs…>/chat/<id>    → rewrite to /chat/<id>
+/<scope-segs…>/task         → rewrite to /task
+/<scope-segs…>/task/new     → rewrite to /task/new
+/<scope-segs…>/task/<id>    → rewrite to /task/<id>
+/<scope-segs…>/task/<id>/edit → rewrite to /task/<id>/edit
+/<scope-segs…>/run          → rewrite to /run
+/<scope-segs…>/run/<id>     → rewrite to /run/<id>
+/<scope-segs…>/conversation → rewrite to /conversation
+```
+
+`<scope-segs>` is any non-empty sequence of non-reserved URL
+segments — the operator's folder chain optionally ending with a
+project leaf. Resolution to "folder vs project" is **not** done at
+the Edge (middleware has no Prisma access); it happens server-side
+in `getCurrentScope()` which reads `x-pathname` (preserved across
+the rewrite as the ORIGINAL URL) and walks the longest-prefix
+folder match against the DB.
+
+User-visible URLs are unchanged. Bookmarks like
+`/Perso/fsallet/KDust/chat` keep working byte-for-byte.
+
+**Implementation notes**.
+
+1. **Middleware classifier** (pure-string, no DB) :
+   - Split `pathname` into segments.
+   - First segment in the reserved set (`chat`, `task`, `run`,
+     `conversation`, `logs`, `about`, `settings`, `login`, `api`,
+     `dust`, `_next`, `favicon.ico`) → **no rewrite**, the existing
+     root-level route handles it (cookie-scoped fallback).
+   - Otherwise: walk left-to-right, splitting at the **first**
+     reserved segment. `head` = leading non-reserved segments
+     (scope chain), `tail` = `[reserved, ...rest]` or empty.
+     - If `tail` is empty → rewrite to `/`.
+     - If `tail[0]` ∈ `{chat, task, run, conversation}` → rewrite
+       to `/${tail.join('/')}`.
+     - Otherwise (`tail[0]` is a non-routable reserved name like
+       `settings` or `logs` placed mid-URL) → **no rewrite**: such
+       URLs were never valid under ADR-0020 either; they 404
+       organically.
+
+2. **`x-pathname` header**: set BEFORE the rewrite to the original
+   pathname so `getCurrentScope()` sees `/<scope>/<sub>` and not
+   the rewritten `/<sub>`. Already the case via `withPathname()`.
+
+3. **Cookie sync** (`kdust_project`): the existing
+   `classifyForCookie()` heuristic is "3 segments → project leaf,
+   else clear". Generalised to: any non-empty `head` sets the
+   cookie to `head.join('/')`; server-side `getCurrentScope()`
+   validates the value against `Project.findUnique({fsPath})` and
+   silently falls back to root when stale. Removing the cookie
+   sync from middleware entirely (cookie as pure UI state) is
+   considered for a future ADR but kept here to preserve the
+   "navigate to /chat after picking a project" UX.
+
+4. **Scope resolver** (`resolveScopeFromSegments`): generalised
+   from the hard-coded "1/2/3 segments" branches to a
+   longest-prefix folder walk. Algorithm:
+   - Load all folders matching `name ∈ segments` (single query).
+   - Walk segments left-to-right, descending one folder per
+     matching segment by `(name, parentId)`. Stop at the first
+     non-match.
+   - At stop position `k`: if `k == segments.length` → folder
+     scope. Else if `k == segments.length - 1` → try
+     `Project.findUnique({ fsPath: segments.join('/') })`. Else
+     → null (not found).
+   - Reserved segments short-circuit to null (defence in depth;
+     middleware already excludes them from the scope head).
+
+5. **Route file deletions**: the 21 re-export files under
+   `src/app/[l1]/` and `src/app/[l1]/[l2]/` become reachable
+   only by chance (Next still routes `/foo/bar` to
+   `[l1]/[l2]/page.tsx` if both exist). To avoid two sources of
+   truth, the next commit deletes them. The single root-level
+   route handles everything via the rewrite.
+
+**Consequences**.
+
++ Unbounded folder depth without combinatorial route duplication.
++ One source of truth per sub-page (the existing
+  `src/app/chat/page.tsx`, `src/app/task/page.tsx`, …).
++ No URL break — every existing bookmark / Telegram link / Teams
+  webhook keeps resolving identically.
++ Reduces `src/app/` file count by ~21 files (re-exports go away).
+- Middleware logic gains one rewrite branch (~30 lines). Edge
+  runtime budget impact: negligible (pure string work).
+- `getCurrentScope()` gains one extra DB read at deep folder
+  prefixes (one `findMany({ name: { in: segments } })` instead
+  of one targeted `findFirst`). Memoised per request via
+  `React.cache` as before; net cost < 1 ms.
+- Reserved-segment collision risk: if a user creates a folder
+  named `chat`, the middleware classifier would still reject it
+  thanks to `validateUrlSafeName` at create-time (ADR-0020
+  unchanged). A pre-existing folder named `chat` would shadow the
+  rewrite — boot-time scan in `src/instrumentation.ts` keeps
+  warning on collisions.
+
+**Rollback**. Revert the middleware diff and re-introduce the
+`[l1]/...` + `[l1]/[l2]/...` re-export trees (a `git revert` of
+the deletion commit suffices). The single-source body
+implementations are unchanged; the duplicated re-exports keep
+working as before. No data migration.

@@ -161,6 +161,16 @@ function applyScopedRewrite(req: NextRequest, res: NextResponse): NextResponse {
   const url = req.nextUrl.clone();
   url.pathname = target;
   url.search = search;
+  // Encode the ORIGINAL pathname in a search param on the rewrite
+  // target so every distinct scope (`/foo`, `/foo/bar`, `/baz`)
+  // gets a UNIQUE internal URL. Without this, multiple scope URLs
+  // would all rewrite to `/` (or `/chat`, …) and Next's App Router
+  // client cache would collide between them: the first navigation
+  // appears as a no-op, the second forces a refresh. Internal-only
+  // (browsers never see this param — they see the original URL),
+  // and getCurrentScope keeps reading x-pathname for scope, not
+  // the search param. (Fix for "two clicks to navigate", 2026-05-27.)
+  url.searchParams.set('__scope', pathname);
   // NextResponse.rewrite preserves cookies set on the incoming
   // response, but we need to carry our headers (x-pathname) onto
   // the rewrite. Build a new response from rewrite() and copy.

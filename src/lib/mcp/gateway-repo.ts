@@ -10,10 +10,16 @@
 // values, no Prisma Decimal, no Date objects (ISO strings).
 
 import { db } from '../db';
+import { normalizeProjectFsPath } from './gateway-path-match';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const SECRET_KEY_RE = /^[A-Za-z][A-Za-z0-9_.-]{0,95}$/;
-const PROJECT_FS_PATH_RE = /^[A-Za-z0-9._\/-]{1,256}$/;
+// Literal paths (e.g. "Perso/fsallet/KDust") AND glob patterns
+// (Franck 2026-05-27). Allowed glob chars: `*`, `?`. See
+// ./gateway-path-match.ts for the matching semantics.
+const PROJECT_FS_PATH_RE = /^[A-Za-z0-9._/*?-]{1,256}$/;
+
+export { normalizeProjectFsPath, pathMatchesPattern, isPatternFsPath } from './gateway-path-match';
 
 export function validateServerSlug(slug: string): string | null {
   if (!SLUG_RE.test(slug)) {
@@ -28,7 +34,9 @@ export function validateSecretKey(k: string): string | null {
   return null;
 }
 export function validateProjectFsPath(p: string): string | null {
-  if (!PROJECT_FS_PATH_RE.test(p)) return 'Invalid projectFsPath.';
+  if (!PROJECT_FS_PATH_RE.test(p)) {
+    return 'Invalid projectFsPath. Allowed: A-Z a-z 0-9 . _ - / and glob meta * ? (use `**` for recursive match).';
+  }
   return null;
 }
 
@@ -177,17 +185,18 @@ export async function upsertFilter(input: {
   mcpServerId: number;
   allowedTools: string[];
 }) {
-  const err = validateProjectFsPath(input.projectFsPath);
+  const projectFsPath = normalizeProjectFsPath(input.projectFsPath);
+  const err = validateProjectFsPath(projectFsPath);
   if (err) throw new Error(err);
   return db.projectMcpToolFilter.upsert({
     where: {
       projectFsPath_mcpServerId: {
-        projectFsPath: input.projectFsPath,
+        projectFsPath,
         mcpServerId: input.mcpServerId,
       },
     },
     create: {
-      projectFsPath: input.projectFsPath,
+      projectFsPath,
       mcpServerId: input.mcpServerId,
       allowedTools: JSON.stringify(input.allowedTools),
     },

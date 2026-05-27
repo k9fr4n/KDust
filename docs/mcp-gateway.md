@@ -158,6 +158,29 @@ The filter is **applied in KDust**, not in the gateway: when a
 chat or run requests its proxy `McpServer`, only whitelisted
 tools are `registerTool`'d on the Dust transport.
 
+### Glob patterns for `projectFsPath` (2026-05-27)
+
+`ProjectMcpToolFilter.projectFsPath` accepts both literal paths
+(`Perso/fsallet/KDust`) and glob patterns. This lets one row cover
+many projects — typically every project inside a folder.
+
+| Pattern | Matches |
+|---|---|
+| `Client/*` | `Client/foo`, `Client/bar` — but **not** `Client/foo/sub` |
+| `Client/**` | `Client/foo`, `Client/foo/sub`, recursively |
+| `Client/?oo` | one character segment, e.g. `Client/foo` |
+| `Perso/fsallet/KDust` | literal equality (historical behaviour) |
+
+Resolution: at proxy-start time `resolveAllowedToolNames(projectFsPath)`
+scans every filter row (server enabled) and keeps those whose
+`projectFsPath` matches via `pathMatchesPattern` (see
+`src/lib/mcp/gateway-path-match.ts`). The resulting allow-list is
+the **union** across every matching row — patterns are additive
+to literals, never subtractive (default-deny is preserved).
+
+A leading `/` typed by the operator is stripped on save to stay
+aligned with the canonical slash-free `Project.fsPath`.
+
 ### Per-server tool scoping in the filter editor (2026-05-18)
 
 The gateway's `tools/list` returns a **flat union** of every enabled

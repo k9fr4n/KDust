@@ -3,6 +3,10 @@ import { startTaskRunnerServer, type TaskRunnerHandle } from './task-runner-serv
 import { startCommandRunnerServer, type CommandRunnerHandle } from './command-runner-server';
 import { startGatewayProxy, type GatewayProxyHandle } from './gateway-proxy';
 import { startSkillsServer, type SkillsServerHandle } from './skills-server';
+import {
+  startPasswordPusherServer,
+  type PasswordPusherHandle,
+} from './passwordpusher-server';
 
 // Module-level singleton (survives across requests in a given node process)
 const g = globalThis as unknown as {
@@ -433,6 +437,59 @@ export async function getChatSkillsServerId(projectName: string): Promise<string
 export async function releaseChatSkillsServer(projectName: string): Promise<void> {
   const entry = chatSkillsCache.get(projectName);
   chatSkillsCache.delete(projectName);
+  if (!entry) return;
+  try {
+    const handle = await entry;
+    await handle.transport.close().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  passwordpusher MCP server registry (Franck 2026-05-27).                   */
+/*                                                                            */
+/*  Singleton: the server is stateless (no chroot, no per-run secret          */
+/*  resolution, no per-project whitelist). One McpServer + transport for      */
+/*  the whole process. Same handle is returned for every project / run /      */
+/*  chat session — its tools internally re-resolve the PASSWORDPUSHER_TOKEN   */
+/*  Secret on every call, so a UI rotation is picked up live.                 */
+/*                                                                            */
+/*  Released by the auth-failure path in passwordpusher-server.ts when Dust   */
+/*  returns 401, mirroring task-runner / skills.                              */
+/* -------------------------------------------------------------------------- */
+
+const PWPUSH_KEY = '__global__';
+const g3 = globalThis as unknown as {
+  __kdustPasswordPusherMcp?: Map<string, Promise<PasswordPusherHandle>>;
+};
+if (!g3.__kdustPasswordPusherMcp) g3.__kdustPasswordPusherMcp = new Map();
+const passwordPusherCache = g3.__kdustPasswordPusherMcp!;
+
+export async function getPasswordPusherServerId(): Promise<string> {
+  const existing = passwordPusherCache.get(PWPUSH_KEY);
+  if (existing) {
+    try {
+      const handle = await existing;
+      if (handle.serverId) return handle.serverId;
+    } catch {
+      passwordPusherCache.delete(PWPUSH_KEY);
+    }
+  }
+  const p = startPasswordPusherServer();
+  passwordPusherCache.set(PWPUSH_KEY, p);
+  try {
+    const handle = await p;
+    return handle.serverId;
+  } catch (e) {
+    passwordPusherCache.delete(PWPUSH_KEY);
+    throw e;
+  }
+}
+
+export async function releasePasswordPusherServer(): Promise<void> {
+  const entry = passwordPusherCache.get(PWPUSH_KEY);
+  passwordPusherCache.delete(PWPUSH_KEY);
   if (!entry) return;
   try {
     const handle = await entry;

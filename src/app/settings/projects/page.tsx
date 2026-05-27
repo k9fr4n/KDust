@@ -2,31 +2,31 @@
 /**
  * /settings/projects — projects + folder hierarchy management.
  *
- * Rewritten 2026-04-27 (Franck, Phase 3 of folder hierarchy):
- *   - Folder taxonomy panel (collapsible) at the top: create L1
- *     and L2 folders, rename inline, delete (refused by the API
- *     when non-empty, surfaced verbatim).
- *   - Project create form gains a leaf-folder picker (required;
- *     defaults to legacy/uncategorized so the existing one-liner
- *     workflow still works).
- *   - Project list is grouped by L1 → L2 with collapsible groups
- *     when no filter is active; an active text filter degrades to
- *     a flat sorted list (matches by name/description/folder path).
- *   - Each project card has a "Move…" action that opens a modal
- *     to pick a destination leaf folder. The API refuses with 409
- *     when a TaskRun is running/pending; the message is shown
- *     verbatim so the operator knows to wait + retry.
- *   - Inline folder rename. On L1 rename the API cascades the
- *     fsPath rewriting through every descendant project (mv FS
- *     dir + DB tx). The whole operation is best-effort idempotent;
- *     a partial failure is logged server-side and surfaced to the
- *     user as an error message.
+ * Reworked 2026-05-27 (Franck, ADR-0022 unbounded folder depth):
+ *   - Folder taxonomy panel renders a recursive tree, indented
+ *     by depth. One "+ folder" input at the top picks any parent
+ *     (incl. root); each row has its own "create subfolder"
+ *     button that pre-selects itself as parent.
+ *   - Project create form: folder picker is optional (default =
+ *     root, fsPath = name) and lists every folder regardless of
+ *     depth. Pasting a git URL auto-fills the name with the
+ *     repo leaf slug (offline, no platform API call).
+ *   - Project list groups by full parent path (e.g. "/", "clients",
+ *     "clients/acme/prod"), sorted alphabetically with root
+ *     pinned first. Active text filter still degrades to a flat
+ *     sorted list.
+ *   - "Move…" dialog: lists every folder + a "/ (root)" option.
+ *     The API refuses with 409 when a TaskRun is running/pending;
+ *     the message is shown verbatim so the operator knows to
+ *     wait + retry.
+ *   - Inline folder rename. The API cascades the fsPath rewriting
+ *     through every descendant project (mv FS dir + DB tx). The
+ *     whole operation is best-effort idempotent; a partial
+ *     failure is logged server-side and surfaced to the user.
  *
- * No drag-and-drop in this phase — a "Move…" modal is more
- * accessible (keyboard nav, screen reader friendly) and avoids
- * having to debug HTML5 DnD edge cases (drop-target handling on
- * sticky group headers, scroll while dragging, mobile touch).
- * Can be added in a later phase if asked for.
+ * No drag-and-drop — a "Move…" modal is more accessible (keyboard
+ * nav, screen reader friendly) and avoids HTML5 DnD edge cases
+ * (sticky headers, scroll while dragging, mobile touch).
  */
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import { PageHeader } from '@/components/PageHeader';
+import { extractRepoSlugFromGitUrl } from '@/lib/git-url';
 
 type P = {
   id: string;
@@ -131,6 +132,12 @@ function ProjectsPageInner() {
   const [form, setForm] = useState({
     name: '', gitUrl: '', branch: 'main', description: '', folderId: '',
   });
+  // Tracks whether the operator has manually edited the `name`
+  // field. When false (= never typed in name OR cleared after
+  // reset), pasting a git URL auto-fills the name with the
+  // extracted slug. As soon as the user types in name, we stop
+  // overwriting (ADR-0022 §Chantier 3, option A).
+  const [nameTouched, setNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -169,9 +176,27 @@ function ProjectsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, projects]);
 
+  // ?create=1[&folder=<id>] from the dashboard "+ Project" button
+  // (ADR-0022 §Chantier 4). Auto-shows the create form with the
+  // parent folder pre-selected. Fires once; we clear the query
+  // string after to keep the URL clean and avoid re-firing on
+  // back-button navigation.
+  const autoCreateFired = useRef(false);
+  useEffect(() => {
+    if (autoCreateFired.current) return;
+    if (searchParams?.get('create') !== '1') return;
+    autoCreateFired.current = true;
+    const folderId = searchParams.get('folder') ?? '';
+    setForm((f) => ({ ...f, folderId }));
+    setShowCreate(true);
+    router.replace('/settings/projects');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const resetForm = () => {
     setForm({ name: '', gitUrl: '', branch: 'main', description: '', folderId: '' });
     setMode('git');
+    setNameTouched(false);
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -280,7 +305,7 @@ function ProjectsPageInner() {
     }
   };
 
-  const moveProject = async (projectId: string, folderId: string) => {
+  const moveProject = async (projectId: string, folderId: string | null) => {
     const r = await fetch(`/api/projects/${projectId}/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -311,19 +336,21 @@ function ProjectsPageInner() {
     'w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm';
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-  // Flat list of leaf (L2) folders for the create form picker
-  // and the move modal. Sorted by L1/L2 path.
-  const leafFolders = useMemo(() => {
+  // Flat list of ALL folders (any depth, ADR-0022) for the
+  // create-form picker and the move modal. Walk the recursive
+  // tree, producing `{ id, path, count }` where `path` is the
+  // full slash-joined ancestor chain and `count` is direct
+  // projects under the folder (descendants not included).
+  const allFolders = useMemo(() => {
     const out: { id: string; path: string; count: number }[] = [];
-    for (const l1 of tree) {
-      for (const l2 of l1.children ?? []) {
-        out.push({
-          id: l2.id,
-          path: `${l1.name}/${l2.name}`,
-          count: l2.projectCount,
-        });
+    const walk = (nodes: FolderNode[], prefix: string) => {
+      for (const n of nodes) {
+        const path = prefix ? `${prefix}/${n.name}` : n.name;
+        out.push({ id: n.id, path, count: n.projectCount });
+        if (n.children && n.children.length > 0) walk(n.children, path);
       }
-    }
+    };
+    walk(tree, '');
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }, [tree]);
 
@@ -344,34 +371,29 @@ function ProjectsPageInner() {
 
   const grouped = useMemo(() => {
     if (filteredFlat) return null;
-    const out = new Map<string, Map<string, P[]>>();
+    // ADR-0022 / unbounded depth: group by the project's full
+    // parent folder path (everything except the leaf project
+    // name). Root-level projects (no folder) bucket under "/".
+    // Each group is then sorted alphabetically by its full path,
+    // with "/" (root) pinned first.
+    const out = new Map<string, P[]>();
     for (const p of projects) {
       const fp = p.fsPath ?? p.name;
-      const parts = fp.split('/');
-      // For depth-2 fsPath "L1/L2/leaf" -> realL1=L1,        realL2=L2.
-      // For "L1/leaf"        (no L2 yet)  -> realL1=L1,        realL2='(direct)'.
-      // For unmigrated leaf-only          -> realL1='(unfiled)', realL2='(unfiled)'.
-      const realL1 = parts.length >= 3 ? parts[0] : (parts.length === 2 ? parts[0] : '(unfiled)');
-      const realL2 = parts.length >= 3 ? parts[1] : (parts.length === 2 ? '(direct)' : '(unfiled)');
-      if (!out.has(realL1)) out.set(realL1, new Map());
-      const sub = out.get(realL1)!;
-      if (!sub.has(realL2)) sub.set(realL2, []);
-      sub.get(realL2)!.push(p);
+      const parts = fp.split('/').filter(Boolean);
+      const parent = parts.length <= 1 ? '/' : parts.slice(0, -1).join('/');
+      if (!out.has(parent)) out.set(parent, []);
+      out.get(parent)!.push(p);
     }
-    // Sort L1 keys alphabetically; '(unfiled)' last.
-    const sortedL1 = [...out.keys()].sort((a, b) => {
-      if (a === '(unfiled)') return 1;
-      if (b === '(unfiled)') return -1;
+    const sortedParents = [...out.keys()].sort((a, b) => {
+      if (a === '/') return -1;
+      if (b === '/') return 1;
       return a.localeCompare(b);
     });
-    return sortedL1.map((l1) => ({
-      l1,
-      l2s: [...out.get(l1)!.entries()]
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([l2, ps]) => ({
-          l2,
-          projects: ps.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
-        })),
+    return sortedParents.map((parent) => ({
+      parent,
+      projects: out
+        .get(parent)!
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
     }));
   }, [projects, filteredFlat]);
 
@@ -448,11 +470,19 @@ function ProjectsPageInner() {
 
           <div className="grid md:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-xs text-slate-500">Name (folder) *</span>
+              <span className="text-xs text-slate-500">
+                Name (folder) *
+                {!nameTouched && form.gitUrl.trim() && form.name && (
+                  <span className="ml-1 text-slate-400">(auto)</span>
+                )}
+              </span>
               <input
                 className={field + ' font-mono'}
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  setNameTouched(true);
+                }}
                 placeholder="my-project"
                 pattern="[a-zA-Z0-9._-]+"
                 title="Allowed: letters, digits, dot, dash, underscore."
@@ -460,19 +490,16 @@ function ProjectsPageInner() {
               />
             </label>
             <label className="block">
-              <span className="text-xs text-slate-500">Folder *</span>
+              <span className="text-xs text-slate-500">
+                Folder <span className="text-slate-400">(optional)</span>
+              </span>
               <select
                 className={field}
                 value={form.folderId}
                 onChange={(e) => setForm({ ...form, folderId: e.target.value })}
-                required
               >
-                <option value="">
-                  {leafFolders.length === 0
-                    ? '— no folder yet, defaults to legacy/uncategorized —'
-                    : '— default: legacy/uncategorized —'}
-                </option>
-                {leafFolders.map((f) => (
+                <option value="">— root (no folder) —</option>
+                {allFolders.map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.path}{f.count ? `  (${f.count})` : ''}
                   </option>
@@ -499,7 +526,19 @@ function ProjectsPageInner() {
                 <input
                   className={field + ' font-mono'}
                   value={form.gitUrl}
-                  onChange={(e) => setForm({ ...form, gitUrl: e.target.value })}
+                  onChange={(e) => {
+                    const gitUrl = e.target.value;
+                    // Auto-fill the `name` field with the repo
+                    // leaf slug as long as the operator hasn't
+                    // typed in it (ADR-0022 §Chantier 3, option
+                    // A: offline, slug-from-URL only).
+                    const next = { ...form, gitUrl };
+                    if (!nameTouched) {
+                      const slug = extractRepoSlugFromGitUrl(gitUrl);
+                      next.name = slug ?? '';
+                    }
+                    setForm(next);
+                  }}
                   placeholder="git@gitlab.ecritel.net:group/repo.git"
                   required
                 />
@@ -593,16 +632,18 @@ function ProjectsPageInner() {
         )
       ) : (
         <div className="space-y-4">
-          {grouped!.map(({ l1, l2s }) => {
-            const isCollapsed = collapsedL1.has(l1);
-            const totalProjects = l2s.reduce((acc, x) => acc + x.projects.length, 0);
+          {grouped!.map(({ parent, projects: ps }) => {
+            // Collapsed state key = the full parent path so the
+            // map keeps working across renames (parent === '/'
+            // for root-level projects).
+            const isCollapsed = collapsedL1.has(parent);
             return (
-              <section key={l1} className="rounded-md border border-slate-200 dark:border-slate-800">
+              <section key={parent} className="rounded-md border border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => {
                     const next = new Set(collapsedL1);
-                    if (isCollapsed) next.delete(l1); else next.add(l1);
+                    if (isCollapsed) next.delete(parent); else next.add(parent);
                     persistCollapsed(next);
                   }}
                   className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-900/40 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md"
@@ -610,36 +651,28 @@ function ProjectsPageInner() {
                   <span className="flex items-center gap-2 text-sm font-medium">
                     {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                     <Folder size={14} className="text-slate-400" />
-                    <span>{l1}</span>
+                    <span className="font-mono">{parent === '/' ? '/ (root)' : parent}</span>
                     <span className="text-xs text-slate-500">
-                      ({totalProjects} project{totalProjects > 1 ? 's' : ''})
+                      ({ps.length} project{ps.length > 1 ? 's' : ''})
                     </span>
                   </span>
                 </button>
                 {!isCollapsed && (
-                  <div className="p-3 space-y-3">
-                    {l2s.map(({ l2, projects: ps }) => (
-                      <div key={l2}>
-                        <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5 ml-1">
-                          {l1}/{l2}
-                          <span className="text-slate-400 ml-1">· {ps.length}</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                          {ps.map((p) => (
-                            <ProjectCard
-                              key={p.id}
-                              p={p}
-                              busyId={busyId}
-                              stop={stop}
-                              onOpen={() => router.push(`/settings/projects/${p.id}`)}
-                              onSync={() => void sync(p.id)}
-                              onMove={() => setMoveTarget(p)}
-                              onDelete={() => void remove(p.id, p.name)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                  <div className="p-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {ps.map((p) => (
+                        <ProjectCard
+                          key={p.id}
+                          p={p}
+                          busyId={busyId}
+                          stop={stop}
+                          onOpen={() => router.push(`/settings/projects/${p.id}`)}
+                          onSync={() => void sync(p.id)}
+                          onMove={() => setMoveTarget(p)}
+                          onDelete={() => void remove(p.id, p.name)}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
               </section>
@@ -651,7 +684,7 @@ function ProjectsPageInner() {
       {moveTarget && (
         <MoveProjectDialog
           project={moveTarget}
-          leafFolders={leafFolders}
+          allFolders={allFolders}
           onCancel={() => setMoveTarget(null)}
           onMove={(folderId) => void moveProject(moveTarget.id, folderId)}
         />
@@ -788,43 +821,27 @@ function FoldersPanel({
   onChanged: () => void | Promise<void>;
   setMsg: (m: { kind: 'ok' | 'err'; text: string } | null) => void;
 }) {
-  const [newL1, setNewL1] = useState('');
-  const [newL2For, setNewL2For] = useState<string | null>(null);
-  const [newL2Name, setNewL2Name] = useState('');
+  // Single "create" input bound to the currently-selected parent
+  // (null = root). Reusing one input + one parent state across
+  // depth-N keeps the panel compact and avoids the per-level
+  // input proliferation the old L1/L2 panel had.
+  const [newName, setNewName] = useState('');
+  const [newParentId, setNewParentId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
-  const createL1 = async () => {
-    const name = newL1.trim();
+  const create = async () => {
+    const name = newName.trim();
     if (!name) return;
     const r = await fetch('/api/folders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, parentId: newParentId }),
     });
     const j = await r.json().catch(() => ({}));
     if (r.ok) {
       setMsg({ kind: 'ok', text: `Created folder "${name}".` });
-      setNewL1('');
-      await onChanged();
-    } else {
-      setMsg({ kind: 'err', text: `Create failed: ${humanizeApiError(j, r.status)}` });
-    }
-  };
-
-  const createL2 = async (parentId: string) => {
-    const name = newL2Name.trim();
-    if (!name) return;
-    const r = await fetch('/api/folders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, parentId }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (r.ok) {
-      setMsg({ kind: 'ok', text: `Created subfolder "${name}".` });
-      setNewL2Name('');
-      setNewL2For(null);
+      setNewName('');
       await onChanged();
     } else {
       setMsg({ kind: 'err', text: `Create failed: ${humanizeApiError(j, r.status)}` });
@@ -858,8 +875,8 @@ function FoldersPanel({
     }
   };
 
-  const remove = async (id: string, name: string, kind: 'L1' | 'L2') => {
-    if (!confirm(`Delete ${kind} folder "${name}"?\n\nThe folder must be empty (the API will refuse otherwise).`)) return;
+  const remove = async (id: string, name: string) => {
+    if (!confirm(`Delete folder "${name}"?\n\nThe folder must be empty (the API will refuse otherwise).`)) return;
     const r = await fetch(`/api/folders/${id}`, { method: 'DELETE' });
     const j = await r.json().catch(() => ({}));
     if (r.ok) {
@@ -876,10 +893,99 @@ function FoldersPanel({
     }
   };
 
+  // Build a flat "all folders" list for the parent <select>. Same
+  // walk as `allFolders` above but local to the panel (parent
+  // doesn't pass it down to keep the prop surface small).
+  const flatFolders = useMemo(() => {
+    const out: { id: string; path: string }[] = [];
+    const walk = (nodes: FolderNode[], prefix: string) => {
+      for (const n of nodes) {
+        const path = prefix ? `${prefix}/${n.name}` : n.name;
+        out.push({ id: n.id, path });
+        if (n.children && n.children.length > 0) walk(n.children, path);
+      }
+    };
+    walk(tree, '');
+    return out.sort((a, b) => a.path.localeCompare(b.path));
+  }, [tree]);
+
   const inputCls =
     'rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs';
   const btnCls =
     'p-1.5 rounded border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800';
+
+  // Recursive renderer for one folder row + its descendants.
+  // depth drives the left padding; no hard cap (MAX_FOLDER_DEPTH
+  // is enforced server-side).
+  const FolderRow = (props: { node: FolderNode; depth: number }) => {
+    const { node, depth } = props;
+    const indent = { paddingLeft: `${0.5 + depth * 1.25}rem` };
+    return (
+      <li className="border-b border-slate-100 dark:border-slate-800/40 last:border-b-0">
+        <div className="flex items-center gap-2 py-1.5 pr-2 text-sm" style={indent}>
+          <Folder size={depth === 0 ? 14 : 12} className="text-slate-400" />
+          {renamingId === node.id ? (
+            <>
+              <input
+                autoFocus
+                className={inputCls + ' font-mono flex-1'}
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void rename(node.id);
+                  if (e.key === 'Escape') setRenamingId(null);
+                }}
+              />
+              <button onClick={() => void rename(node.id)} className={btnCls} title="Save">
+                <Check size={12} />
+              </button>
+              <button onClick={() => setRenamingId(null)} className={btnCls} title="Cancel">
+                <X size={12} />
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="font-mono flex-1">{node.name}</span>
+              <span className="text-[10px] text-slate-400">
+                {node.projectCount} project(s)
+                {node.children && node.children.length > 0
+                  ? ` · ${node.children.length} subfolder(s)`
+                  : ''}
+              </span>
+              <button
+                onClick={() => { setNewParentId(node.id); setNewName(''); }}
+                className={btnCls}
+                title="Create subfolder here"
+              >
+                <FolderPlus size={12} />
+              </button>
+              <button
+                onClick={() => { setRenamingId(node.id); setRenameValue(node.name); }}
+                className={btnCls}
+                title="Rename"
+              >
+                <Edit2 size={12} />
+              </button>
+              <button
+                onClick={() => void remove(node.id, node.name)}
+                className={btnCls + ' text-red-600'}
+                title="Delete"
+              >
+                <Trash2 size={12} />
+              </button>
+            </>
+          )}
+        </div>
+        {node.children && node.children.length > 0 && (
+          <ul>
+            {node.children.map((c) => (
+              <FolderRow key={c.id} node={c} depth={depth + 1} />
+            ))}
+          </ul>
+        )}
+      </li>
+    );
+  };
 
   return (
     <div className="rounded-md border border-slate-200 dark:border-slate-800 p-4 space-y-3 bg-slate-50/30 dark:bg-slate-900/20">
@@ -887,16 +993,27 @@ function FoldersPanel({
         <div className="text-sm font-medium flex items-center gap-2">
           <FolderTree size={14} /> Folder hierarchy
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <select
+            className={inputCls}
+            value={newParentId ?? ''}
+            onChange={(e) => setNewParentId(e.target.value || null)}
+            title="Parent folder for the new folder"
+          >
+            <option value="">/ (root)</option>
+            {flatFolders.map((f) => (
+              <option key={f.id} value={f.id}>{f.path}</option>
+            ))}
+          </select>
           <input
             className={inputCls + ' font-mono'}
-            placeholder="new top-level folder"
+            placeholder="new folder name"
             title="Allowed: letters, digits, . _ - (no spaces, no slashes, no accents)"
-            value={newL1}
-            onChange={(e) => setNewL1(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void createL1(); }}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void create(); }}
           />
-          <button onClick={() => void createL1()} className={btnCls} title="Create top-level folder">
+          <button onClick={() => void create()} className={btnCls} title="Create folder">
             <FolderPlus size={14} />
           </button>
         </div>
@@ -904,160 +1021,37 @@ function FoldersPanel({
 
       {tree.length === 0 ? (
         <p className="text-xs text-slate-500 italic">
-          No folder yet. New projects default to <span className="font-mono">legacy/uncategorized</span>.
+          No folder yet. Use the input above to create your first one — nest as deep as you need.
         </p>
       ) : (
-        <ul className="space-y-1">
-          {tree.map((l1) => (
-            <li key={l1.id} className="rounded border border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
-                <Folder size={14} className="text-slate-400" />
-                {renamingId === l1.id ? (
-                  <>
-                    <input
-                      autoFocus
-                      className={inputCls + ' font-mono flex-1'}
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void rename(l1.id);
-                        if (e.key === 'Escape') setRenamingId(null);
-                      }}
-                    />
-                    <button onClick={() => void rename(l1.id)} className={btnCls} title="Save">
-                      <Check size={12} />
-                    </button>
-                    <button onClick={() => setRenamingId(null)} className={btnCls} title="Cancel">
-                      <X size={12} />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <span className="font-mono flex-1">{l1.name}</span>
-                    <span className="text-[10px] text-slate-400">
-                      {(l1.children ?? []).length} subfolder(s)
-                    </span>
-                    <button
-                      onClick={() => { setNewL2For(l1.id); setNewL2Name(''); }}
-                      className={btnCls}
-                      title="Add subfolder"
-                    >
-                      <FolderPlus size={12} />
-                    </button>
-                    <button
-                      onClick={() => { setRenamingId(l1.id); setRenameValue(l1.name); }}
-                      className={btnCls}
-                      title="Rename"
-                    >
-                      <Edit2 size={12} />
-                    </button>
-                    <button
-                      onClick={() => void remove(l1.id, l1.name, 'L1')}
-                      className={btnCls + ' text-red-600'}
-                      title="Delete"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {newL2For === l1.id && (
-                <div className="flex items-center gap-2 px-3 py-1.5 border-t border-slate-200 dark:border-slate-800">
-                  <input
-                    autoFocus
-                    className={inputCls + ' font-mono flex-1'}
-                    placeholder="subfolder name"
-                    title="Allowed: letters, digits, . _ - (no spaces, no slashes, no accents)"
-                    value={newL2Name}
-                    onChange={(e) => setNewL2Name(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void createL2(l1.id);
-                      if (e.key === 'Escape') setNewL2For(null);
-                    }}
-                  />
-                  <button onClick={() => void createL2(l1.id)} className={btnCls}>
-                    <Check size={12} />
-                  </button>
-                  <button onClick={() => setNewL2For(null)} className={btnCls}>
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-
-              {(l1.children ?? []).length > 0 && (
-                <ul className="border-t border-slate-200 dark:border-slate-800">
-                  {(l1.children ?? []).map((l2) => (
-                    <li key={l2.id} className="flex items-center gap-2 px-6 py-1.5 text-sm border-b border-slate-100 dark:border-slate-800/40 last:border-b-0">
-                      <Folder size={12} className="text-slate-400" />
-                      {renamingId === l2.id ? (
-                        <>
-                          <input
-                            autoFocus
-                            className={inputCls + ' font-mono flex-1'}
-                            value={renameValue}
-                            onChange={(e) => setRenameValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') void rename(l2.id);
-                              if (e.key === 'Escape') setRenamingId(null);
-                            }}
-                          />
-                          <button onClick={() => void rename(l2.id)} className={btnCls}><Check size={12} /></button>
-                          <button onClick={() => setRenamingId(null)} className={btnCls}><X size={12} /></button>
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-mono flex-1">{l2.name}</span>
-                          <span className="text-[10px] text-slate-400">{l2.projectCount} project(s)</span>
-                          <button
-                            onClick={() => { setRenamingId(l2.id); setRenameValue(l2.name); }}
-                            className={btnCls}
-                            title="Rename"
-                          >
-                            <Edit2 size={12} />
-                          </button>
-                          <button
-                            onClick={() => void remove(l2.id, l2.name, 'L2')}
-                            className={btnCls + ' text-red-600'}
-                            title="Delete"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
+        <ul className="rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+          {tree.map((root) => (
+            <FolderRow key={root.id} node={root} depth={0} />
           ))}
         </ul>
       )}
-      <p className="text-[11px] text-slate-500">
-        Rules: max depth 2 (top-level + 1 sublevel). Projects live in subfolders only.
-        Renaming a top-level folder cascades to every project below (FS dirs are mv'd, paths
-        updated atomically). A folder must be empty before deletion.
-      </p>
     </div>
   );
 }
 
-/* -------------------------------------------------------------- */
-/*  Move project modal                                            */
-/* -------------------------------------------------------------- */
 function MoveProjectDialog({
   project,
-  leafFolders,
+  allFolders,
   onCancel,
   onMove,
 }: {
   project: P;
-  leafFolders: { id: string; path: string; count: number }[];
+  allFolders: { id: string; path: string; count: number }[];
   onCancel: () => void;
-  onMove: (folderId: string) => void;
+  onMove: (folderId: string | null) => void;
 }) {
   const currentFolderId = project.folderId;
-  const [picked, setPicked] = useState(currentFolderId ?? '');
+  // Sentinel "__unselected__" lets the operator differentiate
+  // "I haven't chosen yet" from "I want the root" (empty string).
+  // root is now a legitimate destination (ADR-0022).
+  const ROOT = '__root__';
+  const NONE = '__unselected__';
+  const [picked, setPicked] = useState<string>(NONE);
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/30" onClick={onCancel} />
@@ -1080,8 +1074,11 @@ function MoveProjectDialog({
             value={picked}
             onChange={(e) => setPicked(e.target.value)}
           >
-            <option value="">— select a destination —</option>
-            {leafFolders.map((f) => (
+            <option value={NONE}>— select a destination —</option>
+            <option value={ROOT} disabled={currentFolderId === null}>
+              / (root){currentFolderId === null ? '  (current)' : ''}
+            </option>
+            {allFolders.map((f) => (
               <option key={f.id} value={f.id} disabled={f.id === currentFolderId}>
                 {f.path}{f.id === currentFolderId ? '  (current)' : ''}
               </option>
@@ -1102,8 +1099,11 @@ function MoveProjectDialog({
           </button>
           <button
             type="button"
-            disabled={!picked || picked === currentFolderId}
-            onClick={() => onMove(picked)}
+            disabled={
+              picked === NONE ||
+              (picked === ROOT ? currentFolderId === null : picked === currentFolderId)
+            }
+            onClick={() => onMove(picked === ROOT ? null : picked)}
             className="text-xs px-3 py-1.5 rounded border border-brand-500 bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-50"
           >
             Move

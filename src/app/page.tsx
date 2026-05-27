@@ -14,10 +14,13 @@ import { db } from '@/lib/db';
 import { DASHBOARD_RECENT_LIMIT } from '@/lib/constants';
 
 import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
+import { getFolderAncestors } from '@/lib/folder-path';
 import { ConversationCard } from '@/components/ConversationCard';
 import { PageHeader } from '@/components/PageHeader';
 import { RunCard } from '@/components/RunCard';
 import { ScopePath } from '@/components/ScopePath';
+import { ChildChip } from '@/components/dashboard/ChildChip';
+import { DashboardActions } from '@/components/dashboard/DashboardActions';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
 // on pin/delete events from other tabs.
@@ -111,23 +114,52 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
   ]);
 
   // --- Children navigation (root & folder scopes) ---------------
-  // Root  : list L1 folders  (db.folder where parentId=null)
-  // Folder: list direct children (sub-folders + projects)
+  // Root  : list root-level folders + root-level projects.
+  // Folder: list direct sub-folders + projects.
   // Project: no children section (the dashboard tiles are the focus).
-  type ChildLink = { key: string; href: string; label: string; sub?: string };
+  //
+  // ADR-0022 (unbounded depth, Franck 2026-05-27): projects may
+  // also live at the root (folderId IS NULL), so the root branch
+  // now surfaces them too.
+  type ChildLink = {
+    key: string;
+    kind: 'folder' | 'project';
+    id: string;
+    href: string;
+    label: string;
+    sub?: string;
+  };
   let children: ChildLink[] = [];
   if (scope.kind === 'root') {
-    const l1 = await db.folder.findMany({
-      where: { parentId: null },
-      orderBy: { name: 'asc' },
-      include: { _count: { select: { projects: true, children: true } } },
-    });
-    children = l1.map((f) => ({
-      key: `f-${f.id}`,
-      href: `/${f.name}`,
-      label: f.name,
-      sub: `${f._count.children}/${f._count.projects}`,
-    }));
+    const [rootFolders, rootProjects] = await Promise.all([
+      db.folder.findMany({
+        where: { parentId: null },
+        orderBy: { name: 'asc' },
+        include: { _count: { select: { projects: true, children: true } } },
+      }),
+      db.project.findMany({
+        where: { folderId: null },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, fsPath: true },
+      }),
+    ]);
+    children = [
+      ...rootFolders.map((f) => ({
+        key: `f-${f.id}`,
+        kind: 'folder' as const,
+        id: f.id,
+        href: `/${f.name}`,
+        label: f.name,
+        sub: `${f._count.children}/${f._count.projects}`,
+      })),
+      ...rootProjects.map((p) => ({
+        key: `p-${p.id}`,
+        kind: 'project' as const,
+        id: p.id,
+        href: buildProjectUrl(p.fsPath ?? p.name),
+        label: p.name,
+      })),
+    ];
   } else if (scope.kind === 'folder') {
     // Parent navigation is now surfaced by <ScopePath /> at the
     // top of the page body (Franck 2026-05-26 22:28) — no more
@@ -147,17 +179,53 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     children = [
       ...subfolders.map((f) => ({
         key: `f-${f.id}`,
+        kind: 'folder' as const,
+        id: f.id,
         href: `/${scope.fsPath}/${f.name}`,
         label: f.name,
         sub: `${f._count.children}/${f._count.projects}`,
       })),
       ...projs.map((p) => ({
         key: `p-${p.id}`,
+        kind: 'project' as const,
+        id: p.id,
         href: buildProjectUrl(p.fsPath ?? `${scope.fsPath}/${p.name}`),
         label: p.name,
       })),
     ];
   }
+
+  // --- Dashboard actions prop (ADR-0022, Chantier 4) ------------
+  // Compute the parent fsPath so the post-delete navigation can
+  // bounce one level up. For a folder at the root the parent is
+  // null (= dashboard root); for a deeper folder we walk one step
+  // back via the ancestor chain. For a project, the parent path
+  // is the project's folder fsPath (or '' when project is at root).
+  const actionsScope =
+    scope.kind === 'root'
+      ? ({ kind: 'root' } as const)
+      : scope.kind === 'folder'
+        ? await (async () => {
+            const ancestors = await getFolderAncestors(scope.folder.id);
+            const parentFsPath =
+              ancestors.length > 1
+                ? ancestors.slice(0, -1).map((f) => f.name).join('/')
+                : null;
+            return {
+              kind: 'folder' as const,
+              folderId: scope.folder.id,
+              fsPath: scope.fsPath,
+              parentFsPath,
+            };
+          })()
+        : ({
+            kind: 'project' as const,
+            projectId: scope.project.id,
+            fsPath: scope.fsPath,
+            parentFsPath: scope.folder
+              ? (await getFolderAncestors(scope.folder.id)).map((f) => f.name).join('/')
+              : '',
+          } as const);
 
   // --- Header data + per-scope URL bases ------------------------
   const base = {
@@ -174,6 +242,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     <div className="space-y-6">
       <PageHeader icon={<FolderGit2 size={20} />} title="Dashboard" />
       <ScopePath fsPath={scope.fsPath} />
+      <DashboardActions scope={actionsScope} />
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -184,19 +253,18 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       {children.length > 0 && (
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            {scope.kind === 'root' ? 'Folders' : 'Children'}
+            {scope.kind === 'root' ? 'Folders & projects' : 'Children'}
           </h2>
           <div className="flex flex-wrap gap-2">
             {children.map((c) => (
-              <Link
+              <ChildChip
                 key={c.key}
+                kind={c.kind}
+                id={c.id}
+                label={c.label}
                 href={c.href}
-                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:shadow dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 px-3 py-1.5 text-sm font-medium shadow-sm transition"
-              >
-                <FolderGit2 size={14} className="text-amber-500" />
-                {c.label}
-                {c.sub ? <span className="text-xs text-slate-400">({c.sub})</span> : null}
-              </Link>
+                sub={c.sub}
+              />
             ))}
           </div>
         </section>

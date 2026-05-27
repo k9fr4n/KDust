@@ -25,14 +25,28 @@ export type ResolvedScope =
   | { kind: 'project'; fsPath: string; folder: Folder | null; project: Project };
 
 /**
- * Resolve up to 3 URL segments into a hierarchy node. Order:
- *   - empty   → root
- *   - [l1]    → L1 folder (must exist, parentId=null)
- *   - [l1,l2] → either L2 folder (parent=L1) or L1-direct project named l2
- *   - [l1,l2,project] → project under L2 folder
+ * Resolve an arbitrary-length segment chain into a hierarchy node.
  *
- * Returns null on any miss / inconsistency. Performs at most 3 DB
- * reads and short-circuits on reserved names (cheap fail-fast).
+ * Since ADR-0022 (unbounded folder depth) + ADR-0023 (middleware
+ * rewrite routing), the segments may be any length and may end on
+ * a folder OR a project leaf. Algorithm:
+ *
+ *   1. Walk segments left-to-right, descending one folder per
+ *      matching segment (by `name` + `parentId`).
+ *   2. If we consume EVERY segment as folders → folder scope.
+ *   3. Otherwise: if exactly ONE segment is left, try to resolve
+ *      it as a project under the last matched folder (or under
+ *      no folder when only the last segment was unmatched and
+ *      everything before it failed).
+ *   4. Anything else → null (unknown).
+ *
+ * Short-circuits on reserved segments (defence in depth — the
+ * middleware classifier already rejects them as scope head, but
+ * direct calls from non-middleware paths still need the guard).
+ *
+ * Cost: O(depth) findFirst calls. For the operator's scale (depth
+ * < 5, < 100 folders) this is < 1 ms. React.cache memoises per
+ * request at the `getCurrentScope` boundary.
  */
 export async function resolveScopeFromSegments(
   segments: readonly string[],
@@ -40,41 +54,43 @@ export async function resolveScopeFromSegments(
   if (segments.length === 0) {
     return { kind: 'root', fsPath: '', folder: null, project: null };
   }
-  if (segments.length > 3) return null;
   if (segments.some((s) => isReservedName(s))) return null;
 
-  const [l1Name, l2Name, projectName] = segments;
-
-  const l1 = await db.folder.findFirst({
-    where: { name: l1Name, parentId: null },
-  });
-  if (!l1) return null;
-  if (segments.length === 1) {
-    return { kind: 'folder', fsPath: l1.name, folder: l1, project: null };
+  // Walk the folder chain greedily.
+  let parentId: string | null = null;
+  let lastFolder: Folder | null = null;
+  let consumed = 0;
+  for (const name of segments) {
+    const f: Folder | null = await db.folder.findFirst({
+      where: { name, parentId },
+    });
+    if (!f) break;
+    lastFolder = f;
+    parentId = f.id;
+    consumed++;
   }
 
-  // 2 segments: must resolve to an L2 folder. Projects always live
-  // under L2 (POST /api/projects rejects L1-parented projects) so
-  // there is no fallback to consider at this depth.
-  const l2 = await db.folder.findFirst({
-    where: { name: l2Name, parentId: l1.id },
-  });
-  if (segments.length === 2) {
-    if (!l2) return null;
+  // Every segment matched a folder → folder scope.
+  if (consumed === segments.length) {
+    const fsPath = segments.join('/');
     return {
       kind: 'folder',
-      fsPath: `${l1.name}/${l2.name}`,
-      folder: l2,
+      fsPath,
+      folder: lastFolder!,
       project: null,
     };
   }
 
-  // 3 segments: project must live under the L2 folder
-  if (!l2) return null;
-  const fsPath = `${l1.name}/${l2.name}/${projectName}`;
-  const project = await db.project.findUnique({ where: { fsPath } });
-  if (!project) return null;
-  return { kind: 'project', fsPath, folder: l2, project };
+  // Exactly one unmatched segment left → candidate project leaf.
+  if (consumed === segments.length - 1) {
+    const fsPath = segments.join('/');
+    const project = await db.project.findUnique({ where: { fsPath } });
+    if (project) {
+      return { kind: 'project', fsPath, folder: lastFolder, project };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -115,13 +131,13 @@ export async function getCurrentScope(): Promise<ResolvedScope> {
     if (parts.length === 0) {
       return { kind: 'root', fsPath: '', folder: null, project: null };
     }
-    // Take up to 3 leading non-reserved segments. Stop at the first
-    // reserved one (sub-page tail).
+    // Take ALL leading non-reserved segments (unbounded depth
+    // since ADR-0022). Stop at the first reserved one (sub-page
+    // tail). The resolver caps depth via MAX_FOLDER_DEPTH.
     const head: string[] = [];
     for (const p of parts) {
       if (isReservedName(p)) break;
       head.push(p);
-      if (head.length === 3) break;
     }
     if (head.length > 0) {
       const resolved = await resolveScopeFromSegments(head);
@@ -130,17 +146,14 @@ export async function getCurrentScope(): Promise<ResolvedScope> {
   } catch {
     // headers() can throw in some test contexts; fall through.
   }
-  // 4: cookie fallback
+  // 4: cookie fallback. The cookie value may be a stale folder
+  // path (post-ADR-0022 middleware sets it from any non-empty scope
+  // head). Reuse resolveScopeFromSegments so a cookie of "a/b" can
+  // surface as a folder scope, "a/b/myproj" as a project, etc.
   const fsPath = await getCurrentProjectFsPath();
   if (fsPath) {
-    const project = await db.project.findUnique({ where: { fsPath } });
-    if (project) {
-      const parts = fsPath.split('/');
-      const folder = parts.length >= 2
-        ? await db.folder.findFirst({ where: { name: parts[parts.length - 2] } })
-        : null;
-      return { kind: 'project', fsPath, folder, project };
-    }
+    const resolved = await resolveScopeFromSegments(fsPath.split('/').filter(Boolean));
+    if (resolved) return resolved;
   }
   // 5: root
   return { kind: 'root', fsPath: '', folder: null, project: null };

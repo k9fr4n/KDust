@@ -771,265 +771,184 @@ async function applyProjectChoice(
 }
 
 /**
- * /projects browser \u2014 view builders.
+ * /projects browser — recursive folder picker (ADR-0022).
  *
  * Telegram doesn't have native folder navigation, so we mimic it
- * with a stack of inline keyboards backed by editMessageText:
+ * with a single inline-keyboard view that drills one level at a
+ * time and uses editMessageText to mutate the bubble in place.
  *
- *   Root view  : one button per L1 folder ("\ud83d\udcc1 clients (12)") +
- *                inline projects directly under root (legacy /
- *                un-foldered) + a "global / no project" exit.
- *   L1 view    : one button per project under that L1 (label =
- *                "L2/leaf" so duplicates across L2 are visible) +
- *                "\u2190 back" to root.
- *
- * Re-rendering uses editMessageText with reply_markup to mutate
- * the existing message in place. The user therefore sees a single
- * scrolling-friendly bubble instead of a stack.
+ * Each view shows:
+ *   - one button per sub-folder at the current path
+ *     ("📁 <name> (N[+…])"); the count is direct projects under
+ *     that sub-folder, "+…" hints at deeper descendants;
+ *   - one button per project directly under the current path;
+ *   - at the root: a "global (no project)" exit;
+ *   - elsewhere: "← <parent>" and "←← root" navigation.
  *
  * callback_data scheme (Telegram caps at 64 bytes):
- *   pnav:root            \u2014 redraw the root keyboard
- *   pnav:l1:<name>       \u2014 drill into that L1 folder
- *   proj:<fsPath>        \u2014 select a project (existing contract)
- *   proj:__clear__       \u2014 clear current project (existing)
+ *   pnav:                 — redraw the root keyboard
+ *   pnav:<folder/path>    — drill into a folder at any depth
+ *   proj:<fsPath>         — select a project
+ *   proj:__clear__        — clear current project (root only)
  *
- * The L1 \"name\" carries through as the key (folder names are
- * validated [a-zA-Z0-9._-]+ by /api/folders so they're safe and
- * short). We truncate defensively at 64 bytes, but a real-world
- * L1 with a 50+ char name would be rejected by the folder API
- * anyway.
+ * Folder paths in callback_data are bounded by MAX_FOLDER_DEPTH
+ * (10) × short folder names (≤ 64 chars validated at create), so
+ * 64-byte truncation only bites at pathologically deep paths;
+ * when it does, the resolver simply fails to find the folder and
+ * the dispatcher bounces to root with a fresh keyboard.
  */
 
 const PROJECTS_ROOT_LABEL = 'Pick a project:';
 
-/**
- * Build the root keyboard: L1 folder buttons + "(unfiled)"
- * projects (legacy) + the global-exit button.
- *
- * Returns null when the catalog is empty so the caller can short-
- * circuit with an explanatory message.
- */
+function truncLabel(s: string, n = 50): string {
+  return s.length > n ? s.slice(0, n - 3) + '\u2026' : s;
+}
+
+type PickerButton = { text: string; callback_data: string };
+
+async function buildProjectsFolderView(
+  chatId: string,
+  folderPath: string,
+): Promise<
+  | { text: string; markup: { inline_keyboard: PickerButton[][] } }
+  | null
+> {
+  const segments = folderPath.split('/').filter(Boolean);
+
+  let currentFolderId: string | null = null;
+  for (const name of segments) {
+    const f: { id: string } | null = await db.folder.findFirst({
+      where: { name, parentId: currentFolderId },
+      select: { id: true },
+    });
+    if (!f) return null;
+    currentFolderId = f.id;
+  }
+
+  const [subFolders, directProjects] = await Promise.all([
+    db.folder.findMany({
+      where: { parentId: currentFolderId },
+      orderBy: { name: 'asc' },
+    }),
+    db.project.findMany({
+      where: { folderId: currentFolderId },
+      orderBy: { name: 'asc' },
+    }),
+  ]);
+
+  if (
+    subFolders.length === 0 &&
+    directProjects.length === 0 &&
+    folderPath === ''
+  ) {
+    return null;
+  }
+
+  const binding = await resolveBinding(chatId);
+  const current = binding?.projectName ?? null;
+
+  const subInfo = new Map<
+    string,
+    { directProjects: number; hasSubFolders: boolean }
+  >();
+  if (subFolders.length > 0) {
+    const subIds = subFolders.map((f) => f.id);
+    const [projRows, folderRows] = await Promise.all([
+      db.project.groupBy({
+        by: ['folderId'],
+        where: { folderId: { in: subIds } },
+        _count: { _all: true },
+      }),
+      db.folder.findMany({
+        where: { parentId: { in: subIds } },
+        select: { parentId: true },
+      }),
+    ]);
+    const directCounts = new Map<string, number>(
+      projRows.map((r) => [r.folderId as string, r._count._all]),
+    );
+    const hasSubsSet = new Set<string>(
+      folderRows.map((f) => f.parentId).filter((x): x is string => x !== null),
+    );
+    for (const f of subFolders) {
+      subInfo.set(f.id, {
+        directProjects: directCounts.get(f.id) ?? 0,
+        hasSubFolders: hasSubsSet.has(f.id),
+      });
+    }
+  }
+
+  const buttons: PickerButton[][] = [];
+
+  for (const f of subFolders) {
+    const info = subInfo.get(f.id);
+    const childPath = folderPath ? `${folderPath}/${f.name}` : f.name;
+    const currentInside =
+      current && (current === childPath || current.startsWith(childPath + '/'));
+    const countTag = info
+      ? info.hasSubFolders
+        ? `${info.directProjects}+\u2026`
+        : String(info.directProjects)
+      : '0';
+    const text =
+      (currentInside ? '\u2705 ' : '') + `\ud83d\udcc1 ${f.name} (${countTag})`;
+    buttons.push([
+      {
+        text: truncLabel(text, 60),
+        callback_data: `pnav:${childPath}`.slice(0, 64),
+      },
+    ]);
+  }
+
+  for (const p of directProjects) {
+    const fsPath = p.fsPath ?? p.name;
+    const isCurrent = current === fsPath || current === p.name;
+    buttons.push([
+      {
+        text: (isCurrent ? '\u2705 ' : '') + truncLabel(p.name, 50),
+        callback_data: `proj:${fsPath}`.slice(0, 64),
+      },
+    ]);
+  }
+
+  if (folderPath === '') {
+    buttons.push([
+      {
+        text:
+          (current === null ? '\u2705 ' : '') + '\u2014 global (no project) \u2014',
+        callback_data: 'proj:__clear__',
+      },
+    ]);
+  } else {
+    const parentPath = segments.slice(0, -1).join('/');
+    buttons.push([
+      {
+        text: '\u2190 ' + truncLabel(parentPath || 'root', 30),
+        callback_data: `pnav:${parentPath}`.slice(0, 64),
+      },
+      {
+        text: '\u2190\u2190 root',
+        callback_data: 'pnav:',
+      },
+    ]);
+  }
+
+  return {
+    text:
+      folderPath === ''
+        ? PROJECTS_ROOT_LABEL
+        : `\ud83d\udcc1 ${folderPath}`,
+    markup: { inline_keyboard: buttons },
+  };
+}
+
 async function buildProjectsRootView(
   chatId: string,
 ): Promise<
-  | { text: string; markup: { inline_keyboard: { text: string; callback_data: string }[][] } }
+  | { text: string; markup: { inline_keyboard: PickerButton[][] } }
   | null
 > {
-  const projects = await listProjects();
-  if (projects.length === 0) return null;
-  const binding = await resolveBinding(chatId);
-  const current = binding?.projectName ?? null;
-
-  // Bucket projects under their L1 folder. fsPath shape:
-  //   "L1/L2/leaf"  -> bucket "L1"
-  //   "L1/leaf"     -> bucket "L1"   (depth-1 oddity, kept for fwd-compat)
-  //   "leaf"        -> bucket "(unfiled)"  (un-migrated rows)
-  const byL1 = new Map<string, typeof projects>();
-  for (const p of projects) {
-    const parts = p.relativePath.split('/');
-    const l1 = parts.length >= 2 ? parts[0] : '(unfiled)';
-    if (!byL1.has(l1)) byL1.set(l1, []);
-    byL1.get(l1)!.push(p);
-  }
-  const l1Names = [...byL1.keys()].sort((a, b) => {
-    if (a === '(unfiled)') return 1;
-    if (b === '(unfiled)') return -1;
-    return a.localeCompare(b);
-  });
-
-  const buttons: { text: string; callback_data: string }[][] = [];
-  for (const l1 of l1Names) {
-    const list = byL1.get(l1)!;
-    // For "(unfiled)" we expose projects directly at the root
-    // since there's no real folder to drill into. For real L1
-    // folders we render a single drill-in button per folder.
-    if (l1 === '(unfiled)') {
-      for (const p of list) {
-        const isCurrent = current === p.relativePath || current === p.name;
-        const label = p.name;
-        buttons.push([
-          {
-            text:
-              (isCurrent ? '\u2705 ' : '') +
-              (label.length > 50 ? label.slice(0, 47) + '\u2026' : label),
-            callback_data: `proj:${p.relativePath}`.slice(0, 64),
-          },
-        ]);
-      }
-      continue;
-    }
-    // Highlight the L1 with a checkmark when the current project
-    // lives inside it \u2014 lets the user spot their context at a glance.
-    const currentInL1 =
-      current && (current.startsWith(`${l1}/`) || current === l1);
-    const text =
-      (currentInL1 ? '\u2705 ' : '') +
-      `\ud83d\udcc1 ${l1} (${list.length})`;
-    buttons.push([
-      {
-        text: text.length > 60 ? text.slice(0, 59) + '\u2026' : text,
-        callback_data: `pnav:l1:${l1}`.slice(0, 64),
-      },
-    ]);
-  }
-  buttons.push([
-    {
-      text: (current === null ? '\u2705 ' : '') + '\u2014 global (no project) \u2014',
-      callback_data: 'proj:__clear__',
-    },
-  ]);
-  return {
-    text: PROJECTS_ROOT_LABEL,
-    markup: { inline_keyboard: buttons },
-  };
-}
-
-/**
- * Build the keyboard for a specific L1 folder.
- *
- * Two-tier listing:
- *   - L2 sub-folders are rendered as drill-in buttons "\ud83d\udcc1 <name> (N)"
- *     so a deeply populated L1 stays scannable.
- *   - Projects directly under L1 (depth-1 fsPath "L1/leaf", no L2)
- *     appear inline as project buttons.
- *
- * "\u2190 back" returns to the root view. Returns null when the L1 is
- * empty (e.g. last project moved out while keyboard was open) so
- * the caller can bounce back to root with a fresh state.
- */
-async function buildProjectsL1View(
-  chatId: string,
-  l1: string,
-): Promise<
-  | { text: string; markup: { inline_keyboard: { text: string; callback_data: string }[][] } }
-  | null
-> {
-  const projects = await listProjects();
-  const list = projects.filter((p) => p.relativePath.startsWith(`${l1}/`));
-  if (list.length === 0) return null;
-  const binding = await resolveBinding(chatId);
-  const current = binding?.projectName ?? null;
-
-  // Bucket by L2: depth-3 fsPath = "L1/L2/leaf" -> L2 group;
-  // depth-2 fsPath = "L1/leaf" -> rendered inline (no L2 layer).
-  const byL2 = new Map<string, typeof list>();
-  const direct: typeof list = [];
-  for (const p of list) {
-    const parts = p.relativePath.split('/');
-    if (parts.length >= 3) {
-      const l2 = parts[1];
-      if (!byL2.has(l2)) byL2.set(l2, []);
-      byL2.get(l2)!.push(p);
-    } else {
-      direct.push(p);
-    }
-  }
-
-  const buttons: { text: string; callback_data: string }[][] = [];
-
-  // L2 sub-folders first (drill-in). Highlight \u2705 if the current
-  // project lives under this L2.
-  const l2Names = [...byL2.keys()].sort((a, b) => a.localeCompare(b));
-  for (const l2 of l2Names) {
-    const sub = byL2.get(l2)!;
-    const currentInL2 =
-      current && current.startsWith(`${l1}/${l2}/`);
-    const text =
-      (currentInL2 ? '\u2705 ' : '') +
-      `\ud83d\udcc1 ${l2} (${sub.length})`;
-    buttons.push([
-      {
-        text: text.length > 60 ? text.slice(0, 59) + '\u2026' : text,
-        // pnav:l2:<l1>/<l2> \u2014 we keep the full L1/L2 pair in the
-        // callback to avoid an extra round-trip (the L1 view is
-        // stateless re: which root we came from). Telegram caps
-        // callback_data at 64 bytes; folder names are validated
-        // [a-zA-Z0-9._-]+ so two short folder names always fit.
-        callback_data: `pnav:l2:${l1}/${l2}`.slice(0, 64),
-      },
-    ]);
-  }
-
-  // Then projects living directly under L1 (no L2). Surfacing them
-  // inline avoids forcing a useless drill-step when the layout is
-  // shallow.
-  const directSorted = [...direct].sort((a, b) =>
-    a.relativePath.localeCompare(b.relativePath),
-  );
-  for (const p of directSorted) {
-    const isCurrent = current === p.relativePath || current === p.name;
-    const label = p.name;
-    buttons.push([
-      {
-        text:
-          (isCurrent ? '\u2705 ' : '') +
-          (label.length > 50 ? label.slice(0, 47) + '\u2026' : label),
-        callback_data: `proj:${p.relativePath}`.slice(0, 64),
-      },
-    ]);
-  }
-
-  buttons.push([{ text: '\u2190 back', callback_data: 'pnav:root' }]);
-  return {
-    text: `\ud83d\udcc1 ${l1}`,
-    markup: { inline_keyboard: buttons },
-  };
-}
-
-/**
- * Build the keyboard for a specific L2 folder (drilled in from a
- * given L1). Lists the projects directly under L1/L2 and ships an
- * "\u2190 back" button that returns to the parent L1 view.
- *
- * Returns null when L1/L2 is empty (stale keyboard) so the caller
- * can fall back gracefully.
- */
-async function buildProjectsL2View(
-  chatId: string,
-  l1: string,
-  l2: string,
-): Promise<
-  | { text: string; markup: { inline_keyboard: { text: string; callback_data: string }[][] } }
-  | null
-> {
-  const projects = await listProjects();
-  const prefix = `${l1}/${l2}/`;
-  const list = projects.filter((p) => p.relativePath.startsWith(prefix));
-  if (list.length === 0) return null;
-  const binding = await resolveBinding(chatId);
-  const current = binding?.projectName ?? null;
-
-  const sorted = [...list].sort((a, b) =>
-    a.relativePath.localeCompare(b.relativePath),
-  );
-  const buttons: { text: string; callback_data: string }[][] = [];
-  for (const p of sorted) {
-    const isCurrent = current === p.relativePath || current === p.name;
-    buttons.push([
-      {
-        text:
-          (isCurrent ? '\u2705 ' : '') +
-          (p.name.length > 50 ? p.name.slice(0, 47) + '\u2026' : p.name),
-        callback_data: `proj:${p.relativePath}`.slice(0, 64),
-      },
-    ]);
-  }
-  buttons.push([
-    {
-      // Back to the parent L1 view (not all the way to root).
-      text: `\u2190 ${l1}`,
-      callback_data: `pnav:l1:${l1}`.slice(0, 64),
-    },
-    {
-      text: '\u2190\u2190 root',
-      callback_data: 'pnav:root',
-    },
-  ]);
-  return {
-    // Breadcrumb-ish title so the user knows where they are.
-    text: `\ud83d\udcc1 ${l1} / ${l2}`,
-    markup: { inline_keyboard: buttons },
-  };
+  return buildProjectsFolderView(chatId, '');
 }
 
 /**
@@ -1070,66 +989,63 @@ export async function handleTelegramCallback(
       return;
     }
 
-    // Folder-browser navigation. We mutate the existing message in
-    // place via editMessageText so the user gets a single bubble
-    // that morphs as they drill down / back up. Failures here are
-    // logged but acked silently \u2014 a stale keyboard is not worth
-    // a scary error message.
-    if (
-      data === 'pnav:root' ||
-      data.startsWith('pnav:l1:') ||
-      data.startsWith('pnav:l2:')
-    ) {
+    // Folder-browser navigation (ADR-0022 recursive picker).
+    // We mutate the existing message in place via editMessageText
+    // so the user gets a single bubble that morphs as they drill
+    // down / back up. Failures here are logged but acked silently
+    // — a stale keyboard is not worth a scary error message.
+    //
+    // Accepted formats:
+    //   pnav:               → root
+    //   pnav:<folder/path>  → drill into any depth
+    //   pnav:root           → legacy, mapped to root for backwards
+    //                          compatibility with keyboards rendered
+    //                          before the recursive picker shipped.
+    //   pnav:l1:<name>      → legacy, mapped to pnav:<name>
+    //   pnav:l2:<l1>/<l2>   → legacy, mapped to pnav:<l1>/<l2>
+    if (data.startsWith('pnav:')) {
       const messageId = cq.message?.message_id ?? null;
-      // Build the requested view, with graceful fallbacks when a
-      // node has been emptied since the keyboard was rendered:
-      //   l2 empty -> bounce up to l1 view
-      //   l1 empty -> bounce up to root view
-      //   root empty -> nothing to render, leave message as is
-      const renderRoot = async () => {
-        const v = await buildProjectsRootView(chatId);
+
+      // Extract the target folder path from any of the accepted
+      // formats. Legacy "pnav:root" / "pnav:l1:" / "pnav:l2:"
+      // prefixes are normalised here so we keep one render path.
+      let target = data.slice('pnav:'.length);
+      if (target === 'root') {
+        target = '';
+      } else if (target.startsWith('l1:')) {
+        target = target.slice('l1:'.length);
+      } else if (target.startsWith('l2:')) {
+        target = target.slice('l2:'.length);
+      }
+
+      // Walk up on miss so emptied / stale sub-folders gracefully
+      // climb back toward a renderable view instead of dead-end-ing.
+      const tryRender = async (path: string): Promise<boolean> => {
+        const v = await buildProjectsFolderView(chatId, path);
         if (v && messageId !== null) {
-          await editMessageText(chatId, messageId, v.text, { reply_markup: v.markup });
+          await editMessageText(chatId, messageId, v.text, {
+            reply_markup: v.markup,
+          });
+          return true;
         }
+        return false;
       };
-      const renderL1 = async (l1: string) => {
-        const v = await buildProjectsL1View(chatId, l1);
-        if (v && messageId !== null) {
-          await editMessageText(chatId, messageId, v.text, { reply_markup: v.markup });
-        } else {
-          await renderRoot();
-        }
-      };
+
       try {
-        if (data === 'pnav:root') {
-          await renderRoot();
-        } else if (data.startsWith('pnav:l1:')) {
-          const l1 = data.slice('pnav:l1:'.length);
-          await renderL1(l1);
-        } else {
-          // pnav:l2:<l1>/<l2>
-          const tail = data.slice('pnav:l2:'.length);
-          const slash = tail.indexOf('/');
-          if (slash <= 0 || slash === tail.length - 1) {
-            // Malformed callback (truncation or stale keyboard from
-            // a future deploy). Bounce to root.
-            await renderRoot();
-          } else {
-            const l1 = tail.slice(0, slash);
-            const l2 = tail.slice(slash + 1);
-            const v = await buildProjectsL2View(chatId, l1, l2);
-            if (v && messageId !== null) {
-              await editMessageText(chatId, messageId, v.text, { reply_markup: v.markup });
-            } else {
-              // L2 emptied -> climb back to L1 (or root if L1 is
-              // also empty), preserving the user's place in the
-              // hierarchy as much as possible.
-              await renderL1(l1);
-            }
-          }
+        let path = target;
+        let rendered = await tryRender(path);
+        while (!rendered && path !== '') {
+          const idx = path.lastIndexOf('/');
+          path = idx > 0 ? path.slice(0, idx) : '';
+          rendered = await tryRender(path);
         }
+        // rendered === false at root just means the catalog is
+        // empty — leave the message untouched, the user already
+        // sees something.
       } catch (e) {
-        console.warn(`[telegram] pnav editMessageText failed: ${e instanceof Error ? e.message : e}`);
+        console.warn(
+          `[telegram] pnav editMessageText failed: ${e instanceof Error ? e.message : e}`,
+        );
       }
       await answerCallbackQuery(cq.id);
       return;

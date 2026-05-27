@@ -2298,3 +2298,248 @@ makes sense for `/projects`-rooted servers.
 edits to `scope.kind === 'project' ? scope.project.fsPath : null` and
 the `list-tasks` `boundProjectClause` block to its prior shape. No
 schema change, no migration.
+
+### ADR-0022 — Unbounded folder hierarchy & root-level projects (2026-05-27)
+
+**Status**: Accepted (2026-05-27, Franck).
+
+**Context**. The folder hierarchy was introduced in ADR-0005 / Phase
+1 (2026-04-27) with a hard depth-2 invariant: exactly one L1 root +
+one L2 leaf, projects living **only** inside L2 leaves. This was
+intentionally restrictive to keep URLs / breadcrumbs / Telegram
+pickers predictable in V1. Six months in, the limitation has become
+the dominant UX friction reported by the sole operator (Franck):
+
+- No way to express a 3+ level taxonomy (`clients/<client>/<env>/<repo>`),
+  forcing names like `acme-prod` / `acme-staging` at L2.
+- Projects cannot sit next to folders at the same level — the
+  GitLab-style "tree of folders and repos mixed" layout is impossible.
+- Project creation forces a folder pick even for one-off sandbox
+  projects, hence the magic `legacy/uncategorized` auto-placement.
+
+The `Folder` model itself has always supported arbitrary depth via
+`parentId` (nullable, self-relation). Only the API layer enforced the
+cap. ADR-0005 explicitly anticipated this: *"keeps the data model
+open for a future bump to 3+ levels without a migration"*.
+
+**Decision**. Lift the depth cap; allow projects at any depth,
+including the root (`folderId = null`).
+
+1. **Schema**: unchanged. `Folder.parentId` already nullable +
+   self-referential. `Project.folderId` is already nullable
+   (originally for boot-window tolerance) — its semantics become
+   *"null = root-level project"*, no longer *"transient legacy
+   placement"*.
+
+2. **fsPath computation** (`src/lib/folder-path.ts`):
+   - `getFolderFsPath` walks the full ancestor chain (bounded loop,
+     `MAX_FOLDER_DEPTH = 10`, raises on cycle or depth overflow).
+   - `classifyFolderDepth` removed — replaced by
+     `assertValidProjectParent(folderId | null)` (existence check +
+     cycle guard only).
+   - New helper `getFolderAncestors(folderId)` returns the chain
+     `[L1, …, Lₙ]` for breadcrumbs / cycle detection. Single SQL
+     pass via repeated `findUnique` capped at `MAX_FOLDER_DEPTH`.
+
+3. **API surface**:
+   - `POST /api/folders`: any valid `parentId` (or `null`) accepted.
+     Removes the `depth !== 'root'` rejection. Cycle guard added on
+     the (future) parent-change endpoint — out of scope here, the
+     current API still doesn't allow re-parenting.
+   - `POST /api/projects`: `folderId` becomes truly optional; when
+     `null` the project sits at the root (`fsPath = name`). The
+     `legacy/uncategorized` auto-placement is removed for new
+     projects but left in place for already-migrated rows.
+   - `POST /api/projects/:id/move`: accepts `folderId: null` to
+     move a project to the root.
+
+4. **URL routing** (`src/lib/project-url.ts` / `getCurrentScope`):
+   the resolver no longer assumes the first two path segments are
+   `<L1>/<L2>`. It now greedily walks segments matching a folder
+   chain (siblings of the parent), then the first non-folder
+   segment that matches a project under that folder is the project.
+   Longest-prefix folder match wins; ambiguity (a folder and a
+   project with the same name as siblings) is structurally
+   impossible thanks to the `@@unique([folderId, name])` on `Folder`
+   and `Project` — but we add an extra runtime sanity check for
+   defence in depth.
+
+5. **Telegram picker** (`src/lib/telegram/bridge.ts`): the L1→L2
+   drill-down becomes a generic recursive picker. Each `/pick`
+   message renders folders + projects at the current node, with a
+   "↑ up" button. Capped at `MAX_FOLDER_DEPTH` levels visually.
+
+6. **Reserved names** (ADR-0020): unchanged. Every folder *and*
+   project leaf still goes through `validateUrlSafeName`. The set
+   of reserved names is unchanged.
+
+7. **Backwards compatibility**: existing `legacy/uncategorized`
+   placements are valid forever (depth-2 is a special case of
+   "any depth"). No data migration. Existing fsPaths keep working
+   as routing inputs.
+
+**Consequences**.
+
++ A GitLab-style tree becomes natural: any folder can host folders
+  *and* projects side by side, at any depth.
++ Root-level "sandbox" projects no longer need a fake parent folder.
++ Telegram picker UX scales — no UI change at depth ≤ 2, drill-down
+  appears only when depth ≥ 3.
++ `Task.projectPath` / `Conversation.projectName` semantics are
+  unchanged: they store the canonical `Project.fsPath`, which now
+  can be of arbitrary depth. Scheduler / runner / push pipeline see
+  no difference.
+- `getCurrentScope` becomes slightly more expensive (one
+  `folder.findMany` upfront instead of two indexed lookups). For
+  the operator's scale (< 100 folders) the cost is negligible; we
+  still memoise per request via `React.cache` as before.
+- Documentation referring to "L1 / L2 / depth-2" (folder-path.ts
+  header, ADR-0005 wording, push-pipeline.md mentions) is updated
+  to "ancestor chain / leaf project / unbounded depth". ADR-0005
+  is annotated as superseded-in-part rather than rewritten.
+- `MAX_FOLDER_DEPTH = 10` is a soft application guard, not a SQL
+  invariant. Raising it requires only editing the constant; lowering
+  it would need a one-shot validation script.
+
+**Rollback**. The schema change is nil, so rollback is a code revert
+of the API + routing + Telegram diffs. Existing data (root projects,
+3+ level folders created after merge) would need a one-shot script
+to fold them back under L2 leaves before the API rejects them again.
+
+**Hard constraints preserved**:
+
+- Generic-task invariants (ADR-0005 §"4 names"): unaffected. A
+  generic task still has `projectPath = null`; bound tasks still
+  carry the project's `fsPath`.
+- Reserved URL segments (ADR-0020): unchanged.
+- Run-depth cap, secrets redaction, no public ingress: unchanged.
+- No `dust.db` migration, no `prisma db push` required on deploy.
+
+### ADR-0023 — Middleware rewrite for unbounded-depth routing (2026-05-27)
+
+**Status**: Accepted (2026-05-27, Franck).
+
+**Context**. ADR-0020 introduced the `/<l1>/<l2>/<project>/<sub>`
+project-scoped URL layout. The implementation used Next.js App
+Router directory-based dynamic segments: `src/app/[l1]/...`,
+`src/app/[l1]/[l2]/...`, `src/app/[l1]/[l2]/[project]/...`. Each
+sub-page (chat / task / run / conversation, plus their `[id]` /
+`new` / `edit` children) was duplicated **three times** (root,
+L1, L2) as one-line re-exports of the cookie-scoped route under
+`src/app/<sub>/page.tsx`. The shared body reads `x-pathname`
+(propagated by middleware) and calls `getCurrentScope()` to resolve
+the scope from the URL.
+
+ADR-0022 lifts the depth-2 cap on folders. The directory-based
+route tree cannot express arbitrary depth — Next.js routes are
+fixed at file-system layout time. We need a routing strategy that
+matches **unbounded depth without code duplication**.
+
+**Decision**. Drop the duplicated `[l1]/...` and `[l1]/[l2]/...`
+route trees entirely. Use **middleware rewrite** to forward
+scoped requests to the existing single set of root-level routes:
+
+```
+/<scope-segs…>/             → rewrite to /
+/<scope-segs…>/chat         → rewrite to /chat
+/<scope-segs…>/chat/<id>    → rewrite to /chat/<id>
+/<scope-segs…>/task         → rewrite to /task
+/<scope-segs…>/task/new     → rewrite to /task/new
+/<scope-segs…>/task/<id>    → rewrite to /task/<id>
+/<scope-segs…>/task/<id>/edit → rewrite to /task/<id>/edit
+/<scope-segs…>/run          → rewrite to /run
+/<scope-segs…>/run/<id>     → rewrite to /run/<id>
+/<scope-segs…>/conversation → rewrite to /conversation
+```
+
+`<scope-segs>` is any non-empty sequence of non-reserved URL
+segments — the operator's folder chain optionally ending with a
+project leaf. Resolution to "folder vs project" is **not** done at
+the Edge (middleware has no Prisma access); it happens server-side
+in `getCurrentScope()` which reads `x-pathname` (preserved across
+the rewrite as the ORIGINAL URL) and walks the longest-prefix
+folder match against the DB.
+
+User-visible URLs are unchanged. Bookmarks like
+`/Perso/fsallet/KDust/chat` keep working byte-for-byte.
+
+**Implementation notes**.
+
+1. **Middleware classifier** (pure-string, no DB) :
+   - Split `pathname` into segments.
+   - First segment in the reserved set (`chat`, `task`, `run`,
+     `conversation`, `logs`, `about`, `settings`, `login`, `api`,
+     `dust`, `_next`, `favicon.ico`) → **no rewrite**, the existing
+     root-level route handles it (cookie-scoped fallback).
+   - Otherwise: walk left-to-right, splitting at the **first**
+     reserved segment. `head` = leading non-reserved segments
+     (scope chain), `tail` = `[reserved, ...rest]` or empty.
+     - If `tail` is empty → rewrite to `/`.
+     - If `tail[0]` ∈ `{chat, task, run, conversation}` → rewrite
+       to `/${tail.join('/')}`.
+     - Otherwise (`tail[0]` is a non-routable reserved name like
+       `settings` or `logs` placed mid-URL) → **no rewrite**: such
+       URLs were never valid under ADR-0020 either; they 404
+       organically.
+
+2. **`x-pathname` header**: set BEFORE the rewrite to the original
+   pathname so `getCurrentScope()` sees `/<scope>/<sub>` and not
+   the rewritten `/<sub>`. Already the case via `withPathname()`.
+
+3. **Cookie sync** (`kdust_project`): the existing
+   `classifyForCookie()` heuristic is "3 segments → project leaf,
+   else clear". Generalised to: any non-empty `head` sets the
+   cookie to `head.join('/')`; server-side `getCurrentScope()`
+   validates the value against `Project.findUnique({fsPath})` and
+   silently falls back to root when stale. Removing the cookie
+   sync from middleware entirely (cookie as pure UI state) is
+   considered for a future ADR but kept here to preserve the
+   "navigate to /chat after picking a project" UX.
+
+4. **Scope resolver** (`resolveScopeFromSegments`): generalised
+   from the hard-coded "1/2/3 segments" branches to a
+   longest-prefix folder walk. Algorithm:
+   - Load all folders matching `name ∈ segments` (single query).
+   - Walk segments left-to-right, descending one folder per
+     matching segment by `(name, parentId)`. Stop at the first
+     non-match.
+   - At stop position `k`: if `k == segments.length` → folder
+     scope. Else if `k == segments.length - 1` → try
+     `Project.findUnique({ fsPath: segments.join('/') })`. Else
+     → null (not found).
+   - Reserved segments short-circuit to null (defence in depth;
+     middleware already excludes them from the scope head).
+
+5. **Route file deletions**: the 21 re-export files under
+   `src/app/[l1]/` and `src/app/[l1]/[l2]/` become reachable
+   only by chance (Next still routes `/foo/bar` to
+   `[l1]/[l2]/page.tsx` if both exist). To avoid two sources of
+   truth, the next commit deletes them. The single root-level
+   route handles everything via the rewrite.
+
+**Consequences**.
+
++ Unbounded folder depth without combinatorial route duplication.
++ One source of truth per sub-page (the existing
+  `src/app/chat/page.tsx`, `src/app/task/page.tsx`, …).
++ No URL break — every existing bookmark / Telegram link / Teams
+  webhook keeps resolving identically.
++ Reduces `src/app/` file count by ~21 files (re-exports go away).
+- Middleware logic gains one rewrite branch (~30 lines). Edge
+  runtime budget impact: negligible (pure string work).
+- `getCurrentScope()` gains one extra DB read at deep folder
+  prefixes (one `findMany({ name: { in: segments } })` instead
+  of one targeted `findFirst`). Memoised per request via
+  `React.cache` as before; net cost < 1 ms.
+- Reserved-segment collision risk: if a user creates a folder
+  named `chat`, the middleware classifier would still reject it
+  thanks to `validateUrlSafeName` at create-time (ADR-0020
+  unchanged). A pre-existing folder named `chat` would shadow the
+  rewrite — boot-time scan in `src/instrumentation.ts` keeps
+  warning on collisions.
+
+**Rollback**. Revert the middleware diff and re-introduce the
+`[l1]/...` + `[l1]/[l2]/...` re-export trees (a `git revert` of
+the deletion commit suffices). The single-source body
+implementations are unchanged; the duplicated re-exports keep
+working as before. No data migration.

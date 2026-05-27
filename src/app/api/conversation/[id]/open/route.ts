@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import { CURRENT_PROJECT_COOKIE } from '@/lib/current-project';
+import { buildProjectUrl } from '@/lib/project-url';
 import { notFound } from "@/lib/api/responses";
 
 export const runtime = 'nodejs';
@@ -39,9 +40,20 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     // Global conv -> clear any project cookie
     store.delete(CURRENT_PROJECT_COOKIE);
   }
+  // Redirect to the scope-prefixed chat URL so the ChatClient mounts
+  // with the right hierarchy node resolved from the URL by
+  // getCurrentScope() — without this the legacy `/chat/<id>` lands
+  // with no URL scope and falls back to the cookie, which only
+  // resolves project leaves (3 segments). Conversations attached to
+  // a folder (projectName='<l1>/<l2>') would mount as root mode,
+  // losing breadcrumbs and skipping fs-cli/task-runner ensure.
+  // Franck 2026-05-27 bug fix.
+  const redirect = conv.projectName
+    ? buildProjectUrl(conv.projectName, `chat/${id}`)
+    : `/chat/${id}`;
   return NextResponse.json({
     ok: true,
     projectName: conv.projectName ?? null,
-    redirect: `/chat/${id}`,
+    redirect,
   });
 }

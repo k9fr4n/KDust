@@ -159,7 +159,12 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         href: buildProjectUrl(p.fsPath ?? p.name),
         label: p.name,
       })),
-    ];
+    ].sort((a, b) =>
+      // Pure alphabetical order, kind-agnostic (Franck 2026-05-28).
+      // Folders and projects are interleaved by name so the listing
+      // matches the user's mental model (one flat sorted list).
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+    );
   } else if (scope.kind === 'folder') {
     // Parent navigation is now surfaced by <ScopePath /> at the
     // top of the page body (Franck 2026-05-26 22:28) — no more
@@ -192,7 +197,11 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         href: buildProjectUrl(p.fsPath ?? `${scope.fsPath}/${p.name}`),
         label: p.name,
       })),
-    ];
+    ].sort((a, b) =>
+      // Same flat alphabetical sort as the root scope above
+      // (Franck 2026-05-28).
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+    );
   }
 
   // --- Dashboard actions prop (ADR-0022, Chantier 4) ------------

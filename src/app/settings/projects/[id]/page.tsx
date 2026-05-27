@@ -298,7 +298,20 @@ export default function ProjectSettingsPage({
   return (
     <div className="space-y-6">
       <DocumentTitle title={p.name ? `${p.name} · Project` : 'Project'} />
-      <PageHeader icon={<Folder size={20} />} title="Project settings" scope={p.name} />
+      <PageHeader
+        icon={<Folder size={20} />}
+        title="Project settings"
+        scope={p.name}
+        right={
+          <button
+            onClick={() => router.push(`/settings/projects?delete=${id}`)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
+            title="Delete this project (opens the destructive confirmation dialog on the projects list)"
+          >
+            <Trash2 size={14} /> Delete this project…
+          </button>
+        }
+      />
       {/* Breadcrumb */}
       <div className="text-sm">
         <Link href="/settings/projects" className="text-slate-500 hover:text-brand-600 inline-flex items-center gap-1">
@@ -733,22 +746,19 @@ export default function ProjectSettingsPage({
         </p>
       </section>
 
-      {/* Danger zone */}
+      {/* Danger zone reminder — the actual button lives in the
+          PageHeader (top-right) for parity with "+ New project" on
+          the projects list. The section is kept for explanatory
+          context so users understand what the header button does. */}
       <section className="rounded-md border border-red-300 dark:border-red-800 p-4 space-y-2 bg-red-50/30 dark:bg-red-950/10">
         <h2 className="text-xs uppercase tracking-wide text-red-600">Danger zone</h2>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          Deleting a project removes all its conversations, tasks
-          and run history. Optionally removes the working copy too.
-          Clicking the button below redirects to the global projects
-          list and opens the destructive confirmation dialog for this
-          project.
+          Use the <strong>Delete this project…</strong> button at the
+          top of this page to remove the project. It deletes all
+          conversations, tasks and run history, and optionally the
+          working copy. The action redirects to the global projects
+          list and opens the destructive confirmation dialog.
         </p>
-        <button
-          onClick={() => router.push(`/settings/projects?delete=${id}`)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
-        >
-          <Trash2 size={14} /> Delete this project…
-        </button>
       </section>
     </div>
   );

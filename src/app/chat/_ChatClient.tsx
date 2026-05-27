@@ -1701,16 +1701,11 @@ function ChatPageInner({
           </a>
         );
       })()}
-      {/* New chat */}
-      <button
-        type="button"
-        onClick={newChat}
-        title="Start a new conversation"
-        aria-label="Start a new conversation"
-        className={ACTION_BTN_NEUTRAL}
-      >
-        <Plus size={16} />
-      </button>
+      {/* "+ New chat" button removed from the topbar (Franck 2026-05-28).
+          A new conversation is now started either by clicking the
+          chat icon in the sidebar (which lands on /chat with no id)
+          or via the /conversation dashboard. Keeps the topbar
+          uncluttered on /chat. */}
     </>,
   );
 

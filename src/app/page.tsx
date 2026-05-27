@@ -159,7 +159,12 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         href: buildProjectUrl(p.fsPath ?? p.name),
         label: p.name,
       })),
-    ];
+    ].sort((a, b) =>
+      // Pure alphabetical order, kind-agnostic (Franck 2026-05-28).
+      // Folders and projects are interleaved by name so the listing
+      // matches the user's mental model (one flat sorted list).
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+    );
   } else if (scope.kind === 'folder') {
     // Parent navigation is now surfaced by <ScopePath /> at the
     // top of the page body (Franck 2026-05-26 22:28) — no more
@@ -192,7 +197,11 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         href: buildProjectUrl(p.fsPath ?? `${scope.fsPath}/${p.name}`),
         label: p.name,
       })),
-    ];
+    ].sort((a, b) =>
+      // Same flat alphabetical sort as the root scope above
+      // (Franck 2026-05-28).
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+    );
   }
 
   // --- Dashboard actions prop (ADR-0022, Chantier 4) ------------
@@ -266,6 +275,16 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
                 sub={c.sub}
               />
             ))}
+            {/* Visual separator between existing folder/project chips and
+                the create chips ("+ New folder" / "+ New project").
+                Only rendered when there is at least one existing child,
+                otherwise the divider would float alone. (Franck 2026-05-28) */}
+            {children.length > 0 && (
+              <div
+                aria-hidden
+                className="self-stretch w-px bg-slate-300 dark:bg-slate-700 mx-1"
+              />
+            )}
             {/* Trailing "+ New folder" / "+ New project" chips (Franck 2026-05-27) */}
             <DashboardCreateChips scope={actionsScope} />
           </div>

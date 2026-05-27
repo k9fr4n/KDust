@@ -39,7 +39,7 @@ export async function ScopePath({ fsPath }: { fsPath: string }) {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="mb-3 text-xs text-slate-500 dark:text-slate-400"
+      className="mb-3 text-sm text-slate-500 dark:text-slate-400"
     >
       <ol className="flex flex-wrap items-center gap-1">
         <li>
@@ -52,7 +52,7 @@ export async function ScopePath({ fsPath }: { fsPath: string }) {
         </li>
         {crumbs.map((c) => (
           <li key={c.href} className="flex items-center gap-1">
-            <ChevronRight size={12} aria-hidden className="text-slate-300 dark:text-slate-600" />
+            <ChevronRight size={14} aria-hidden className="text-slate-300 dark:text-slate-600" />
             <Link
               href={`${c.href}${subTail}`}
               className="hover:text-slate-700 dark:hover:text-slate-200 hover:underline"

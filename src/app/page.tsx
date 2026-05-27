@@ -20,7 +20,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { RunCard } from '@/components/RunCard';
 import { ScopePath } from '@/components/ScopePath';
 import { ChildChip } from '@/components/dashboard/ChildChip';
-import { DashboardActions } from '@/components/dashboard/DashboardActions';
+import { DashboardActions, DashboardCreateChips } from '@/components/dashboard/DashboardActions';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
 // on pin/delete events from other tabs.
@@ -250,7 +250,7 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
         </div>
       )}
 
-      {children.length > 0 && (
+      {actionsScope.kind !== 'project' && (
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             {scope.kind === 'root' ? 'Folders & projects' : 'Children'}
@@ -266,6 +266,8 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
                 sub={c.sub}
               />
             ))}
+            {/* Trailing "+ New folder" / "+ New project" chips (Franck 2026-05-27) */}
+            <DashboardCreateChips scope={actionsScope} />
           </div>
         </section>
       )}

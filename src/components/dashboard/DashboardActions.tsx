@@ -1,20 +1,12 @@
 'use client';
 
 // ---------------------------------------------------------------
-// <DashboardActions> — toolbar at the top of the dashboard
-// (ADR-0022) for managing the hierarchy without leaving the page.
-//
-//   [+ Folder]   inline modal, creates a folder under the current
-//                scope (root or folder). Hidden when scope is a
-//                project leaf (projects don't host folders).
-//   [+ Project]  routes to /settings/projects?create=1&folder=<id>
-//                so the full project create form (git URL paste,
-//                description, sandbox mode, auto-slug) is reused
-//                without duplicating it on the dashboard.
-//   [Delete]     dangerous action, visible only on folder/project
-//                scope. Same DELETE endpoints + error language
-//                as /settings/projects. Navigates to the parent
-//                scope on success.
+// <DashboardActions> — scope-level destructive action at the top
+// of the dashboard (ADR-0022). Renders only "Delete this
+// folder/project". The "+ Folder" / "+ Project" buttons live in
+// <DashboardCreateChips> and are rendered at the END of the
+// children list so they read as trailing chips next to the
+// existing folders/projects (Franck 2026-05-27).
 // ---------------------------------------------------------------
 
 import { useRouter } from 'next/navigation';
@@ -33,16 +25,79 @@ type Scope =
 
 export function DashboardActions({ scope }: { scope: Scope }) {
   const router = useRouter();
+  const [deleting, setDeleting] = useState(false);
+
+  if (scope.kind === 'root') return null;
+
+  const deleteCurrent = async () => {
+    const kindLabel = scope.kind === 'folder' ? 'folder' : 'project';
+    if (
+      !confirm(
+        `Delete this ${kindLabel} ("${scope.fsPath}")?\n\n${
+          scope.kind === 'folder'
+            ? 'The folder must be empty (the API will refuse otherwise).'
+            : 'This will permanently remove the project, all its conversations, tasks and run history.'
+        }`,
+      )
+    )
+      return;
+    setDeleting(true);
+    try {
+      const url =
+        scope.kind === 'folder'
+          ? `/api/folders/${scope.folderId}`
+          : `/api/projects/${scope.projectId}?deleteFiles=0`;
+      const r = await fetch(url, { method: 'DELETE' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        alert(
+          `Delete failed: ${j.error ?? `HTTP ${r.status}`}` +
+            (j.detail ? `\n${j.detail}` : ''),
+        );
+        return;
+      }
+      const parent = scope.parentFsPath;
+      router.push(parent ? `/${parent}` : '/');
+      router.refresh();
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const btnDanger =
+    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm';
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => void deleteCurrent()}
+        disabled={deleting}
+        className={btnDanger}
+      >
+        <Trash2 size={14} /> Delete this {scope.kind}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// <DashboardCreateChips> — "+ Folder" / "+ Project" chips appended
+// to the children list. Visible only when the active scope can
+// host children (root or folder); a project leaf has no children
+// section so the component renders null.
+// ---------------------------------------------------------------
+
+export function DashboardCreateChips({ scope }: { scope: Scope }) {
+  const router = useRouter();
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [folderName, setFolderName] = useState('');
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const canCreateChildren = scope.kind !== 'project';
-  const canDelete = scope.kind !== 'root';
-  const parentFolderId =
-    scope.kind === 'folder' ? scope.folderId : null; // root
+  if (scope.kind === 'project') return null;
+
+  const parentFolderId = scope.kind === 'folder' ? scope.folderId : null;
   const projectFolderQuery =
     scope.kind === 'folder' ? `&folder=${encodeURIComponent(scope.folderId)}` : '';
 
@@ -70,75 +125,39 @@ export function DashboardActions({ scope }: { scope: Scope }) {
     }
   };
 
-  const deleteCurrent = async () => {
-    if (scope.kind === 'root') return;
-    const kindLabel = scope.kind === 'folder' ? 'folder' : 'project';
-    if (!confirm(`Delete this ${kindLabel} ("${scope.fsPath}")?\n\n${
-      scope.kind === 'folder'
-        ? 'The folder must be empty (the API will refuse otherwise).'
-        : 'This will permanently remove the project, all its conversations, tasks and run history.'
-    }`)) return;
-    setDeleting(true);
-    try {
-      const url =
-        scope.kind === 'folder'
-          ? `/api/folders/${scope.folderId}`
-          : `/api/projects/${scope.projectId}?deleteFiles=0`;
-      const r = await fetch(url, { method: 'DELETE' });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        alert(
-          `Delete failed: ${j.error ?? `HTTP ${r.status}`}` +
-            (j.detail ? `\n${j.detail}` : ''),
-        );
-        return;
-      }
-      // Navigate to the parent scope. parentFsPath is null only
-      // for root-level folders; in that case go to dashboard root.
-      const parent = scope.kind === 'folder' ? scope.parentFsPath : scope.parentFsPath;
-      router.push(parent ? `/${parent}` : '/');
-      router.refresh();
-    } finally {
-      setDeleting(false);
-    }
-  };
-
+  const chipBase =
+    'inline-flex items-center gap-2 rounded-md border bg-white text-slate-700 dark:bg-slate-800 dark:text-slate-200 px-3 py-1.5 text-sm font-medium shadow-sm transition';
+  const chipFolder =
+    `${chipBase} border-dashed border-amber-300 dark:border-amber-700 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30`;
+  const chipProject =
+    `${chipBase} border-dashed border-teal-300 dark:border-teal-700 hover:border-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/30`;
   const btnPrimary =
     'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm';
   const btnSecondary =
     'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm';
-  const btnDanger =
-    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm';
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {canCreateChildren && (
-        <>
-          <button
-            type="button"
-            onClick={() => { setShowFolderModal(true); setErr(null); }}
-            className={btnSecondary}
-          >
-            <FolderPlus size={14} /> Folder
-          </button>
-          <a
-            href={`/settings/projects?create=1${projectFolderQuery}`}
-            className={btnPrimary}
-          >
-            <Plus size={14} /> Project
-          </a>
-        </>
-      )}
-      {canDelete && (
-        <button
-          type="button"
-          onClick={() => void deleteCurrent()}
-          disabled={deleting}
-          className={btnDanger}
-        >
-          <Trash2 size={14} /> Delete this {scope.kind}
-        </button>
-      )}
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setShowFolderModal(true);
+          setErr(null);
+        }}
+        className={chipFolder}
+        title="Create a new folder under this scope"
+      >
+        <FolderPlus size={14} className="text-amber-500" />
+        New folder
+      </button>
+      <a
+        href={`/settings/projects?create=1${projectFolderQuery}`}
+        className={chipProject}
+        title="Create a new project under this scope"
+      >
+        <Plus size={14} className="text-teal-500" />
+        New project
+      </a>
 
       {showFolderModal && (
         <>
@@ -155,7 +174,10 @@ export function DashboardActions({ scope }: { scope: Scope }) {
               <FolderPlus size={14} /> New folder
             </div>
             <div className="text-xs text-slate-500">
-              Parent: <span className="font-mono">{scope.kind === 'folder' ? scope.fsPath : '/ (root)'}</span>
+              Parent:{' '}
+              <span className="font-mono">
+                {scope.kind === 'folder' ? scope.fsPath : '/ (root)'}
+              </span>
             </div>
             <input
               autoFocus
@@ -171,7 +193,9 @@ export function DashboardActions({ scope }: { scope: Scope }) {
               }}
             />
             {err && (
-              <p className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap">{err}</p>
+              <p className="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap">
+                {err}
+              </p>
             )}
             <div className="flex items-center justify-end gap-2">
               <button
@@ -193,6 +217,6 @@ export function DashboardActions({ scope }: { scope: Scope }) {
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }

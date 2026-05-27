@@ -314,10 +314,12 @@ function ChatPageInner({
   const [streamGeneratedFiles, setStreamGeneratedFiles] = useState<GeneratedFile[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Initial project comes from the server-resolved scope (ADR-0020
-  // follow-up). null when scope is folder/root \u2014 the chat then runs
-  // in MCP-less mode (no fs-cli / task-runner / gateway / skills),
-  // composer still works, new conversations are created with
-  // projectName=null (same as the legacy "root" path).
+  // follow-up). At folder OR project scope, holds the fsPath and
+  // the chat ensures fs-cli / task-runner / skills rooted there
+  // (Franck 2026-05-27, feat/folder-scope-mcp). Gateway is per-
+  // project and self-skips at folder scope (no ProjectMcpToolFilter
+  // rows match -> serverId: null). Null only when scope is root:
+  // chat then runs MCP-less.
   const [currentProject, setCurrentProject] = useState<string | null>(
     initialScope.projectName,
   );

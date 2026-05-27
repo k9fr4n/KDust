@@ -266,6 +266,16 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
                 sub={c.sub}
               />
             ))}
+            {/* Visual separator between existing folder/project chips and
+                the create chips ("+ New folder" / "+ New project").
+                Only rendered when there is at least one existing child,
+                otherwise the divider would float alone. (Franck 2026-05-28) */}
+            {children.length > 0 && (
+              <div
+                aria-hidden
+                className="self-stretch w-px bg-slate-300 dark:bg-slate-700 mx-1"
+              />
+            )}
             {/* Trailing "+ New folder" / "+ New project" chips (Franck 2026-05-27) */}
             <DashboardCreateChips scope={actionsScope} />
           </div>

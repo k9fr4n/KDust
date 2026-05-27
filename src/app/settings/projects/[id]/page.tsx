@@ -306,13 +306,22 @@ export default function ProjectSettingsPage({
         title="Project settings"
         scope={p.name}
         right={
-          <button
-            onClick={() => router.push(`/settings/projects?delete=${id}`)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
-            title="Delete this project (opens the destructive confirmation dialog on the projects list)"
-          >
-            <Trash2 size={14} /> Delete this project…
-          </button>
+          <>
+            <button
+              onClick={() => router.push('/settings/projects?create=1')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm"
+              title="Create a new project (opens the form on the projects list)"
+            >
+              <Plus size={14} /> New project
+            </button>
+            <button
+              onClick={() => router.push(`/settings/projects?delete=${id}`)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
+              title="Delete this project (opens the destructive confirmation dialog on the projects list)"
+            >
+              <Trash2 size={14} /> Delete this project…
+            </button>
+          </>
         }
       />
       {/* Breadcrumb — uniform trail across settings pages.

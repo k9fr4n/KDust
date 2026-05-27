@@ -58,6 +58,7 @@ import { MCP_REGISTRATION_TIMEOUT_MS } from '../constants';
 import { db } from '../db';
 import { getDustClient } from '../dust/client';
 import { listGatewayTools, callGatewayTool } from './gateway-client';
+import { pathMatchesPattern } from './gateway-path-match';
 import { errMessage } from '../errors';
 
 export interface GatewayProxyHandle {
@@ -88,9 +89,15 @@ const MCP_SERVER_NAME = 'mcp-gateway';
  *
  * Rule: a Tool t is allowed iff there exists a
  * ProjectMcpToolFilter row F such that:
- *   * F.projectFsPath = projectFsPath
+ *   * F.projectFsPath matches `projectFsPath` (literal equality
+ *     OR glob pattern — see ./gateway-path-match.ts)
  *   * F.server.enabled = true
  *   * t.name in F.allowedTools (parsed JSON array)
+ *
+ * Pattern rows let one entry whitelist many projects, e.g.
+ *   F.projectFsPath = "Client/*" + allowedTools = ["search_code"]
+ * exposes search_code to every project directly under "Client/".
+ * The resulting set is the UNION across every matching row.
  *
  * The match against "server" happens only via the server slug
  * embedded in the row — we don't enforce that the gateway tool
@@ -103,10 +110,19 @@ async function resolveAllowedToolNames(
   projectFsPath: string,
 ): Promise<Set<string>> {
   const allowed = new Set<string>();
-  let rows: Array<{ allowedTools: string; server: { enabled: boolean } }> = [];
+  let rows: Array<{
+    projectFsPath: string;
+    allowedTools: string;
+    server: { enabled: boolean };
+  }> = [];
   try {
+    // We can't filter by glob in SQL, so we fetch every row whose
+    // server is enabled and match in JS. N is small (one row per
+    // (project|pattern, server) pair). If this ever becomes hot,
+    // pre-filter with a `LIKE` on the literal prefix before the
+    // first glob char.
     rows = await db.projectMcpToolFilter.findMany({
-      where: { projectFsPath },
+      where: { server: { enabled: true } },
       include: { server: true },
     });
   } catch (e) {
@@ -117,6 +133,7 @@ async function resolveAllowedToolNames(
   }
   for (const r of rows) {
     if (!r.server.enabled) continue;
+    if (!pathMatchesPattern(r.projectFsPath, projectFsPath)) continue;
     let parsed: unknown = [];
     try {
       parsed = JSON.parse(r.allowedTools || '[]');

@@ -533,8 +533,12 @@ export function McpGatewayEditor({
         <h2 className="text-lg font-semibold">Project tool filters</h2>
         <p className="text-xs text-slate-500">
           Per-project allow-list of gateway tools. A project with no
-          row here sees zero tools (default-deny). The dropdowns let
-          you add a row for any (project, server) pair.
+          matching row sees zero tools (default-deny). You can pick an
+          existing project OR type a glob pattern to cover many at
+          once: <code>Client/*</code> = every project directly under{' '}
+          <code>Client/</code>, <code>Client/**</code> = recursive.
+          When several rows match the same project, the resulting
+          allow-list is the <strong>union</strong>.
         </p>
 
         <FilterAddBar
@@ -558,6 +562,11 @@ export function McpGatewayEditor({
                 <code className="font-mono text-sm font-semibold">
                   {f.projectFsPath}
                 </code>
+                {/[*?]/.test(f.projectFsPath) && (
+                  <span className="text-[11px] rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5">
+                    pattern
+                  </span>
+                )}
                 <span className="text-slate-400">→</span>
                 <code className="font-mono text-sm">{f.serverSlug}</code>
                 <span className="text-xs rounded bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5">
@@ -651,20 +660,34 @@ function FilterAddBar({
 }) {
   const [project, setProject] = useState('');
   const [serverId, setServerId] = useState('');
+  const trimmed = project.trim().replace(/^\/+/, '');
+  const isPattern = /[*?]/.test(trimmed);
   return (
     <div className="flex flex-wrap gap-2 items-end rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3">
       <label className="text-xs flex flex-col gap-1">
-        <span className="font-medium">Project</span>
-        <select
+        <span className="font-medium">
+          Project or pattern{' '}
+          {isPattern && (
+            <span className="ml-1 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5">
+              pattern
+            </span>
+          )}
+        </span>
+        <input
+          list="kdust-mcp-project-list"
           value={project}
           onChange={(e) => setProject(e.target.value)}
-          className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 font-mono text-xs min-w-60"
-        >
-          <option value="">— pick —</option>
+          placeholder="Perso/fsallet/KDust  —or—  Client/*"
+          className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 font-mono text-xs min-w-72"
+        />
+        <datalist id="kdust-mcp-project-list">
           {projectFsPaths.map((p) => (
-            <option key={p} value={p}>{p}</option>
+            <option key={p} value={p} />
           ))}
-        </select>
+        </datalist>
+        <span className="text-[11px] text-slate-500">
+          Glob: <code>*</code> = one segment, <code>**</code> = recursive, <code>?</code> = one char.
+        </span>
       </label>
       <label className="text-xs flex flex-col gap-1">
         <span className="font-medium">Server</span>
@@ -680,8 +703,8 @@ function FilterAddBar({
         </select>
       </label>
       <button
-        disabled={!project || !serverId}
-        onClick={() => onPick(project, Number(serverId))}
+        disabled={!trimmed || !serverId}
+        onClick={() => onPick(trimmed, Number(serverId))}
         className="rounded-md bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-3 py-1 text-xs font-medium"
       >
         Edit allow-list

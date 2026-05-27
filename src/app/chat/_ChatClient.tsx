@@ -323,6 +323,14 @@ function ChatPageInner({
   const [currentProject, setCurrentProject] = useState<string | null>(
     initialScope.projectName,
   );
+  // Base href for /chat URLs preserving the URL-scope segment
+  // (root: `/chat`, folder/project: `/<fsPath>/chat`). Used by
+  // router.replace + history.pushState so navigating between the
+  // empty surface and a deep-link `[id]` page keeps the user
+  // inside the same folder/project context. Franck 2026-05-27.
+  const chatBaseHref = initialScope.fsPath
+    ? `/${initialScope.fsPath}/chat`
+    : '/chat';
   const [mcpServerId, setMcpServerId] = useState<string | null>(null);
   const [mcpStatus, setMcpStatus] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle');
   // Chat-mode task-runner MCP serverId (Franck 2026-04-25 11:31).
@@ -524,8 +532,8 @@ function ChatPageInner({
     // intermediate states the user can't meaningfully revisit.
     // Guarded against redundant navigation: skip when we're
     // already on /chat/<id> (e.g. arriving via the route shell).
-    if (typeof window !== 'undefined' && window.location.pathname !== `/chat/${id}`) {
-      router.replace(`/chat/${id}`);
+    if (typeof window !== 'undefined' && window.location.pathname !== `${chatBaseHref}/${id}`) {
+      router.replace(`${chatBaseHref}/${id}`);
     }
     setError(null);
     const r = await fetch(`/api/conversation/${id}`);
@@ -707,7 +715,7 @@ function ChatPageInner({
       // (not push) to avoid a duplicate history entry on the
       // refresh that just landed.
       if (!initialConversationId && searchParams.get('id')) {
-        router.replace(`/chat/${requested}`);
+        router.replace(`${chatBaseHref}/${requested}`);
       }
     }
 
@@ -957,8 +965,8 @@ function ChatPageInner({
     // Drop the conversation segment from the URL so reload of the
     // page truly lands on a blank chat. Same replace() rationale
     // as loadConv. Franck 2026-04-25 11:43.
-    if (typeof window !== 'undefined' && window.location.pathname !== '/chat') {
-      router.replace('/chat');
+    if (typeof window !== 'undefined' && window.location.pathname !== chatBaseHref) {
+      router.replace(chatBaseHref);
     }
     setMessages([]);
     setStreamedText('');
@@ -1358,6 +1366,11 @@ function ChatPageInner({
           content,
           fileIds: fileIds.length > 0 ? fileIds : undefined,
           fileMetas: fileMetas.length > 0 ? fileMetas : undefined,
+          // Attach the URL-scoped project/folder so the new
+          // Conversation row is wired to the correct hierarchy
+          // node regardless of the cookie. null at root scope.
+          // Franck 2026-05-27.
+          projectName: initialScope.projectName,
         });
         if (!r.ok) throw new Error((await r.json()).error?.toString() ?? 'error');
         const j = await r.json();
@@ -1372,8 +1385,8 @@ function ChatPageInner({
         // bubble. window.history.pushState updates the address bar
         // (so a refresh lands on the right conv, and Back returns
         // to /chat) without remounting the page component.
-        if (typeof window !== 'undefined' && window.location.pathname !== `/chat/${j.id}`) {
-          window.history.pushState({}, '', `/chat/${j.id}`);
+        if (typeof window !== 'undefined' && window.location.pathname !== `${chatBaseHref}/${j.id}`) {
+          window.history.pushState({}, '', `${chatBaseHref}/${j.id}`);
         }
         await consumeStream(j.id, j.userMessageSId);
       } else {

@@ -21,7 +21,14 @@ export async function GET(req: Request) {
   if (scopeKind === 'project' && scope) {
     where = { projectName: scope };
   } else if (scopeKind === 'folder' && scope) {
-    where = { projectName: { startsWith: `${scope}/` } };
+    // Include both children projects (`${scope}/...`) AND
+    // conversations attached directly to the folder itself
+    // (projectName === scope). Without the equality branch a
+    // conversation opened from the folder root would be orphan
+    // in every list view. Franck 2026-05-27.
+    where = {
+      OR: [{ projectName: scope }, { projectName: { startsWith: `${scope}/` } }],
+    };
   } else if (scopeKind === 'root') {
     where = undefined;
   } else {
@@ -89,6 +96,14 @@ const CreateSchema = z.object({
       }),
     )
     .optional(),
+  /**
+   * URL-scoped project/folder path. When the key is PRESENT (even
+   * null) the API trusts the client's scope rather than the
+   * `currentProject` cookie. Avoids orphan conversations when the
+   * user opens `/Perso/fsallet/KDust/chat` without first selecting
+   * the project from the dashboard. Franck 2026-05-27.
+   */
+  projectName: z.string().nullable().optional(),
 });
 
 // Same shape as in [id]/messages/route.ts. Kept duplicated to
@@ -109,7 +124,9 @@ export async function POST(req: Request) {
   const parsed = CreateSchema.safeParse(await req.json());
   if (!parsed.success) return badRequest(parsed.error.format());
 
-  const project = await getCurrentProjectName();
+  const project = Object.prototype.hasOwnProperty.call(parsed.data, 'projectName')
+    ? parsed.data.projectName ?? null
+    : await getCurrentProjectName();
   const { agentSId, agentName, content, title, mcpServerIds, fileIds, fileMetas } =
     parsed.data;
 

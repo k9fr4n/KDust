@@ -176,6 +176,23 @@ function ProjectsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, projects]);
 
+  // ?create=1[&folder=<id>] from the dashboard "+ Project" button
+  // (ADR-0022 §Chantier 4). Auto-shows the create form with the
+  // parent folder pre-selected. Fires once; we clear the query
+  // string after to keep the URL clean and avoid re-firing on
+  // back-button navigation.
+  const autoCreateFired = useRef(false);
+  useEffect(() => {
+    if (autoCreateFired.current) return;
+    if (searchParams?.get('create') !== '1') return;
+    autoCreateFired.current = true;
+    const folderId = searchParams.get('folder') ?? '';
+    setForm((f) => ({ ...f, folderId }));
+    setShowCreate(true);
+    router.replace('/settings/projects');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const resetForm = () => {
     setForm({ name: '', gitUrl: '', branch: 'main', description: '', folderId: '' });
     setMode('git');

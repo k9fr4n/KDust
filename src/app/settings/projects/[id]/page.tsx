@@ -287,8 +287,11 @@ export default function ProjectSettingsPage({
   if (!p) {
     return (
       <div>
-        <Link href="/settings/projects" className="text-xs text-slate-500 hover:underline inline-flex items-center gap-1">
-          <ArrowLeft size={12} /> Back to projects
+        <Link
+          href="/settings/projects"
+          className="inline-flex items-center gap-1.5 text-[15px] text-slate-500 hover:text-brand-600"
+        >
+          <ArrowLeft size={16} /> Back to projects
         </Link>
         <p className="mt-4 text-red-500">Project not found.</p>
       </div>
@@ -312,14 +315,23 @@ export default function ProjectSettingsPage({
           </button>
         }
       />
-      {/* Breadcrumb */}
-      <div className="text-sm">
-        <Link href="/settings/projects" className="text-slate-500 hover:text-brand-600 inline-flex items-center gap-1">
-          <ArrowLeft size={14} /> Projects
+      {/* Breadcrumb — uniform trail across settings pages.
+          text-[15px] to read slightly larger than body copy
+          (Franck 2026-05-27 feedback: was a bit small at text-sm).
+          Slash separator + Folder icon on the active segment to
+          match the visual hierarchy used on /run/[id]. */}
+      <nav className="flex items-center gap-2 text-[15px]">
+        <Link
+          href="/settings/projects"
+          className="inline-flex items-center gap-1.5 text-slate-500 hover:text-brand-600"
+        >
+          <ArrowLeft size={16} /> Projects
         </Link>
-        <span className="text-slate-300 mx-2">·</span>
-        <span className="font-semibold">{p.name}</span>
-      </div>
+        <span className="text-slate-300">/</span>
+        <span className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200">
+          <Folder size={16} className="text-slate-400" /> {p.name}
+        </span>
+      </nav>
 
       {/* Identity + description.
           Collapsed into a single panel with a 2-col grid to save

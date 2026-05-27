@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import { PageHeader } from '@/components/PageHeader';
+import { extractRepoSlugFromGitUrl } from '@/lib/git-url';
 
 type P = {
   id: string;
@@ -131,6 +132,12 @@ function ProjectsPageInner() {
   const [form, setForm] = useState({
     name: '', gitUrl: '', branch: 'main', description: '', folderId: '',
   });
+  // Tracks whether the operator has manually edited the `name`
+  // field. When false (= never typed in name OR cleared after
+  // reset), pasting a git URL auto-fills the name with the
+  // extracted slug. As soon as the user types in name, we stop
+  // overwriting (ADR-0022 §Chantier 3, option A).
+  const [nameTouched, setNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -172,6 +179,7 @@ function ProjectsPageInner() {
   const resetForm = () => {
     setForm({ name: '', gitUrl: '', branch: 'main', description: '', folderId: '' });
     setMode('git');
+    setNameTouched(false);
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -448,11 +456,19 @@ function ProjectsPageInner() {
 
           <div className="grid md:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-xs text-slate-500">Name (folder) *</span>
+              <span className="text-xs text-slate-500">
+                Name (folder) *
+                {!nameTouched && form.gitUrl.trim() && form.name && (
+                  <span className="ml-1 text-slate-400">(auto)</span>
+                )}
+              </span>
               <input
                 className={field + ' font-mono'}
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  setNameTouched(true);
+                }}
                 placeholder="my-project"
                 pattern="[a-zA-Z0-9._-]+"
                 title="Allowed: letters, digits, dot, dash, underscore."
@@ -499,7 +515,19 @@ function ProjectsPageInner() {
                 <input
                   className={field + ' font-mono'}
                   value={form.gitUrl}
-                  onChange={(e) => setForm({ ...form, gitUrl: e.target.value })}
+                  onChange={(e) => {
+                    const gitUrl = e.target.value;
+                    // Auto-fill the `name` field with the repo
+                    // leaf slug as long as the operator hasn't
+                    // typed in it (ADR-0022 §Chantier 3, option
+                    // A: offline, slug-from-URL only).
+                    const next = { ...form, gitUrl };
+                    if (!nameTouched) {
+                      const slug = extractRepoSlugFromGitUrl(gitUrl);
+                      next.name = slug ?? '';
+                    }
+                    setForm(next);
+                  }}
                   placeholder="git@gitlab.ecritel.net:group/repo.git"
                   required
                 />

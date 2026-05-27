@@ -22,7 +22,7 @@ export default async function ChatRootPage() {
       initialScope={{
         kind: scope.kind,
         fsPath: scope.fsPath,
-        projectName: scope.kind === 'project' ? scope.project.fsPath : null,
+        projectName: scope.kind === 'root' ? null : scope.fsPath,
         defaultAgentSId:
           scope.kind === 'project' ? scope.project.defaultAgentSId ?? null : null,
       }}

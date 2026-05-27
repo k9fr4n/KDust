@@ -2245,3 +2245,56 @@ aggregate their descendants in **read-only** mode.
 folder pages. `ProjectSwitcher` reverts to the cookie+reload
 behaviour (one-line patch). The reserved-name validator can
 stay (harmless). Cookie semantics are unchanged.
+
+### ADR-0021 — Folder-scope MCP wiring (2026-05-27)
+
+**Status**: Accepted (2026-05-27, Franck).
+
+**Context**. ADR-0020 introduced project-scoped URLs and folder
+aggregation pages, but the `/chat` server component intentionally
+shipped folder scope in *MCP-less* mode: `initialScope.projectName`
+was forced to `null` for any `kind !== 'project'`. This made navigating
+to an L1/L2 folder (e.g. `Clients/Domiserve`) unusable for any task
+that needed file access across its descendant projects — the agent
+lost fs-cli / task-runner / skills the moment the user clicked the
+folder breadcrumb.
+
+**Decision**. Pass `scope.fsPath` as the chat `projectName` whenever
+the scope is `'folder'` OR `'project'`. The four chat-mode MCP
+servers cope as follows:
+
+| MCP | Folder behaviour |
+|---|---|
+| `fs-cli` | `startFsServer(projectName)` already roots at `PROJECTS_ROOT/<projectName>`. A folder path is a real directory containing the descendant projects → fs tools operate naturally across sub-projects. |
+| `command-runner` | Not wired into `/chat` (task-only via `setup-mcp` phase). Unchanged. |
+| `skills` | Project arg is opaque (logging only). Chat mode shows the full skills catalogue in any scope. Unchanged. |
+| `task-runner` | `list_tasks` extended: when `project` arg is a folder fsPath, the bound-task clause becomes `OR: [{projectPath: P}, {projectPath: {startsWith: 'P/'}}]` so descendant project tasks surface. Cheap to apply unconditionally (leaf paths have no descendants). `resolve-task` / `enqueue_followup` are unchanged: the agent must still pass an explicit descendant project when dispatching a generic task. |
+| `mcp-gateway` | Per-project `ProjectMcpToolFilter` rows are keyed on a leaf `fsPath`. A folder path matches zero rows → `getGatewayServerId` already returns `null` with `skipped: 'no-tools'`. The existing client-side handling treats that as graceful skip (not an error). No code change. |
+
+Root scope (`/`) remains MCP-less by design: there's no FS root that
+makes sense for `/projects`-rooted servers.
+
+**Consequences**.
+
++ Folder pages now offer full chat-MCP parity with their descendant
+  leaves. Cross-project edits inside `Clients/Domiserve/...` work
+  without switching scope to one specific sub-project.
++ `Task` rows authored under a folder via `list_tasks` show up
+  naturally — the orchestrator routing layer already understood
+  startsWith filters.
+- Conversations created at folder scope still persist with
+  `projectName: null` (the middleware clears the cookie on folder
+  URLs to avoid leaking the previous leaf into reserved-only
+  routes). Re-opening such a conversation from `/conversation`
+  surfaces it under "global" rather than under the folder. Follow-up
+  ticket: extend the conversation-create path to accept an explicit
+  `projectName` body field forwarded from the chat client.
+- Gateway is not aggregated across descendants. A folder-scope chat
+  has no gateway tools even if its leaves do. Acceptable for V1 —
+  promoting an aggregation policy would require a product decision
+  on union vs intersection of filters and per-leaf secret resolution.
+
+**Rollback**. Revert the two `src/app/chat/page.tsx` + `[id]/page.tsx`
+edits to `scope.kind === 'project' ? scope.project.fsPath : null` and
+the `list-tasks` `boundProjectClause` block to its prior shape. No
+schema change, no migration.

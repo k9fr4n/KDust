@@ -91,19 +91,33 @@ export function registerListTasksTool(
       async (args) => {
         const scope = (args.scope as 'all' | 'bound' | 'generic' | undefined) ?? 'all';
         const projectFilter = (args.project as string | undefined)?.trim() || undefined;
-  
+
+        // Folder-scope support (Franck 2026-05-27, feat/folder-scope-mcp):
+        // when `project` is an L1/L2 folder fsPath rather than a leaf
+        // project, no Task row matches it exactly. We OR in a startsWith
+        // match so descendant project tasks surface too. Cheap to do
+        // unconditionally: a leaf path has no descendants (no row has
+        // projectPath beginning with 'L1/L2/leaf/'), so the extra clause
+        // never widens results past the original project equality match.
+        const boundProjectClause = projectFilter
+          ? { OR: [
+              { projectPath: projectFilter },
+              { projectPath: { startsWith: `${projectFilter}/` } },
+            ] }
+          : null;
+
         const tasks = await db.task.findMany({
           where: {
             enabled: true,
             ...(scope === 'bound' ? { projectPath: { not: null } } : {}),
             ...(scope === 'generic' ? { projectPath: null } : {}),
             // When a project filter is set, return bound tasks for THIS
-            // project + all generics (which can run on any project). The
-            // OR is built only for scope='all' to keep the query simple.
-            ...(projectFilter && scope === 'all'
-              ? { OR: [{ projectPath: projectFilter }, { projectPath: null }] }
+            // project (or its descendants when project is a folder) +
+            // all generics. The OR is built only for scope='all'.
+            ...(boundProjectClause && scope === 'all'
+              ? { OR: [...boundProjectClause.OR, { projectPath: null }] }
               : {}),
-            ...(projectFilter && scope === 'bound' ? { projectPath: projectFilter } : {}),
+            ...(boundProjectClause && scope === 'bound' ? boundProjectClause : {}),
           },
           select: {
             id: true,

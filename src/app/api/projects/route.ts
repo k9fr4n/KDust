@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { cloneOrPull } from '@/lib/git';
-import { computeProjectFsPath, isReservedName } from '@/lib/folder-path';
+import {
+  assertValidProjectParent,
+  computeProjectFsPath,
+  isReservedName,
+} from '@/lib/folder-path';
 import { badRequest, conflict } from "@/lib/api/responses";
 import { errCode } from '@/lib/errors';
 
@@ -66,35 +70,24 @@ export async function POST(req: Request) {
     folderId?: string | null;
   };
 
-  // ---- Folder resolution (Phase 1, Franck 2026-04-27) ----
-  // If the caller provided a folderId, validate it is a depth-2 leaf.
-  // Otherwise default to legacy/uncategorized (creating both folders
-  // on first call). Computed here so we can reject early on bad input
-  // BEFORE creating the Project row + cloning the repo.
-  let folderId: string;
-  if (input.folderId) {
-    const f = await db.folder.findUnique({
-      where: { id: input.folderId },
-      include: { parent: true },
-    });
-    if (!f) {
-      return badRequest('unknown folderId');
+  // ---- Folder resolution (ADR-0022, Franck 2026-05-27) ----
+  // folderId is optional: null = root-level project (fsPath === name).
+  // When provided, accept any existing folder regardless of depth
+  // (validated by assertValidProjectParent: existence + ancestor
+  // chain + cycle + MAX_FOLDER_DEPTH).
+  //
+  // The legacy `legacy/uncategorized` auto-placement that lived
+  // here pre-ADR-0022 has been removed: new projects without an
+  // explicit folderId now sit at the root. Existing rows already
+  // under `legacy/uncategorized` remain valid forever (no migration).
+  const folderId: string | null = input.folderId ?? null;
+  if (folderId) {
+    try {
+      await assertValidProjectParent(folderId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'invalid folderId';
+      return badRequest(msg);
     }
-    // Only L2 (parent != null, parent.parentId == null) folders may
-    // host projects. Reject L1 / deeper.
-    if (!f.parent || f.parent.parentId !== null) {
-      return NextResponse.json(
-        { error: 'projects must be placed in a depth-2 (leaf) folder' },
-        { status: 400 },
-      );
-    }
-    folderId = f.id;
-  } else {
-    let l1 = await db.folder.findFirst({ where: { name: 'legacy', parentId: null } });
-    if (!l1) l1 = await db.folder.create({ data: { name: 'legacy', parentId: null } });
-    let l2 = await db.folder.findFirst({ where: { name: 'uncategorized', parentId: l1.id } });
-    if (!l2) l2 = await db.folder.create({ data: { name: 'uncategorized', parentId: l1.id } });
-    folderId = l2.id;
   }
 
   const fsPath = await computeProjectFsPath(folderId, input.name);

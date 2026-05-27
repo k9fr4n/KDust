@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { classifyFolderDepth, isReservedName } from '@/lib/folder-path';
+import { assertValidProjectParent, isReservedName } from '@/lib/folder-path';
 import { badRequest, conflict } from "@/lib/api/responses";
 import { errCode } from '@/lib/errors';
 
@@ -10,18 +10,32 @@ export const runtime = 'nodejs';
 /**
  * GET /api/folders
  *
- * Returns the full folder tree (depth-2 cap) with per-leaf project
- * counts so the UI can render the sidebar in a single round-trip.
+ * Returns the full folder tree with per-node project counts so the
+ * UI can render the sidebar / picker in a single round-trip.
  *
- * Response shape:
- *   {
- *     tree: [
- *       { id, name, projectCount: 0, children: [
- *         { id, name, projectCount: N }
- *       ] }
- *     ]
- *   }
+ * Since ADR-0022 the tree is **unbounded depth**: any node may host
+ * folders, projects, or both. Response shape (recursive):
+ *
+ *   type Node = {
+ *     id: string;
+ *     name: string;
+ *     projectCount: number;   // projects directly under this node
+ *     children: Node[];        // descendant folders, may be empty
+ *   };
+ *   { tree: Node[] }            // root-level folders only
+ *
+ * Backwards compatibility: the legacy depth-2 consumer (settings/
+ * projects page, Telegram picker pre-refactor) walked `children`
+ * one level deep and stopped — that path still works on a depth-2
+ * dataset. Recursive consumers should walk `children` until empty.
  */
+type FolderNode = {
+  id: string;
+  name: string;
+  projectCount: number;
+  children: FolderNode[];
+};
+
 export async function GET() {
   const folders = await db.folder.findMany({
     include: {
@@ -37,19 +51,15 @@ export async function GET() {
     byParent.get(k)!.push(f);
   }
 
-  const roots = byParent.get(null) ?? [];
-  const tree = roots.map((l1) => ({
-    id: l1.id,
-    name: l1.name,
-    projectCount: 0, // L1 itself never holds projects (depth invariant)
-    children: (byParent.get(l1.id) ?? []).map((l2) => ({
-      id: l2.id,
-      name: l2.name,
-      projectCount: l2._count.projects,
-    })),
-  }));
+  const build = (parentId: string | null): FolderNode[] =>
+    (byParent.get(parentId) ?? []).map((f) => ({
+      id: f.id,
+      name: f.name,
+      projectCount: f._count.projects,
+      children: build(f.id),
+    }));
 
-  return NextResponse.json({ tree });
+  return NextResponse.json({ tree: build(null) });
 }
 
 /**
@@ -58,12 +68,13 @@ export async function GET() {
  * Create a folder. Body:
  *   { name: string, parentId?: string|null }
  *
- * Rules:
- *   - parentId null  => create at depth 1 (root). Allowed.
- *   - parentId set   => parent must be a root folder (parentId IS
- *                       NULL). Creating under a leaf is rejected
- *                       (would breach depth=2 invariant).
- *   - name unique within parent (DB @@unique enforces, we surface
+ * Rules (ADR-0022, unbounded depth):
+ *   - parentId null  => create at root. Always allowed.
+ *   - parentId set   => any existing folder accepted, provided the
+ *                       ancestor chain is well-formed and depth
+ *                       remains < MAX_FOLDER_DEPTH (the new child
+ *                       would itself sit one level below the parent).
+ *   - name unique within parent (DB @@unique enforces — surfaced as
  *     a 409 mapped error).
  */
 const NAME_RE = /^[a-zA-Z0-9._-]+$/;
@@ -88,25 +99,20 @@ export async function POST(req: Request) {
   if (name.length > 64) return badRequest('name is too long (max 64 chars)');
   if (!NAME_RE.test(name)) return badRequest(NAME_HINT);
   // ADR-0020: reserved URL segments cannot be used as folder
-  // names — they'd collide with the `/<l1>/<l2>/<project>/<sub>`
-  // routing introduced in May 2026.
+  // names — they'd collide with the `/<…>/<project>/<sub>` routing.
   if (isReservedName(name)) {
     return badRequest(`"${name}" is a reserved URL segment (ADR-0020)`);
   }
 
   if (parentId) {
-    // Only root folders may host children. depth==='root' covers
-    // "parent.parentId IS NULL"; any other value (leaf or invalid)
-    // means we'd go past depth 2.
-    const depth = await classifyFolderDepth(parentId);
-    if (depth === 'invalid') {
-      return badRequest('unknown parentId');
-    }
-    if (depth !== 'root') {
-      return NextResponse.json(
-        { error: 'max folder depth is 2 (cannot nest under a leaf)' },
-        { status: 400 },
-      );
+    // ADR-0022: any valid folder may host children. The helper
+    // validates existence + ancestor chain (cycle + depth ≤ MAX)
+    // in a single pass; throw → 400 with the underlying message.
+    try {
+      await assertValidProjectParent(parentId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'invalid parentId';
+      return badRequest(msg);
     }
   }
 

@@ -27,7 +27,7 @@ import { db } from './db';
 import { PROJECTS_ROOT } from './projects';
 import { invalidateFsServer } from './mcp/registry';
 import {
-  classifyFolderDepth,
+  assertValidProjectParent,
   computeProjectFsPath,
   getFolderFsPath,
   hasActiveRunForFsPaths,
@@ -152,23 +152,30 @@ async function rewireProject(params: {
 }
 
 /**
- * POST /api/projects/:id/move handler. Validates the target folder
- * (must be a depth-2 leaf), checks for active runs (409 “busy”),
- * and delegates to rewireProject().
+ * POST /api/projects/:id/move handler.
+ *
+ * Since ADR-0022 the target may be ANY existing folder (no depth-2
+ * cap) or `null` to move the project to the root. We validate the
+ * target via assertValidProjectParent (existence + cycle + depth),
+ * refuse if any TaskRun is active on this project (409 "busy"),
+ * then delegate to rewireProject() which handles the atomic FS mv
+ * + DB rewiring (Task.projectPath / Conversation.projectName /
+ * TelegramBinding.projectName) with FS rollback on tx failure.
  */
 export async function moveProjectToFolder(
   projectId: string,
-  targetFolderId: string,
+  targetFolderId: string | null,
 ): Promise<MoveResult> {
   const project = await db.project.findUnique({ where: { id: projectId } });
   if (!project) return { ok: false, reason: 'invalid_target', detail: 'project not found' };
 
-  const depth = await classifyFolderDepth(targetFolderId);
-  if (depth !== 'leaf') {
+  try {
+    await assertValidProjectParent(targetFolderId);
+  } catch (err) {
     return {
       ok: false,
       reason: 'invalid_target',
-      detail: 'target folder must be a depth-2 leaf',
+      detail: err instanceof Error ? err.message : 'invalid target folder',
     };
   }
 

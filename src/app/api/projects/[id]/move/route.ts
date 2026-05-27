@@ -12,7 +12,9 @@ export const maxDuration = 60;
 /**
  * POST /api/projects/:id/move
  *
- * Body: { folderId: string }   // target L2 folder id
+ * Body: { folderId: string | null }   // target folder id, or null
+ *                                      // to move the project to the
+ *                                      // root (ADR-0022).
  *
  * Atomically:
  *   - mv /projects/<oldFsPath> -> /projects/<newFsPath>
@@ -20,8 +22,11 @@ export const maxDuration = 60;
  *   - Task.projectPath / Conversation.projectName /
  *     TelegramBinding.projectName rewired from old fsPath
  *
+ * Refused (400) when:
+ *   - the target folder id does not exist;
+ *   - the ancestor chain is malformed (cycle / depth > MAX).
+ *
  * Refused (409) when:
- *   - the target folder is not a depth-2 leaf;
  *   - the project has a TaskRun in 'running' or 'pending' state;
  *   - a folder/project with the same name already exists at the
  *     destination;
@@ -30,7 +35,7 @@ export const maxDuration = 60;
  * Triggers a scheduler reload so any cron whose Task.projectPath
  * was rewritten keeps firing on the new path.
  */
-const Input = z.object({ folderId: z.string().min(1) });
+const Input = z.object({ folderId: z.string().nullable() });
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;

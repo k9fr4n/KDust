@@ -2298,3 +2298,119 @@ makes sense for `/projects`-rooted servers.
 edits to `scope.kind === 'project' ? scope.project.fsPath : null` and
 the `list-tasks` `boundProjectClause` block to its prior shape. No
 schema change, no migration.
+
+### ADR-0022 — Unbounded folder hierarchy & root-level projects (2026-05-27)
+
+**Status**: Accepted (2026-05-27, Franck).
+
+**Context**. The folder hierarchy was introduced in ADR-0005 / Phase
+1 (2026-04-27) with a hard depth-2 invariant: exactly one L1 root +
+one L2 leaf, projects living **only** inside L2 leaves. This was
+intentionally restrictive to keep URLs / breadcrumbs / Telegram
+pickers predictable in V1. Six months in, the limitation has become
+the dominant UX friction reported by the sole operator (Franck):
+
+- No way to express a 3+ level taxonomy (`clients/<client>/<env>/<repo>`),
+  forcing names like `acme-prod` / `acme-staging` at L2.
+- Projects cannot sit next to folders at the same level — the
+  GitLab-style "tree of folders and repos mixed" layout is impossible.
+- Project creation forces a folder pick even for one-off sandbox
+  projects, hence the magic `legacy/uncategorized` auto-placement.
+
+The `Folder` model itself has always supported arbitrary depth via
+`parentId` (nullable, self-relation). Only the API layer enforced the
+cap. ADR-0005 explicitly anticipated this: *"keeps the data model
+open for a future bump to 3+ levels without a migration"*.
+
+**Decision**. Lift the depth cap; allow projects at any depth,
+including the root (`folderId = null`).
+
+1. **Schema**: unchanged. `Folder.parentId` already nullable +
+   self-referential. `Project.folderId` is already nullable
+   (originally for boot-window tolerance) — its semantics become
+   *"null = root-level project"*, no longer *"transient legacy
+   placement"*.
+
+2. **fsPath computation** (`src/lib/folder-path.ts`):
+   - `getFolderFsPath` walks the full ancestor chain (bounded loop,
+     `MAX_FOLDER_DEPTH = 10`, raises on cycle or depth overflow).
+   - `classifyFolderDepth` removed — replaced by
+     `assertValidProjectParent(folderId | null)` (existence check +
+     cycle guard only).
+   - New helper `getFolderAncestors(folderId)` returns the chain
+     `[L1, …, Lₙ]` for breadcrumbs / cycle detection. Single SQL
+     pass via repeated `findUnique` capped at `MAX_FOLDER_DEPTH`.
+
+3. **API surface**:
+   - `POST /api/folders`: any valid `parentId` (or `null`) accepted.
+     Removes the `depth !== 'root'` rejection. Cycle guard added on
+     the (future) parent-change endpoint — out of scope here, the
+     current API still doesn't allow re-parenting.
+   - `POST /api/projects`: `folderId` becomes truly optional; when
+     `null` the project sits at the root (`fsPath = name`). The
+     `legacy/uncategorized` auto-placement is removed for new
+     projects but left in place for already-migrated rows.
+   - `POST /api/projects/:id/move`: accepts `folderId: null` to
+     move a project to the root.
+
+4. **URL routing** (`src/lib/project-url.ts` / `getCurrentScope`):
+   the resolver no longer assumes the first two path segments are
+   `<L1>/<L2>`. It now greedily walks segments matching a folder
+   chain (siblings of the parent), then the first non-folder
+   segment that matches a project under that folder is the project.
+   Longest-prefix folder match wins; ambiguity (a folder and a
+   project with the same name as siblings) is structurally
+   impossible thanks to the `@@unique([folderId, name])` on `Folder`
+   and `Project` — but we add an extra runtime sanity check for
+   defence in depth.
+
+5. **Telegram picker** (`src/lib/telegram/bridge.ts`): the L1→L2
+   drill-down becomes a generic recursive picker. Each `/pick`
+   message renders folders + projects at the current node, with a
+   "↑ up" button. Capped at `MAX_FOLDER_DEPTH` levels visually.
+
+6. **Reserved names** (ADR-0020): unchanged. Every folder *and*
+   project leaf still goes through `validateUrlSafeName`. The set
+   of reserved names is unchanged.
+
+7. **Backwards compatibility**: existing `legacy/uncategorized`
+   placements are valid forever (depth-2 is a special case of
+   "any depth"). No data migration. Existing fsPaths keep working
+   as routing inputs.
+
+**Consequences**.
+
++ A GitLab-style tree becomes natural: any folder can host folders
+  *and* projects side by side, at any depth.
++ Root-level "sandbox" projects no longer need a fake parent folder.
++ Telegram picker UX scales — no UI change at depth ≤ 2, drill-down
+  appears only when depth ≥ 3.
++ `Task.projectPath` / `Conversation.projectName` semantics are
+  unchanged: they store the canonical `Project.fsPath`, which now
+  can be of arbitrary depth. Scheduler / runner / push pipeline see
+  no difference.
+- `getCurrentScope` becomes slightly more expensive (one
+  `folder.findMany` upfront instead of two indexed lookups). For
+  the operator's scale (< 100 folders) the cost is negligible; we
+  still memoise per request via `React.cache` as before.
+- Documentation referring to "L1 / L2 / depth-2" (folder-path.ts
+  header, ADR-0005 wording, push-pipeline.md mentions) is updated
+  to "ancestor chain / leaf project / unbounded depth". ADR-0005
+  is annotated as superseded-in-part rather than rewritten.
+- `MAX_FOLDER_DEPTH = 10` is a soft application guard, not a SQL
+  invariant. Raising it requires only editing the constant; lowering
+  it would need a one-shot validation script.
+
+**Rollback**. The schema change is nil, so rollback is a code revert
+of the API + routing + Telegram diffs. Existing data (root projects,
+3+ level folders created after merge) would need a one-shot script
+to fold them back under L2 leaves before the API rejects them again.
+
+**Hard constraints preserved**:
+
+- Generic-task invariants (ADR-0005 §"4 names"): unaffected. A
+  generic task still has `projectPath = null`; bound tasks still
+  carry the project's `fsPath`.
+- Reserved URL segments (ADR-0020): unchanged.
+- Run-depth cap, secrets redaction, no public ingress: unchanged.
+- No `dust.db` migration, no `prisma db push` required on deploy.

@@ -420,14 +420,15 @@ function ProjectsPageInner() {
           </>
         }
       />
-      <div>
+      {/* Breadcrumb — same trail DSL as /settings/projects/[id]. */}
+      <nav className="flex items-center gap-2 text-[15px]">
         <Link
           href="/settings"
-          className="text-sm text-slate-500 hover:underline inline-flex items-center gap-1"
+          className="inline-flex items-center gap-1.5 text-slate-500 hover:text-brand-600"
         >
-          <ArrowLeft size={14} /> Settings
+          <ArrowLeft size={16} /> Settings
         </Link>
-      </div>
+      </nav>
 
       {showFolders && (
         <FoldersPanel tree={tree} onChanged={refresh} setMsg={setMsg} />

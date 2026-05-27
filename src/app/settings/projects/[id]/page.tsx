@@ -287,8 +287,11 @@ export default function ProjectSettingsPage({
   if (!p) {
     return (
       <div>
-        <Link href="/settings/projects" className="text-xs text-slate-500 hover:underline inline-flex items-center gap-1">
-          <ArrowLeft size={12} /> Back to projects
+        <Link
+          href="/settings/projects"
+          className="inline-flex items-center gap-1.5 text-[15px] text-slate-500 hover:text-brand-600"
+        >
+          <ArrowLeft size={16} /> Back to projects
         </Link>
         <p className="mt-4 text-red-500">Project not found.</p>
       </div>
@@ -298,15 +301,37 @@ export default function ProjectSettingsPage({
   return (
     <div className="space-y-6">
       <DocumentTitle title={p.name ? `${p.name} · Project` : 'Project'} />
-      <PageHeader icon={<Folder size={20} />} title="Project settings" scope={p.name} />
-      {/* Breadcrumb */}
-      <div className="text-sm">
-        <Link href="/settings/projects" className="text-slate-500 hover:text-brand-600 inline-flex items-center gap-1">
-          <ArrowLeft size={14} /> Projects
+      <PageHeader
+        icon={<Folder size={20} />}
+        title="Project settings"
+        scope={p.name}
+        right={
+          <button
+            onClick={() => router.push(`/settings/projects?delete=${id}`)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
+            title="Delete this project (opens the destructive confirmation dialog on the projects list)"
+          >
+            <Trash2 size={14} /> Delete this project…
+          </button>
+        }
+      />
+      {/* Breadcrumb — uniform trail across settings pages.
+          text-[15px] to read slightly larger than body copy
+          (Franck 2026-05-27 feedback: was a bit small at text-sm).
+          Slash separator + Folder icon on the active segment to
+          match the visual hierarchy used on /run/[id]. */}
+      <nav className="flex items-center gap-2 text-[15px]">
+        <Link
+          href="/settings/projects"
+          className="inline-flex items-center gap-1.5 text-slate-500 hover:text-brand-600"
+        >
+          <ArrowLeft size={16} /> Projects
         </Link>
-        <span className="text-slate-300 mx-2">·</span>
-        <span className="font-semibold">{p.name}</span>
-      </div>
+        <span className="text-slate-300">/</span>
+        <span className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200">
+          <Folder size={16} className="text-slate-400" /> {p.name}
+        </span>
+      </nav>
 
       {/* Identity + description.
           Collapsed into a single panel with a 2-col grid to save
@@ -733,22 +758,19 @@ export default function ProjectSettingsPage({
         </p>
       </section>
 
-      {/* Danger zone */}
+      {/* Danger zone reminder — the actual button lives in the
+          PageHeader (top-right) for parity with "+ New project" on
+          the projects list. The section is kept for explanatory
+          context so users understand what the header button does. */}
       <section className="rounded-md border border-red-300 dark:border-red-800 p-4 space-y-2 bg-red-50/30 dark:bg-red-950/10">
         <h2 className="text-xs uppercase tracking-wide text-red-600">Danger zone</h2>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          Deleting a project removes all its conversations, tasks
-          and run history. Optionally removes the working copy too.
-          Clicking the button below redirects to the global projects
-          list and opens the destructive confirmation dialog for this
-          project.
+          Use the <strong>Delete this project…</strong> button at the
+          top of this page to remove the project. It deletes all
+          conversations, tasks and run history, and optionally the
+          working copy. The action redirects to the global projects
+          list and opens the destructive confirmation dialog.
         </p>
-        <button
-          onClick={() => router.push(`/settings/projects?delete=${id}`)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-400 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/40 text-sm"
-        >
-          <Trash2 size={14} /> Delete this project…
-        </button>
       </section>
     </div>
   );

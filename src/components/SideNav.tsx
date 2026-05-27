@@ -51,6 +51,15 @@ type Item = {
   label: string;
   icon: LucideIcon;
   requiresProject?: boolean;
+  /**
+   * When true, the item is "active" only on an EXACT pathname
+   * match — no prefix `startsWith` rule. Used for the Dashboard
+   * entry whose href is the project root (e.g.
+   * `/Perso/fsallet/KDust`): without exact-match it would stay
+   * lit on every sub-page (`.../chat`, `.../run`, ...) because
+   * the sub-routes all start with that prefix.
+   */
+  exact?: boolean;
 };
 
 /**
@@ -66,7 +75,7 @@ type Item = {
 type ItemSlug = '' | 'conversation' | 'chat' | 'run' | 'task';
 
 const ITEMS: Array<Omit<Item, 'href'> & { slug: ItemSlug }> = [
-  { slug: '',             label: 'Dashboard',    icon: LayoutDashboard },
+  { slug: '',             label: 'Dashboard',    icon: LayoutDashboard, exact: true },
   { slug: 'conversation', label: 'Conversation', icon: MessageSquare },
   { slug: 'chat',         label: 'Chat',         icon: MessagesSquare },
   { slug: 'run',          label: 'Run',          icon: Activity },
@@ -310,7 +319,7 @@ export function SideNav({ projectScoped }: { projectScoped: boolean }) {
               return (
                 <SideNavItem
                   key={it.slug || 'dashboard'}
-                  item={{ href, label: it.label, icon: it.icon, requiresProject: it.requiresProject }}
+                  item={{ href, label: it.label, icon: it.icon, requiresProject: it.requiresProject, exact: it.exact }}
                   pathname={pathname}
                   expanded={expanded}
                   disabled={!!it.requiresProject && !projectScoped}
@@ -342,8 +351,8 @@ function SideNavItem({
 }) {
   const bareHref = item.href.split('#')[0].split('?')[0];
   const active =
-    bareHref === '/'
-      ? pathname === '/'
+    bareHref === '/' || item.exact
+      ? pathname === bareHref
       : pathname === bareHref || pathname.startsWith(bareHref + '/');
 
   const Icon = item.icon;

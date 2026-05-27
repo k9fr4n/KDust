@@ -2,26 +2,21 @@
 // Folder path helpers (Franck 2026-04-27, Phase 1 of folder hierarchy).
 //
 // Single source of truth for translating a Project / Folder row
-// into its FS-relative path (e.g. "clients/acme/webapp") and the
-// reverse — locating a Project by its full path.
+// into its FS-relative path (e.g. "clients/acme/webapp/proj") and
+// the reverse — locating a Project by its full path.
 //
-// ## ADR — folder depth limit = 2
-// Status   : Accepted (2026-04-27)
-// Context  : Franck wants project organisation, current FS is flat
-//            (/projects/<name>). A flat list scales poorly past ~20
-//            projects but a deep tree adds UX friction (collapse
-//            state, breadcrumbs, ambiguity in /project <name>).
-// Decision : Hard-cap at depth 2 (L1 root + L2 leaf). Projects
-//            ALWAYS live in a leaf. The Folder model itself
-//            supports arbitrary depth via parentId nullable, but
-//            POST/PATCH /api/folders rejects parent.parentId !=
-//            null (Phase 2). This keeps the data model open for
-//            a future bump to 3+ levels without a migration.
-// Consequences :
-//   + Predictable URLs / breadcrumbs / Telegram pickers.
-//   + Simple recursive listProjects() (3 readdir layers max).
-//   - Users with finer taxonomies must collapse them (e.g.
-//     "clients/acme-prod" vs "clients/acme/prod").
+// ## History
+//
+// - ADR-0005 (2026-04-27) introduced the depth-2 cap (L1/L2 only,
+//   projects always in an L2 leaf) to keep V1 URLs / breadcrumbs /
+//   Telegram pickers predictable.
+// - ADR-0022 (2026-05-27) lifts the cap: arbitrary depth, projects
+//   may live at any level including the root. Helpers below walk
+//   the full ancestor chain, capped by MAX_FOLDER_DEPTH as a soft
+//   guard against pathological data or accidental cycles.
+//
+// The Folder SQL schema is unchanged (`parentId` nullable, self-
+// referential) — the depth cap was purely an application invariant.
 // ---------------------------------------------------------------
 
 import { db } from './db';
@@ -30,20 +25,68 @@ import type { Project, Folder } from '@prisma/client';
 export type FolderWithParent = Folder & { parent: Folder | null };
 
 /**
- * Given a folderId, return the relative folder path ("L1/L2" or
- * "L1" or empty string when null/unknown). Hits the DB twice at
- * most (leaf + parent). Callers needing the project's full path
- * should use {@link computeProjectFsPath} instead.
+ * Soft application guard against runaway folder chains (data
+ * corruption, accidental cycles, future UX collapse limits). Not a
+ * SQL invariant — raise the constant if a legitimate use-case
+ * appears. See ADR-0022.
+ */
+export const MAX_FOLDER_DEPTH = 10;
+
+/**
+ * Walk the ancestor chain of a folder, ROOT-FIRST (index 0 = L1,
+ * last = the folder itself). Returns an empty array when folderId
+ * is null/unknown. Bounded by MAX_FOLDER_DEPTH; raises on cycle or
+ * overflow so corrupt data fails loudly rather than silently
+ * truncating an fsPath.
+ *
+ * Performance: up to MAX_FOLDER_DEPTH `findUnique` calls. For the
+ * operator's scale (< 100 folders, depth < 5) this is well below
+ * the noise floor of an HTTP request. Callers needing per-request
+ * memoisation should wrap with React.cache at the route boundary.
+ */
+export async function getFolderAncestors(
+  folderId: string | null | undefined,
+): Promise<Folder[]> {
+  if (!folderId) return [];
+  const chain: Folder[] = [];
+  const seen = new Set<string>();
+  let currentId: string | null = folderId;
+  while (currentId) {
+    if (seen.has(currentId)) {
+      throw new Error(
+        `Folder cycle detected at ${currentId} (chain: ${chain
+          .map((f) => f.name)
+          .join(' / ')})`,
+      );
+    }
+    seen.add(currentId);
+    if (chain.length >= MAX_FOLDER_DEPTH) {
+      throw new Error(
+        `Folder depth exceeds MAX_FOLDER_DEPTH=${MAX_FOLDER_DEPTH} at ${currentId}`,
+      );
+    }
+    const f: Folder | null = await db.folder.findUnique({
+      where: { id: currentId },
+    });
+    if (!f) return []; // dangling parentId — surface as "no path"
+    chain.unshift(f);
+    currentId = f.parentId;
+  }
+  return chain;
+}
+
+/**
+ * Given a folderId, return the relative folder path (e.g.
+ * "clients/acme/prod" or "" when null/unknown). Walks the full
+ * ancestor chain — depth-agnostic since ADR-0022.
+ *
+ * Callers needing the project's full path should use
+ * {@link computeProjectFsPath} instead.
  */
 export async function getFolderFsPath(folderId: string | null | undefined): Promise<string> {
   if (!folderId) return '';
-  const f = await db.folder.findUnique({
-    where: { id: folderId },
-    include: { parent: true },
-  });
-  if (!f) return '';
-  if (f.parent) return `${f.parent.name}/${f.name}`;
-  return f.name;
+  const chain = await getFolderAncestors(folderId);
+  return chain.map((f) => f.name).join('/');
 }
 
 /** Concatenate a folder path and a project name into a full fsPath. */
@@ -150,21 +193,52 @@ export function validateUrlSafeName(name: string): string | null {
 }
 
 /**
- * Folder validation helpers for API layer (Phase 2, 2026-04-27).
- * Centralises the depth-2 invariant check so /api/folders POST/PATCH
- * and /api/projects/:id/move share the same logic.
+ * Folder validation helpers for API layer.
+ *
+ * @deprecated since ADR-0022 (2026-05-27). The depth-2 cap is
+ * lifted; use {@link assertValidProjectParent} for existence /
+ * cycle / depth checks instead. Kept here as a transitional shim
+ * for callers not yet migrated — returns `'leaf'` for ANY existing
+ * folder and `'invalid'` for unknown ids, so existing code that
+ * accepted only `'leaf'` continues to accept every valid folder.
+ * Removed once /api/folders and folder-ops.ts are switched over.
  */
 export type FolderDepth = 'root' /* L1 */ | 'leaf' /* L2 */ | 'invalid';
 
 export async function classifyFolderDepth(folderId: string): Promise<FolderDepth> {
-  const f = await db.folder.findUnique({
-    where: { id: folderId },
-    include: { parent: true },
-  });
+  const f = await db.folder.findUnique({ where: { id: folderId } });
   if (!f) return 'invalid';
-  if (!f.parent) return 'root'; // L1
-  if (f.parent.parentId === null) return 'leaf'; // L2
-  return 'invalid'; // depth >= 3, schema-allowed but API-refused
+  // Post-ADR-0022: any existing folder is a valid project parent.
+  // We collapse root/leaf into 'leaf' to preserve the old
+  // `depth !== 'leaf'` rejection semantics — callers that allowed
+  // only L2 leaves now implicitly allow every folder.
+  return 'leaf';
+}
+
+/**
+ * Assert that the given folderId is a valid parent for a project
+ * (or for a nested folder). `null` is always valid (= root). For
+ * a non-null id we verify:
+ *   - row exists
+ *   - the ancestor chain is well-formed (no cycle, depth ≤ MAX)
+ *
+ * Throws an Error with a stable message prefix on failure so API
+ * routes can map it to a 400 / 404 response with a consistent
+ * shape. Cheap: at most MAX_FOLDER_DEPTH findUnique calls.
+ */
+export async function assertValidProjectParent(
+  folderId: string | null | undefined,
+): Promise<void> {
+  if (!folderId) return;
+  const exists = await db.folder.findUnique({
+    where: { id: folderId },
+    select: { id: true },
+  });
+  if (!exists) {
+    throw new Error(`Folder not found: ${folderId}`);
+  }
+  // Walking the chain validates depth + cycle in one pass.
+  await getFolderAncestors(folderId);
 }
 
 /**

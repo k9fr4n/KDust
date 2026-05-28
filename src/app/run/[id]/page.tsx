@@ -32,6 +32,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, ChevronRight, MessageCircle, Settings, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { db } from '@/lib/db';
+import { getContextUsage } from '@/lib/dust/internal-api';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
 import { OpenConversationLink } from '@/components/OpenConversationLink';
@@ -218,6 +219,14 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           messages: { orderBy: { createdAt: 'asc' } },
         },
       })
+    : null;
+  // Dust context-usage snapshot (Franck 2026-05-28). Fail-soft:
+  // null when Dust is unreachable, when the conv has no sId, or
+  // when the upstream returns 5xx/schema mismatch. Adds ~200 ms
+  // to page render in the happy path; the page is force-dynamic
+  // anyway so this is acceptable for a detail view.
+  const contextUsage = run.dustConversationSId
+    ? await getContextUsage(run.dustConversationSId)
     : null;
   const agentMessages = (conv?.messages ?? []).filter((m) => m.role === 'agent');
   // Aggregate across all agent messages in the conv (usually 1 per run,
@@ -568,6 +577,24 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
         </div>
         <Stat label="Agent" value={run.task?.agentName ?? run.task?.agentSId ?? null} mono />
         <Stat label="Messages" value={conv ? conv.messages.length : null} hint="in conv" />
+        <Stat
+          label="Context"
+          value={
+            contextUsage && contextUsage.usage !== null && contextUsage.size !== null
+              ? `${contextUsage.usage.toLocaleString('fr-FR')} / ${contextUsage.size.toLocaleString('fr-FR')}`
+              : null
+          }
+          hint={
+            contextUsage && contextUsage.percent !== null
+              ? `${
+                  contextUsage.percent * 100 < 10
+                    ? (contextUsage.percent * 100).toFixed(1)
+                    : Math.round(contextUsage.percent * 100)
+                } %`
+              : undefined
+          }
+          mono
+        />
         <Stat label="Conv sId" value={run.dustConversationSId ? run.dustConversationSId.slice(0, 10) : null} mono />
       </section>
 

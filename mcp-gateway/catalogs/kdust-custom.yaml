@@ -171,10 +171,24 @@ registry:
     # `save.sh --from-file` in the kdust/thruk-monitoring-report skill.
     # DO NOT re-add `volumes:` or `THRUK_MCP_WORKDIR` here.
     # Tools enumerated because --servers= disables dynamic discovery.
-    # Captured 2026-05-25 from thruk-mcp v1.4.0 (catalog/tools.json) —
-    # 43 tools total (was 39 in v1.3.0).
+    # Captured 2026-05-29 from thruk-mcp v1.6.1 (catalog/tools.json) —
+    # 50 tools total (was 43 in v1.4.0). Refresh after every minor
+    # bump; if the gateway reports a different count, mismatched
+    # image cache (run `docker pull ghcr.io/k9fr4n/thruk-mcp:latest`).
+    #
+    # Delta since v1.4.0:
+    #   v1.5.0 (+7): thruk_list_contacts, thruk_get_contact,
+    #                thruk_bulk_acknowledge, thruk_add_comment,
+    #                thruk_delete_comment, thruk_checks
+    #                (+ thruk_problem_counts groundwork)
+    #   v1.6.0:      filter support on thruk_stats (signature change,
+    #                same tool name — see schema in catalog/tools.json)
+    #   v1.6.1 (+2 / -1): + thruk_totals, + thruk_problem_counts
+    #                     - thruk_problems_by_hostgroup (ghost tool,
+    #                       never implemented upstream; superseded by
+    #                       thruk_problem_counts)
     tools:
-      # read — state (9)
+      # read — state (10)
       - name: thruk_list_hosts
       - name: thruk_get_host
       - name: thruk_list_services
@@ -182,8 +196,12 @@ registry:
       - name: thruk_list_hostgroups
       - name: thruk_list_servicegroups
       - name: thruk_problems
-      - name: thruk_stats
+      - name: thruk_stats           # v1.6.0: now accepts a structured filter tree
+      - name: thruk_totals          # v1.6.1: compact host+service counts (16 fields)
       - name: thruk_sites
+      # read — contacts (2) — added v1.5.0 (2026-05-26)
+      - name: thruk_list_contacts
+      - name: thruk_get_contact
       # read — history & comments (7)
       - name: thruk_list_logs
       - name: thruk_list_alerts
@@ -196,11 +214,12 @@ registry:
       - name: thruk_top_noisy_hosts
       - name: thruk_top_noisy_services
       - name: thruk_flap_summary
-      # read — problem intelligence (4) — added v1.2 (2026-05-21)
+      # read — problem intelligence (4) — added v1.2 (2026-05-21),
+      # thruk_problems_by_hostgroup removed in v1.6.1 (ghost tool).
       - name: thruk_oldest_problems
       - name: thruk_unacked_critical
       - name: thruk_stale_acks
-      - name: thruk_problems_by_hostgroup
+      - name: thruk_problem_counts  # v1.6.1: replaces thruk_problems_by_hostgroup
       # read — log analytics (3) — added v1.3 (2026-05-21)
       - name: thruk_alert_heatmap
       - name: thruk_concurrent_failures
@@ -209,10 +228,11 @@ registry:
       - name: thruk_host_availability
       - name: thruk_service_availability
       - name: thruk_hostgroup_availability
-      # write — notifications control (1) — added v1.4 (2026-05-25)
+      # write — checks & notifications control (2) — added v1.4/v1.5
       # NB: cascade=true propagates to every service of the host —
       # keep behind THRUK_READ_ONLY=true or an explicit
       # THRUK_ENABLED_TOOLS allowlist until validated in prod.
+      - name: thruk_checks          # v1.5.0: enable/disable active checks
       - name: thruk_notifications
       # write — downtime management (8)
       - name: thruk_schedule_downtime
@@ -223,10 +243,14 @@ registry:
       - name: thruk_delete_downtime
       - name: thruk_delete_active_downtimes
       - name: thruk_delete_downtimes_by_filter
-      # write — problem handling (3)
+      # write — problem handling (4)
       - name: thruk_acknowledge
+      - name: thruk_bulk_acknowledge  # v1.5.0: ack by filter (hostgroup/state)
       - name: thruk_remove_acknowledgement
       - name: thruk_recheck
+      # write — comments (2) — added v1.5.0
+      - name: thruk_add_comment
+      - name: thruk_delete_comment
       # escape hatches (2)
       - name: thruk_query
       - name: thruk_run_background_query

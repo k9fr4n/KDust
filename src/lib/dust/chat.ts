@@ -412,7 +412,19 @@ export async function postUserMessage(
 export type TimelineEvent =
   | { type: 'text'; content: string }
   | { type: 'cot'; content: string }
-  | { type: 'tool'; tool: string; params: unknown };
+  | {
+      type: 'tool';
+      tool: string;
+      params: unknown;
+      /**
+       * Tool result (Franck 2026-05-28). Best-effort text rendering
+       * of `agent_action_success.action.output` (text blocks
+       * concatenated, capped at 5 KB upstream via
+       * `extractActionOutputText`). Null until the action completes,
+       * or when the tool produced no human-readable output.
+       */
+      result?: string | null;
+    };
 
 export interface StreamStats {
   eventCounts: Record<string, number>;
@@ -558,6 +570,10 @@ export function timelineToJson(
 ): string | null {
   if (!timeline || timeline.length === 0) return null;
   const PER_PARAM_CAP = 2_000;
+  // Per-tool result cap (Franck 2026-05-28). 5 KB matches the
+  // upstream extractActionOutputText() truncation so a single noisy
+  // `run_command` output cannot dominate the timeline row.
+  const PER_RESULT_CAP = 5_000;
   const TOTAL_CAP = 200_000;
   const compact: TimelineEvent[] = timeline.map((ev) => {
     if (ev.type === 'tool') {
@@ -570,7 +586,15 @@ export function timelineToJson(
       } catch {
         params = { _unserialisable: true };
       }
-      return { type: 'tool', tool: ev.tool, params };
+      let result: string | null = null;
+      if (typeof ev.result === 'string' && ev.result.length > 0) {
+        result =
+          ev.result.length > PER_RESULT_CAP
+            ? ev.result.slice(0, PER_RESULT_CAP) +
+              `\n…[result truncated, ${Math.round((ev.result.length - PER_RESULT_CAP) / 1024)}kB more]`
+            : ev.result;
+      }
+      return { type: 'tool', tool: ev.tool, params, result };
     }
     return ev;
   });
@@ -617,6 +641,14 @@ export async function streamAgentReply(
       | 'error'
       | 'done'
       | 'tool_call'
+      // Emitted on `agent_action_success` after the action's output is
+      // captured (Franck 2026-05-28). Payload is JSON `{tool, result}`
+      // where `result` is the best-effort text rendering of
+      // `action.output`, capped at 5 KB. The client attaches it to the
+      // most recent matching tool event in its live timeline; the
+      // server mirrors the same attachment into the active-stream
+      // replay buffer so passive observers stay in sync.
+      | 'tool_result'
       | 'agent_message_id'
       // Emitted whenever an MCP tool produced new files; payload is
       // the FULL deduped JSON list (same shape as the persisted
@@ -666,7 +698,88 @@ export async function streamAgentReply(
     }
   };
   const pushTimelineTool = (tool: string, params: unknown) => {
-    timeline.push({ type: 'tool', tool, params });
+    timeline.push({ type: 'tool', tool, params, result: null });
+  };
+  /**
+   * Best-effort text rendering of an MCP action's `output[]` blocks
+   * (Franck 2026-05-28). Output is the same shape we already walk in
+   * `extractFilesFromActionOutput`: an array of blocks with
+   * `{type, ...}`. We extract human-readable content per block:
+   *   - `text` block → its `text` field
+   *   - `resource_link` → "[link] name (mimeType): uri"
+   *   - `resource`     → "[resource] uri" (full text often available
+   *                       at resource.text for inline content)
+   *   - any other      → stringified JSON snippet
+   * Joined by blank lines. Capped at 5 KB with a trailing marker so
+   * the bottom-sheet detail view stays bounded — matches the
+   * `PER_RESULT_CAP` in `timelineToJson`.
+   */
+  const extractActionOutputText = (
+    output:
+      | ReadonlyArray<Record<string, unknown> | null | undefined>
+      | null
+      | undefined,
+  ): string | null => {
+    if (!Array.isArray(output) || output.length === 0) return null;
+    const CAP = 5_000;
+    const parts: string[] = [];
+    let total = 0;
+    for (const block of output) {
+      if (!block || typeof block !== 'object') continue;
+      const b = block as Record<string, unknown>;
+      const t = b.type;
+      let chunk = '';
+      if (t === 'text' && typeof b.text === 'string') {
+        chunk = b.text;
+      } else if (t === 'resource_link') {
+        const name = typeof b.name === 'string' ? b.name : '';
+        const uri = typeof b.uri === 'string' ? b.uri : '';
+        const mt = typeof b.mimeType === 'string' ? ` (${b.mimeType})` : '';
+        chunk = `[link] ${name}${mt}: ${uri}`.trim();
+      } else if (t === 'resource' && b.resource && typeof b.resource === 'object') {
+        const r = b.resource as Record<string, unknown>;
+        if (typeof r.text === 'string' && r.text.length > 0) {
+          chunk = r.text;
+        } else {
+          const uri = typeof r.uri === 'string' ? r.uri : '';
+          chunk = `[resource] ${uri}`.trim();
+        }
+      } else {
+        try {
+          chunk = JSON.stringify(block).slice(0, 500);
+        } catch {
+          continue;
+        }
+      }
+      if (!chunk) continue;
+      parts.push(chunk);
+      total += chunk.length + 2;
+      if (total >= CAP) break;
+    }
+    if (parts.length === 0) return null;
+    let joined = parts.join('\n\n');
+    if (joined.length > CAP) {
+      const remaining = joined.length - CAP;
+      joined =
+        joined.slice(0, CAP) +
+        `\n…[output truncated, ${Math.round(remaining / 1024)}kB more]`;
+    }
+    return joined;
+  };
+  /**
+   * Attach a result to the most recent matching `tool` event in the
+   * server-side timeline (Franck 2026-05-28). Mirrors
+   * `attachToolResult` in `lib/tool-invocations.ts` — kept duplicated
+   * to avoid pulling client utilities into this server module.
+   */
+  const attachToolResultInline = (tool: string, result: string) => {
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const ev = timeline[i];
+      if (ev.type === 'tool' && ev.tool === tool && !ev.result) {
+        ev.result = result;
+        return;
+      }
+    }
   };
   // Generated-files accumulator (Franck 2026-05-16). Dust emits the
   // full list on EVERY `agent_action_success` event for the
@@ -852,7 +965,12 @@ export async function streamAgentReply(
     toolInvocations: toolInvocations.slice(),
     timeline: timeline.map((ev) =>
       ev.type === 'tool'
-        ? { type: 'tool', tool: ev.tool, params: ev.params }
+        ? {
+            type: 'tool',
+            tool: ev.tool,
+            params: ev.params,
+            result: ev.result ?? null,
+          }
         : { type: ev.type, content: ev.content },
     ),
     generatedFiles: generatedFiles.slice(),
@@ -968,18 +1086,36 @@ export async function streamAgentReply(
         // not double-count.
         const ev = handled as AgentActionSuccessShape;
         const aid = ev.action?.sId;
+        // Prefer functionCallName when present (matches what the
+        // Dust web UI displays — e.g. "Fs Cli Run Command"); fall
+        // back to the raw MCP toolName. Resolved here even when the
+        // tool was already recorded via tool_approve_execution so we
+        // can pair the result with the correct timeline entry.
+        const toolName =
+          ev.action?.functionCallName || ev.action?.toolName || 'tool';
         if (aid && !seenActionIds.has(aid)) {
           seenActionIds.add(aid);
-          // Prefer functionCallName when present (matches what the
-          // Dust web UI displays — e.g. "Fs Cli Run Command"); fall
-          // back to the raw MCP toolName.
-          const toolName =
-            ev.action.functionCallName || ev.action.toolName || 'tool';
           const params = ev.action.params ?? null;
           toolNamesSet.add(toolName);
           toolInvocations.push({ tool: toolName, params });
           pushTimelineTool(toolName, params);
           onEvent('tool_call', JSON.stringify({ tool: toolName, params }));
+        }
+        // Tool output capture (Franck 2026-05-28). Best-effort text
+        // rendering of action.output[] — attach to the matching
+        // timeline entry and emit a `tool_result` SSE event so live
+        // and passive clients can surface it in the bottom-sheet
+        // detail view.
+        const outputText = extractActionOutputText(
+          (ev.action as { output?: Array<Record<string, unknown>> } | undefined)
+            ?.output,
+        );
+        if (outputText) {
+          attachToolResultInline(toolName, outputText);
+          onEvent(
+            'tool_result',
+            JSON.stringify({ tool: toolName, result: outputText }),
+          );
         }
         // Generated-files capture from action.generatedFiles
         // (one of three sources — see mergeFiles() above).

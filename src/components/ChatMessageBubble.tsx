@@ -15,7 +15,8 @@
  * the parent or any sibling bubbles.
  */
 'use client';
-import React, { Fragment, useEffect, useMemo, useState } from 'react';
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Copy,
   Check,
@@ -25,6 +26,7 @@ import {
   Boxes,
   ChevronRight,
   Brain,
+  X,
 } from 'lucide-react';
 import { MessageMarkdown } from './MessageMarkdown';
 import { UI_FLASH_MS } from '@/lib/constants';
@@ -192,6 +194,262 @@ function prettifyToolName(raw: string): string {
 }
 
 /**
+ * Bottom sheet detail view (Franck 2026-05-28).
+ * --------------------------------------------
+ * Replaces the inline `<details>` expansion of cot/tool timeline rows
+ * with a slide-up panel anchored to the viewport bottom. Rationale:
+ * dropping a fat JSON / 5 KB output blob inline kept pushing the
+ * conversation around and was hard to read on mobile. The sheet:
+ *
+ * - mounts via React portal on document.body to escape the chat
+ *   column's overflow/transform context.
+ * - locks body scroll while open.
+ * - closes on: backdrop click, Esc, swipe-down on the drag handle
+ *   beyond ~30% of its height (or > 80 px) — the gesture is what
+ *   Franck specifically asked for.
+ *
+ * Kept dependency-free on purpose: no framer-motion / no @use-gesture
+ * — see the constraint in the agent prompt against new top-level deps.
+ * Pointer events + CSS transitions are enough here.
+ */
+type SheetPayload =
+  | { kind: 'cot'; content: string }
+  | { kind: 'tool'; tool: string; params: unknown; result: string | null };
+
+function CopyButton({
+  text,
+  label = 'Copy',
+}: {
+  text: string;
+  label?: string;
+}) {
+  const [done, setDone] = useState(false);
+  const onClick = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      setTimeout(() => setDone(false), UI_FLASH_MS);
+    } catch {
+      /* clipboard denied — silent */
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+    >
+      {done ? <Check size={12} /> : <Copy size={12} />}
+      <span>{done ? 'Copied' : label}</span>
+    </button>
+  );
+}
+
+function TimelineDetailSheet({
+  payload,
+  onClose,
+}: {
+  payload: SheetPayload | null;
+  onClose: () => void;
+}) {
+  const sheetRef = useRef<HTMLDivElement>(null);
+  // Open after a tick so the CSS transition runs (mount with
+  // translate-y-full, then flip to translate-y-0).
+  const [visible, setVisible] = useState(false);
+  // Live drag offset in pixels (>= 0 only, downward).
+  const [dragY, setDragY] = useState(0);
+  const dragStart = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!payload) {
+      setVisible(false);
+      setDragY(0);
+      return;
+    }
+    // Schedule the transition on the next frame.
+    const id = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(id);
+  }, [payload]);
+
+  // Body scroll lock + Esc handler.
+  useEffect(() => {
+    if (!payload) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [payload, onClose]);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    dragStart.current = e.clientY;
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStart.current == null) return;
+    const dy = e.clientY - dragStart.current;
+    setDragY(Math.max(0, dy));
+  };
+  const onPointerUp = () => {
+    const sheet = sheetRef.current;
+    const h = sheet?.getBoundingClientRect().height ?? 600;
+    // Dismiss threshold: 30% of sheet height OR 80 px, whichever is
+    // smaller — Franck wants a snappy swipe-down close.
+    const threshold = Math.min(h * 0.3, 80);
+    if (dragY > threshold) {
+      // Animate out then unmount.
+      setVisible(false);
+      setDragY(0);
+      setTimeout(onClose, 200);
+    } else {
+      setDragY(0);
+    }
+    dragStart.current = null;
+  };
+
+  if (typeof document === 'undefined') return null;
+  if (!payload) return null;
+
+  const title =
+    payload.kind === 'cot' ? 'Thinking' : prettifyToolName(payload.tool);
+  const subtitle = payload.kind === 'tool' ? payload.tool : null;
+  const paramsJson =
+    payload.kind === 'tool'
+      ? (() => {
+          try {
+            return JSON.stringify(payload.params ?? null, null, 2);
+          } catch {
+            return String(payload.params);
+          }
+        })()
+      : null;
+  const copyText =
+    payload.kind === 'cot'
+      ? payload.content
+      : [
+          `# ${payload.tool}`,
+          '',
+          '## Inputs',
+          paramsJson ?? '(none)',
+          '',
+          '## Output',
+          payload.result ?? '(no output captured)',
+        ].join('\n');
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${title} details`}
+    >
+      {/* Backdrop */}
+      <div
+        className={
+          'absolute inset-0 bg-black/40 transition-opacity duration-200 ' +
+          (visible && dragY === 0 ? 'opacity-100' : 'opacity-0')
+        }
+        onClick={onClose}
+      />
+      {/* Sheet */}
+      <div
+        ref={sheetRef}
+        style={{
+          transform: `translateY(${visible ? dragY : 1000}px)`,
+          transition: dragStart.current == null ? 'transform 200ms ease-out' : 'none',
+        }}
+        className="relative w-full sm:max-w-2xl max-h-[85vh] bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 rounded-t-2xl shadow-2xl border-t border-slate-200 dark:border-slate-700 flex flex-col"
+      >
+        {/* Drag handle — pointer events bound here; the whole top
+            strip acts as the grab zone so it works on touch + mouse. */}
+        <div
+          className="flex flex-col items-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none select-none"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        >
+          <div className="w-10 h-1 rounded-full bg-slate-300 dark:bg-slate-600" />
+        </div>
+        {/* Header */}
+        <div className="px-4 pb-2 flex items-start gap-2 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              {payload.kind === 'cot' ? (
+                <Brain size={16} className="opacity-70 flex-none" />
+              ) : (
+                <Boxes size={16} className="opacity-70 flex-none" />
+              )}
+              <h2 className="text-sm font-semibold truncate">{title}</h2>
+            </div>
+            {subtitle && (
+              <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                {subtitle}
+              </p>
+            )}
+          </div>
+          <CopyButton text={copyText} label="Copy" />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        {/* Body */}
+        <div className="flex-1 overflow-auto px-4 py-3 text-[13px]">
+          {payload.kind === 'cot' ? (
+            <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] italic text-slate-700 dark:text-slate-300">
+              {payload.content}
+            </pre>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <section>
+                <h3 className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                  Inputs
+                </h3>
+                {paramsJson && paramsJson !== 'null' ? (
+                  <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[12px] text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 rounded p-2 border border-slate-200 dark:border-slate-700">
+                    {paramsJson}
+                  </pre>
+                ) : (
+                  <p className="text-[12px] italic text-slate-400">
+                    (no parameters)
+                  </p>
+                )}
+              </section>
+              <section>
+                <h3 className="text-[11px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-1">
+                  Output
+                </h3>
+                {payload.result ? (
+                  <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[12px] text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 rounded p-2 border border-slate-200 dark:border-slate-700">
+                    {payload.result}
+                  </pre>
+                ) : (
+                  <p className="text-[12px] italic text-slate-400">
+                    (no output captured — older message or tool returned
+                    nothing renderable)
+                  </p>
+                )}
+              </section>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/**
  * Inline chronological timeline panel (Franck 2026-05-22, ADR-0017).
  *
  * Renders the agent's turn as a single ordered list interleaving
@@ -217,76 +475,78 @@ export function MessageTimeline({
   events: TimelineEvent[];
   streamingTail?: boolean;
 }) {
-  if (events.length === 0) return null;
-  const lastTextIdx = (() => {
+  // Sheet payload state — one sheet per MessageTimeline instance.
+  // Hoisted at this level (not at the row level) so opening a new
+  // row while another is open just swaps the content rather than
+  // stacking sheets.
+  const [sheet, setSheet] = useState<SheetPayload | null>(null);
+  const closeSheet = useCallback(() => setSheet(null), []);
+
+  const lastTextIdx = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
       if (events[i].type === 'text') return i;
     }
     return -1;
-  })();
+  }, [events]);
+
+  if (events.length === 0) return null;
   return (
-    <ol className="flex flex-col gap-1.5 max-w-full list-none">
-      {events.map((ev, i) => {
-        if (ev.type === 'text') {
-          const isTail = streamingTail && i === lastTextIdx;
-          return (
-            <li
-              key={i}
-              className="text-[15px] text-slate-900 dark:text-slate-100 [overflow-wrap:anywhere] min-w-0 max-w-full"
-            >
-              <MessageMarkdown tone="agent">{ev.content}</MessageMarkdown>
-              {isTail && (
-                <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
-              )}
-            </li>
-          );
-        }
-        if (ev.type === 'cot') {
-          // Borderless, single-line collapsed by default; mirrors
-          // the tool-row shape so thinking blocks read as
-          // first-class entries in the chronological feed instead
-          // of looking like an afterthought.
-          return (
-            <li key={i} className="max-w-full">
-              <details className="group max-w-full">
-                <summary
-                  className="cursor-pointer select-none flex items-center gap-2 py-0.5 text-[13px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 marker:hidden [&::-webkit-details-marker]:hidden"
+    <>
+      <ol className="flex flex-col gap-1.5 max-w-full list-none">
+        {events.map((ev, i) => {
+          if (ev.type === 'text') {
+            const isTail = streamingTail && i === lastTextIdx;
+            return (
+              <li
+                key={i}
+                className="text-[15px] text-slate-900 dark:text-slate-100 [overflow-wrap:anywhere] min-w-0 max-w-full"
+              >
+                <MessageMarkdown tone="agent">{ev.content}</MessageMarkdown>
+                {isTail && (
+                  <span className="inline-block w-2 h-4 -mb-0.5 ml-0.5 bg-slate-500 animate-pulse" />
+                )}
+              </li>
+            );
+          }
+          if (ev.type === 'cot') {
+            // Single-row clickable affordance — opens the bottom
+            // sheet (Franck 2026-05-28).
+            return (
+              <li key={i} className="max-w-full">
+                <button
+                  type="button"
+                  onClick={() => setSheet({ kind: 'cot', content: ev.content })}
+                  className="w-full select-none flex items-center gap-2 py-0.5 text-[13px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer text-left"
                 >
                   <Brain size={14} className="flex-none opacity-70" />
                   <span className="italic flex-none">Thinking</span>
                   <ChevronRight
                     size={14}
-                    className="ml-auto flex-none transition-transform group-open:rotate-90 opacity-60"
+                    className="ml-auto flex-none opacity-60"
                   />
-                </summary>
-                <pre className="mt-1 ml-5 pl-3 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[12px] italic text-slate-500 dark:text-slate-400">
-                  {ev.content}
-                </pre>
-              </details>
-            </li>
-          );
-        }
-        // Tool event — match the Dust-web reference: single
-        // borderless row, leading "boxes" glyph, prettified name,
-        // optional inline hint, chevron on the right rotating on
-        // open. Whole row is the clickable affordance.
-        let pretty: string;
-        try {
-          pretty = JSON.stringify(ev.params ?? null, null, 2);
-        } catch {
-          pretty = String(ev.params);
-        }
-        const hasParams = Boolean(pretty) && pretty !== 'null';
-        const hint = summarizeParams(ev.params);
-        const label = prettifyToolName(ev.tool);
-        return (
-          <li key={i} className="max-w-full">
-            <details className="group max-w-full">
-              <summary
-                className={
-                  'select-none flex items-center gap-2 py-0.5 text-[13px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 marker:hidden [&::-webkit-details-marker]:hidden ' +
-                  (hasParams ? 'cursor-pointer' : 'cursor-default')
+                </button>
+              </li>
+            );
+          }
+          // Tool event — same single-row affordance, opens the
+          // sheet with Inputs + Output sections.
+          const hint = summarizeParams(ev.params);
+          const label = prettifyToolName(ev.tool);
+          const hasResult =
+            typeof ev.result === 'string' && ev.result.length > 0;
+          return (
+            <li key={i} className="max-w-full">
+              <button
+                type="button"
+                onClick={() =>
+                  setSheet({
+                    kind: 'tool',
+                    tool: ev.tool,
+                    params: ev.params,
+                    result: ev.result ?? null,
+                  })
                 }
+                className="w-full select-none flex items-center gap-2 py-0.5 text-[13px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100 cursor-pointer text-left"
               >
                 <Boxes size={14} className="flex-none opacity-70" />
                 <span className="flex-none" title={ev.tool}>
@@ -300,23 +560,27 @@ export function MessageTimeline({
                     {hint}
                   </span>
                 )}
-                {hasParams && (
-                  <ChevronRight
-                    size={14}
-                    className="ml-auto flex-none transition-transform group-open:rotate-90 opacity-60"
-                  />
+                {hasResult && (
+                  <span
+                    className="ml-1 flex-none text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wider"
+                    title="Result available"
+                  >
+                    ✓
+                  </span>
                 )}
-              </summary>
-              {hasParams && (
-                <pre className="mt-1 ml-5 pl-3 border-l-2 border-slate-300 dark:border-slate-700 whitespace-pre-wrap [overflow-wrap:anywhere] text-[11px] text-slate-600 dark:text-slate-400 font-mono">
-                  {pretty}
-                </pre>
-              )}
-            </details>
-          </li>
-        );
-      })}
-    </ol>
+                <ChevronRight
+                  size={14}
+                  className={
+                    'flex-none opacity-60 ' + (hasResult ? '' : 'ml-auto')
+                  }
+                />
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      <TimelineDetailSheet payload={sheet} onClose={closeSheet} />
+    </>
   );
 }
 

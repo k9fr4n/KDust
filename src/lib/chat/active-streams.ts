@@ -72,7 +72,17 @@ export type ActiveStream = {
 export type TimelineReplayEvent =
   | { type: 'text'; content: string }
   | { type: 'cot'; content: string }
-  | { type: 'tool'; tool: string; params: unknown };
+  | {
+      type: 'tool';
+      tool: string;
+      params: unknown;
+      /**
+       * Tool execution output (Franck 2026-05-28). Attached
+       * progressively via `attachStreamToolResult` when the
+       * server's `tool_result` SSE event fires. Null until then.
+       */
+      result?: string | null;
+    };
 
 const active = new Map<string, ActiveStream>();
 
@@ -146,6 +156,30 @@ export function appendStreamCot(conversationId: string, chunk: string) {
 export function appendStreamToolCall(conversationId: string, payload: string) {
   const s = active.get(conversationId);
   if (s) s.toolCalls.push(payload);
+}
+
+/**
+ * Attach a tool execution result to the most recent matching `tool`
+ * timeline event in the replay buffer (Franck 2026-05-28). Mirrors
+ * the client-side `attachToolResult` so passive observers (other tab
+ * / reopened chat) see the same result-rich timeline as the live
+ * consumer. No-op when the conversation is not actively streaming or
+ * when no matching tool event without a result is found.
+ */
+export function attachStreamToolResult(
+  conversationId: string,
+  tool: string,
+  result: string,
+) {
+  const s = active.get(conversationId);
+  if (!s) return;
+  for (let i = s.events.length - 1; i >= 0; i--) {
+    const ev = s.events[i];
+    if (ev.type === 'tool' && ev.tool === tool && !ev.result) {
+      ev.result = result;
+      return;
+    }
+  }
 }
 
 /**

@@ -15,6 +15,7 @@ import {
 } from '@/components/ChatMessageBubble';
 import {
   appendTimelineEvent,
+  attachToolResult,
   type TimelineEvent,
 } from '@/lib/tool-invocations';
 import {
@@ -574,14 +575,27 @@ function ChatPageInner({
       setStreamEvents(
         Array.isArray(j.streamEvents)
           ? (j.streamEvents as unknown[])
-              .filter((x): x is TimelineEvent => {
-                if (!x || typeof x !== 'object') return false;
+              .map((x): TimelineEvent | null => {
+                if (!x || typeof x !== 'object') return null;
                 const ev = x as Record<string, unknown>;
-                if (ev.type === 'text' && typeof ev.content === 'string') return true;
-                if (ev.type === 'cot' && typeof ev.content === 'string') return true;
-                if (ev.type === 'tool' && typeof ev.tool === 'string') return true;
-                return false;
+                if (ev.type === 'text' && typeof ev.content === 'string') {
+                  return { type: 'text', content: ev.content };
+                }
+                if (ev.type === 'cot' && typeof ev.content === 'string') {
+                  return { type: 'cot', content: ev.content };
+                }
+                if (ev.type === 'tool' && typeof ev.tool === 'string') {
+                  return {
+                    type: 'tool',
+                    tool: ev.tool,
+                    params: ev.params ?? null,
+                    result:
+                      typeof ev.result === 'string' ? ev.result : null,
+                  };
+                }
+                return null;
               })
+              .filter((x): x is TimelineEvent => x !== null)
           : [],
       );
       // Seed the live generated-files chips from the replay buffer
@@ -975,16 +989,28 @@ function ChatPageInner({
           // the latest snapshot.
           setStreamEvents(
             Array.isArray(j.streamEvents)
-              ? (j.streamEvents as unknown[]).filter(
-                  (x): x is TimelineEvent => {
-                    if (!x || typeof x !== 'object') return false;
+              ? (j.streamEvents as unknown[])
+                  .map((x): TimelineEvent | null => {
+                    if (!x || typeof x !== 'object') return null;
                     const ev = x as Record<string, unknown>;
-                    if (ev.type === 'text' && typeof ev.content === 'string') return true;
-                    if (ev.type === 'cot' && typeof ev.content === 'string') return true;
-                    if (ev.type === 'tool' && typeof ev.tool === 'string') return true;
-                    return false;
-                  },
-                )
+                    if (ev.type === 'text' && typeof ev.content === 'string') {
+                      return { type: 'text', content: ev.content };
+                    }
+                    if (ev.type === 'cot' && typeof ev.content === 'string') {
+                      return { type: 'cot', content: ev.content };
+                    }
+                    if (ev.type === 'tool' && typeof ev.tool === 'string') {
+                      return {
+                        type: 'tool',
+                        tool: ev.tool,
+                        params: ev.params ?? null,
+                        result:
+                          typeof ev.result === 'string' ? ev.result : null,
+                      };
+                    }
+                    return null;
+                  })
+                  .filter((x): x is TimelineEvent => x !== null)
               : [],
           );
         }
@@ -1074,6 +1100,24 @@ function ChatPageInner({
                   params: parsed.params,
                 }),
               );
+            }
+          } else if (ev === 'tool_result') {
+            // Attach the tool's output to the most recent matching
+            // timeline entry without one (Franck 2026-05-28). Powers
+            // the bottom-sheet detail view for tool rows.
+            try {
+              const parsed = JSON.parse(data);
+              if (
+                parsed &&
+                typeof parsed.tool === 'string' &&
+                typeof parsed.result === 'string'
+              ) {
+                setStreamEvents((evs) =>
+                  attachToolResult(evs, parsed.tool, parsed.result),
+                );
+              }
+            } catch {
+              /* malformed — ignore, the result simply won't surface */
             }
           } else if (ev === 'generated_files') {
             // Server already emits the full deduped JSON list each

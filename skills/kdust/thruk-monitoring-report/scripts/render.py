@@ -25,18 +25,22 @@ WORKDIR = pathlib.Path(os.environ.get("THRUK_REPORT_WORKDIR", "/tmp/thruk-report
 # rendering order. Keep this list stable: append-only, no reorder
 # without a doc update.
 SECTIONS: list[tuple[str, str]] = [
-    ("hosts_perimeter",        "Périmètre"),
-    ("unacked_critical",       "Problèmes critiques non-acquittés"),
-    ("oldest_problems",        "Problèmes les plus anciens"),
-    ("problems_by_hostgroup",  "Problèmes agrégés par hostgroup"),
-    ("notifications",          "Notifications envoyées"),
-    ("alert_heatmap",          "Heatmap des alertes"),
-    ("concurrent_failures",    "Pannes concurrentes (storms)"),
-    ("recurring_problems",     "Problèmes récurrents"),
-    ("noisy_hosts",            "Top hôtes bruyants"),
-    ("noisy_services",         "Top services bruyants"),
-    ("flap_summary",           "Flap summary"),
-    ("stale_acks",             "Acquittements périmés"),
+    ("totals",                  "Vue d'ensemble (totals)"),
+    ("hosts_perimeter",         "Périmètre"),
+    ("unacked_critical",        "Problèmes critiques non-acquittés"),
+    ("oldest_problems",         "Problèmes les plus anciens"),
+    ("problem_counts",          "Problèmes agrégés par hostgroup"),
+    ("notifications",           "Notifications envoyées"),
+    ("alert_heatmap",           "Heatmap des alertes"),
+    ("concurrent_failures",     "Pannes concurrentes (storms)"),
+    ("recurring_problems",      "Problèmes récurrents"),
+    ("noisy_hosts",             "Top hôtes bruyants"),
+    ("noisy_services",          "Top services bruyants"),
+    ("flap_summary",            "Flap summary"),
+    ("stale_acks",              "Acquittements périmés"),
+    ("host_availability",       "Disponibilité — hôtes (SLA %)"),
+    ("service_availability",    "Disponibilité — services (SLA %)"),
+    ("hostgroup_availability",  "Disponibilité — hostgroups (SLA %)"),
 ]
 
 MAX_ROWS_PER_SECTION = 50

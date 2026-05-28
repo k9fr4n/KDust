@@ -2210,7 +2210,7 @@ function ChatPageInner({
                     aria-label={active ? 'Stop' : 'Send'}
                     className={`inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0 ${tone}`}
                   >
-                    {active ? <Square size={14} /> : <Send size={16} />}
+                    {active ? <Square size={16} /> : <Send size={16} />}
                   </button>
                 );
               })()}

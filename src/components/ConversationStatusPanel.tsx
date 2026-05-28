@@ -30,7 +30,9 @@ import {
   RotateCw,
   Loader2,
   X as XIcon,
+  Github,
 } from 'lucide-react';
+import { gitUrlToWebUrl } from '@/lib/git-web-url';
 
 export type McpServerStatus =
   | 'ready'
@@ -52,6 +54,14 @@ type ContextUsageResp = {
   percent?: number | null;
   modelProvider?: string | null;
   modelId?: string | null;
+};
+
+type CurrentProjectResp = {
+  name: string | null;
+  project: {
+    gitUrl?: string | null;
+    platform?: string | null;
+  } | null;
 };
 
 const STATUS_DOT: Record<McpServerStatus, string> = {
@@ -135,6 +145,12 @@ export function ConversationStatusPanel({
   const [loading, setLoading] = useState(false);
   const [compacting, setCompacting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Repo web URL derived from the current project's gitUrl (fetched
+  // on open from /api/projects/current). Null when no project is
+  // selected or when the project has no git remote (sandbox mode).
+  // Franck 2026-05-28.
+  const [repoWebUrl, setRepoWebUrl] = useState<string | null>(null);
+  const [repoPlatform, setRepoPlatform] = useState<string | null>(null);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -172,6 +188,38 @@ export function ConversationStatusPanel({
   useEffect(() => {
     if (open && conversationId) void refresh();
   }, [open, conversationId, refresh]);
+
+  // Fetch the current project's git remote on open so we can show
+  // an "Open repo" link. Depends on projectName so it refetches if
+  // the user switches projects (cookie is kept in sync by
+  // _ChatClient before this fires). Franck 2026-05-28.
+  useEffect(() => {
+    if (!open) return;
+    if (!projectName) {
+      setRepoWebUrl(null);
+      setRepoPlatform(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/projects/current');
+        if (!r.ok) return;
+        const j = (await r.json()) as CurrentProjectResp;
+        if (cancelled) return;
+        setRepoWebUrl(gitUrlToWebUrl(j.project?.gitUrl ?? null));
+        setRepoPlatform(j.project?.platform ?? null);
+      } catch {
+        if (!cancelled) {
+          setRepoWebUrl(null);
+          setRepoPlatform(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectName]);
 
   // Auto-refresh every 15 s while open and not compacting.
   useEffect(() => {
@@ -421,6 +469,17 @@ export function ConversationStatusPanel({
                       className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 underline decoration-dotted"
                     >
                       <ExternalLink size={12} /> Open in Dust
+                    </a>
+                  )}
+                  {repoWebUrl && (
+                    <a
+                      href={repoWebUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 underline decoration-dotted"
+                      title={`Open ${repoPlatform ?? 'repo'} in a new tab`}
+                    >
+                      <Github size={12} /> Open repo
                     </a>
                   )}
                 </div>

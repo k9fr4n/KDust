@@ -33,6 +33,14 @@ export async function GET() {
     fsPath: true,
     defaultAgentSId: true,
     description: true,
+    // Surface git remote info so client UIs (chat status panel,
+    // dashboard cards) can render a "Open repo" link without a
+    // second round-trip. gitUrl can be ssh ("git@github.com:owner/
+    // repo.git") or https ("https://github.com/owner/repo[.git]")
+    // and is normalised client-side via lib/git-web-url.ts.
+    // Franck 2026-05-28.
+    gitUrl: true,
+    platform: true,
   } as const;
   let project = await db.project.findUnique({ where: { fsPath: value }, select });
   if (!project) {

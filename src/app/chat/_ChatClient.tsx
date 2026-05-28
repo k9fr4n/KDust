@@ -2135,7 +2135,7 @@ function ChatPageInner({
                 disabled={streaming}
                 title="Attach files"
                 aria-label="Attach files"
-                className="inline-flex items-center justify-center h-8 w-8 rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-700/60 transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-brand-600 text-white hover:bg-brand-700 transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0"
               >
                 <Paperclip size={16} />
               </button>

@@ -2051,7 +2051,11 @@ function ChatPageInner({
               onChange={(e) => setDraft(e.target.value)}
               onInput={autoResize}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                // Franck 2026-05-28: Enter inserts a newline (native
+                // textarea behavior). Submit on Cmd/Ctrl+Enter only,
+                // so multi-line drafts can be composed without an
+                // accidental send.
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
                   (e.target as HTMLTextAreaElement).form?.requestSubmit();
                 }
@@ -2149,7 +2153,7 @@ function ChatPageInner({
                   read-only pill (same chrome, no select). */}
               {currentId ? (
                 <span
-                  className="inline-flex items-center max-w-[40%] px-3 py-1 rounded-full text-xs font-medium bg-brand-600 text-white truncate"
+                  className="inline-flex items-center h-8 max-w-[40%] px-3 rounded-full text-xs font-medium bg-brand-600 text-white truncate"
                   title={agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
                 >
                   {agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
@@ -2162,7 +2166,7 @@ function ChatPageInner({
                     setAgentPickedBy('user');
                   }}
                   aria-label="Select agent"
-                  className="max-w-[40%] px-3 py-1 rounded-full text-xs font-medium bg-brand-600 text-white hover:bg-brand-700 cursor-pointer outline-none transition-colors truncate"
+                  className="h-8 max-w-[40%] px-3 rounded-full text-xs font-medium bg-brand-600 text-white hover:bg-brand-700 cursor-pointer outline-none transition-colors truncate"
                 >
                   {agents.map((a) => (
                     <option
@@ -2205,7 +2209,7 @@ function ChatPageInner({
                         ? 'Stop streaming'
                         : serverStreaming
                           ? 'Stop the background stream'
-                          : 'Send'
+                          : 'Send (Ctrl/Cmd+Enter)'
                     }
                     aria-label={active ? 'Stop' : 'Send'}
                     className={`inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0 ${tone}`}

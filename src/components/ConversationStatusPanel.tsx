@@ -58,7 +58,11 @@ const STATUS_DOT: Record<McpServerStatus, string> = {
   ready: 'bg-green-500',
   starting: 'bg-amber-500',
   failed: 'bg-red-500',
-  inactive: 'bg-red-500',
+  // 'inactive' = server intentionally disabled (not an error).
+  // Render it as a PALE slate to (a) avoid the red-error look and
+  // (b) stay visually distinguishable from 'task-only' which uses
+  // a darker slate (Franck 2026-05-28).
+  inactive: 'bg-slate-300 dark:bg-slate-700',
   'task-only': 'bg-slate-400 dark:bg-slate-600',
 };
 
@@ -89,17 +93,22 @@ function gaugeColor(p: number | null | undefined): string {
   return 'bg-red-500';
 }
 
-function triggerColor(p: number | null | undefined, allMcpReady: boolean): string {
-  // Color priority: critical context first, then MCP health, then
-  // neutral. This way an 87% context turns the icon red even if
-  // MCP is fine.
+function triggerColor(p: number | null | undefined, anyMcpFailed: boolean): string {
+  // Color priority (Franck 2026-05-28):
+  //   1. Context usage drives the gauge color first — an 87 % context
+  //      turns the icon red even if MCP is fine.
+  //   2. MCP only escalates to red when at least one server is
+  //      genuinely UNAVAILABLE ('failed'). A merely 'inactive'
+  //      (disabled by config) server must NOT trigger red — it is
+  //      an intentional opt-out, not an error.
+  //   3. Otherwise neutral/green.
   if (p !== null && p !== undefined && p >= 0.85) {
     return 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30';
   }
   if (p !== null && p !== undefined && p >= 0.6) {
     return 'text-amber-500 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30';
   }
-  if (!allMcpReady) {
+  if (anyMcpFailed) {
     return 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30';
   }
   return 'text-success-strong dark:text-green-400 hover:bg-success-subtle dark:hover:bg-green-950/30';
@@ -132,9 +141,11 @@ export function ConversationStatusPanel({
   const compactInitialRef = useRef<number | null>(null);
   const compactStartRef = useRef<number>(0);
 
-  const allMcpReady =
-    mcpServers.length > 0 &&
-    mcpServers.every((s) => s.status === 'ready' || s.status === 'task-only');
+  // Trigger goes red on MCP ONLY when at least one server is in a
+  // hard-failure state. 'inactive' (= disabled by config) is a
+  // benign opt-out and must not poison the gauge color
+  // (Franck 2026-05-28).
+  const anyMcpFailed = mcpServers.some((s) => s.status === 'failed');
 
   const refresh = useCallback(async () => {
     if (!conversationId) return;
@@ -280,7 +291,7 @@ export function ConversationStatusPanel({
         onClick={() => setOpen((o) => !o)}
         aria-label="Conversation status"
         aria-expanded={open}
-        className={`${buttonBaseClassName} ${triggerColor(percent, allMcpReady)}`}
+        className={`${buttonBaseClassName} ${triggerColor(percent, anyMcpFailed)}`}
       >
         <Gauge size={16} />
       </button>

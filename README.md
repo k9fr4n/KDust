@@ -2543,3 +2543,72 @@ User-visible URLs are unchanged. Bookmarks like
 the deletion commit suffices). The single-source body
 implementations are unchanged; the duplicated re-exports keep
 working as before. No data migration.
+
+### ADR-0022 — Skill par défaut, MCP sur dérogation (2026-05-28)
+
+**Status**: Accepted.
+
+**Context**. KDust intègre des capacités externes par deux
+mécanismes concurrents : un **MCP server** (Node, McpServer +
+DustMcpServerTransport, zod schemas, registry singleton,
+endpoint `/api/mcp/*-ensure`, ajout dans `_ChatClient.tsx` et
+`setup-mcp.ts`) ou un **skill** (dossier `skills/<scope>/<name>/`
+avec un `SKILL.md` + scripts exécutés via
+`run_skill_script`, secrets injectés via `TaskSecret` →
+`childEnv`).
+
+PasswordPusher avait été livré en MCP (commit du 2026-05-27)
+alors qu’il coche toutes les cases d’un skill : 3 endpoints REST
+stateless, aucun schema riche, aucune session, aucun streaming.
+La surface MCP — serveur Node, ensure-route, 4 sites
+`Promise.allSettled` dans le client chat, auto-register cron —
+était dispropor- tionnée au regard de la valeur fournie.
+
+**Decision**. Heuristique de choix d’intégration :
+
+| Critère | MCP justifié | Skill suffit |
+|---|---|---|
+| État partagé entre appels (pool, session, cache) | ✅ | ❌ |
+| `>5` endpoints corrélés avec schemas non triviaux | ✅ | ❌ |
+| Streaming / long-poll / sub-process persistant | ✅ | ❌ |
+| Réutilisation cross-agent dans plusieurs workspaces Dust | ✅ | ❌ |
+| HTTP stateless, `≤ 5` endpoints, exprimable en `curl + jq` | ❌ | ✅ |
+| Logique écrivable en bash ou un petit script Python stdlib | ❌ | ✅ |
+
+**Conséquences immédiates**.
+
+- Le MCP `passwordpusher` est supprimé :
+  `src/lib/mcp/passwordpusher-server.ts`,
+  `src/app/api/mcp/passwordpusher-ensure/`,
+  ainsi que tous ses sites d’appel (`registry.ts`,
+  `catalog.ts`, `setup-mcp.ts`, `_ChatClient.tsx`).
+- Un skill `pwpush` le remplace sous
+  `skills/kdust/pwpush/` (SKILL.md + `scripts/{create,preview,expire}.sh`).
+- Le Secret `PASSWORDPUSHER_TOKEN` reste inchangé dans la base.
+  Pour que le skill y accède, chaque task qui pousse un secret
+  doit déclarer un `TaskSecret` binding
+  `PASSWORDPUSHER_TOKEN → PASSWORDPUSHER_TOKEN`
+  (Option A du modèle least-privilege). En `/chat` (sans TaskRun),
+  le binding ne s’applique pas — utiliser l’UI PasswordPusher
+  directement.
+
+**Alternatives considérées**.
+
+- **Option B — `Secret.globalInject` boolean**. Ajouter un champ
+  booléen au modèle `Secret` pour permettre l’injection
+  inconditionnelle dans tous les `TaskRun`. Plus pratique mais
+  introduit une migration Prisma, une nouvelle sémantique UI et
+  une entorse au modèle least-privilege. **Reporté** : si la
+  friction du binding par task devient réelle, un ADR dédié
+  reprendra ce design.
+- **Option D — env container global**. Stocker le token comme
+  variable d’env du container (équivalent
+  `APP_ENCRYPTION_KEY`). Rejeté parce que le Secret Manager
+  reste l’autorité unique pour les credentials applicatifs.
+
+**Risques / suivi**.
+
+- Si une task qui consommait `pwpush_*` n’est pas migrée vers le
+  skill, son prochain run échouera silencieusement (tools
+  absents). À grep dans les prompts de Task au moment du déploy.
+- Pas de migration DB — rollback = `git revert`.

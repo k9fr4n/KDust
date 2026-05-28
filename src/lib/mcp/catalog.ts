@@ -93,24 +93,8 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
       { name: 'run_command', description: 'Spawn a shell command in the run cwd, with run-scoped env injection.' },
     ],
   },
-  {
-    // Franck 2026-05-27: PasswordPusher integration. Project-agnostic
-    // singleton server, attached to every chat session and every
-    // TaskRun. Token comes from the global Secret PASSWORDPUSHER_TOKEN.
-    id: 'passwordpusher',
-    name: 'passwordpusher',
-    description:
-      'Push secrets (passwords, tokens, snippets) to the self-hosted ' +
-      'PasswordPusher instance and return a one-shot retrieval URL. ' +
-      'Defaults: expire after 7 days OR 1 view, with retrieval-step ' +
-      'on to defeat URL scanners.',
-    scope: 'chat',
-    tools: [
-      { name: 'pwpush_create',  description: 'Create a new push; returns secret_url.' },
-      { name: 'pwpush_preview', description: 'Re-fetch the secret URL for an existing url_token (no view consumed).' },
-      { name: 'pwpush_expire',  description: 'Expire a push before its natural expiration.' },
-    ],
-  },
+  // passwordpusher MCP entry removed 2026-05-28. Replaced by the
+  // `pwpush` skill (skills/kdust/pwpush/), see ADR in README.md.
   {
     // ADR-0016 (2026-05-12): KDust skills library. Filesystem-first
     // capabilities under /app/skills/<name>/SKILL.md, exposed via

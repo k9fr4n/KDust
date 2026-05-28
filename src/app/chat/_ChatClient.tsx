@@ -2037,17 +2037,16 @@ function ChatPageInner({
             <textarea
               ref={textareaRef}
               className="w-full bg-transparent border-0 outline-none resize-none leading-relaxed text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 px-0 py-0"
-              rows={2}
+              rows={1}
               // The height is driven by `autoResize` (see useLayoutEffect
               // on `draft`). max-height is set inline because tailwind's
               // max-h-[Xpx] works but duplicating the constant here
               // keeps the JS ceiling and the CSS ceiling in sync.
-              // minHeight 3rem (~48px ~ 2 lines of leading-relaxed)
-              // gives the composer a comfortable two-line rest height
-              // \u2014 claude.ai uses a similar baseline. The action row
-              // below has its own height (h-8), so the card no longer
-              // needs to match a stacked button column.
-              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '3rem' }}
+              // minHeight 1.75rem keeps the composer compact: one
+              // text line + the action row below = two visible rows
+              // total (Franck 2026-05-28). autoResize still grows the
+              // textarea as the user types up to TEXTAREA_MAX_PX.
+              style={{ maxHeight: TEXTAREA_MAX_PX, minHeight: '1.75rem' }}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onInput={autoResize}
@@ -2141,44 +2140,44 @@ function ChatPageInner({
                 <Paperclip size={16} />
               </button>
 
-              {/* Agent picker. Native <select> kept on purpose: it's
-                  cheap, accessible, and matches the existing chrome.
+              {/* Agent picker. Claude.ai-style pill next to the
+                  paperclip, with a tinted background that matches
+                  the send button family so it reads as a control,
+                  not as static text (Franck 2026-05-28).
                   Once a conversation exists, the agent is pinned by
                   Dust at creation time, so the picker degrades to a
-                  read-only label (the previous toolbar did the same).
-                  `flex-1 min-w-0` lets the picker absorb the
-                  horizontal slack between paperclip and send, with
-                  truncate kicking in for long agent names. */}
-              <div className="flex-1 min-w-0 flex justify-center">
-                {currentId ? (
-                  <span
-                    className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400 truncate"
-                    title={agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
-                  >
-                    {agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
-                  </span>
-                ) : (
-                  <select
-                    value={agentSId}
-                    onChange={(e) => {
-                      setAgentSId(e.target.value);
-                      setAgentPickedBy('user');
-                    }}
-                    aria-label="Select agent"
-                    className="max-w-full bg-transparent text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer outline-none rounded px-2 py-1 hover:bg-slate-200/60 dark:hover:bg-slate-700/40 transition-colors truncate"
-                  >
-                    {agents.map((a) => (
-                      <option
-                        key={a.sId}
-                        value={a.sId}
-                        className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
-                      >
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
+                  read-only pill (same chrome, no select). */}
+              {currentId ? (
+                <span
+                  className="inline-flex items-center max-w-[40%] px-3 py-1 rounded-full text-xs font-medium bg-brand-600 text-white truncate"
+                  title={agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
+                >
+                  {agents.find((a) => a.sId === agentSId)?.name ?? 'Agent'}
+                </span>
+              ) : (
+                <select
+                  value={agentSId}
+                  onChange={(e) => {
+                    setAgentSId(e.target.value);
+                    setAgentPickedBy('user');
+                  }}
+                  aria-label="Select agent"
+                  className="max-w-[40%] px-3 py-1 rounded-full text-xs font-medium bg-brand-600 text-white hover:bg-brand-700 cursor-pointer outline-none transition-colors truncate"
+                >
+                  {agents.map((a) => (
+                    <option
+                      key={a.sId}
+                      value={a.sId}
+                      className="bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Spacer pushes send button to the right edge. */}
+              <div className="flex-1 min-w-0" />
 
               {(() => {
                 // Send / Stop morphing button.

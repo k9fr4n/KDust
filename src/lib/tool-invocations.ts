@@ -41,7 +41,19 @@ export function parseToolInvocations(
 export type TimelineEvent =
   | { type: 'text'; content: string }
   | { type: 'cot'; content: string }
-  | { type: 'tool'; tool: string; params: unknown };
+  | {
+      type: 'tool';
+      tool: string;
+      params: unknown;
+      /**
+       * Tool execution output (Franck 2026-05-28). Best-effort text
+       * representation of the MCP `agent_action_success.action.output`
+       * payload (concatenated text blocks, capped at 5 KB upstream).
+       * Null/absent when the action has not finished yet or produced
+       * no output. Surfaced in the bottom-sheet detail view in /chat.
+       */
+      result?: string | null;
+    };
 
 /**
  * Best-effort parser for `Message.timeline`. Returns [] on null /
@@ -66,7 +78,14 @@ export function parseTimeline(
       } else if (ev.type === 'cot' && typeof ev.content === 'string') {
         out.push({ type: 'cot', content: ev.content });
       } else if (ev.type === 'tool' && typeof ev.tool === 'string') {
-        out.push({ type: 'tool', tool: ev.tool, params: ev.params ?? null });
+        const result =
+          typeof ev.result === 'string' ? ev.result : null;
+        out.push({
+          type: 'tool',
+          tool: ev.tool,
+          params: ev.params ?? null,
+          result,
+        });
       }
     }
     return out;
@@ -94,4 +113,31 @@ export function appendTimelineEvent(
     return next;
   }
   return [...events, ev];
+}
+
+/**
+ * Attach a tool execution result to the most recent matching `tool`
+ * event lacking one (Franck 2026-05-28). Used by the SSE `tool_result`
+ * handler — the wire format only carries `{tool, result}` because we
+ * don't track the MCP actionId on the client; matching on
+ * "last-of-name-without-result" is sufficient because Dust emits
+ * `agent_action_success` in execution order and we record one
+ * timeline `tool` event per action. No-op when no match is found
+ * (e.g. result frame arrives before the tool frame was wired in —
+ * defensive, not expected). Pure function — returns a new array.
+ */
+export function attachToolResult(
+  events: TimelineEvent[],
+  tool: string,
+  result: string,
+): TimelineEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === 'tool' && ev.tool === tool && (ev.result ?? null) === null) {
+      const next = events.slice();
+      next[i] = { ...ev, result };
+      return next;
+    }
+  }
+  return events;
 }

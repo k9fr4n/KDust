@@ -15,6 +15,7 @@ import {
   appendStreamToolCall,
   setStreamGeneratedFiles,
   appendStreamTimelineEvent,
+  attachStreamToolResult,
   isStreaming,
 } from '@/lib/chat/active-streams';
 
@@ -127,6 +128,23 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
                     tool: parsed.tool,
                     params: parsed.params ?? null,
                   });
+                }
+              } catch {
+                /* malformed — already counted on the live path */
+              }
+            } else if (kind === 'tool_result') {
+              // Mirror the result into the replay timeline so passive
+              // observers (other tab, reopened chat) see the same
+              // bottom-sheet content as the live consumer
+              // (Franck 2026-05-28).
+              try {
+                const parsed = JSON.parse(data);
+                if (
+                  parsed &&
+                  typeof parsed.tool === 'string' &&
+                  typeof parsed.result === 'string'
+                ) {
+                  attachStreamToolResult(id, parsed.tool, parsed.result);
                 }
               } catch {
                 /* malformed — already counted on the live path */

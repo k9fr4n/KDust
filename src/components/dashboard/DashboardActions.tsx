@@ -1,12 +1,15 @@
 'use client';
 
 // ---------------------------------------------------------------
-// <DashboardActions> — scope-level destructive action at the top
-// of the dashboard (ADR-0022). Renders only "Delete this
-// folder/project". The "+ Folder" / "+ Project" buttons live in
-// <DashboardCreateChips> and are rendered at the END of the
-// children list so they read as trailing chips next to the
-// existing folders/projects (Franck 2026-05-27).
+// <DashboardActions> — scope-level destructive action rendered as
+// a trailing chip in the children flex row, right after the
+// "+ New folder" / "+ New project" create chips (Franck
+// 2026-05-28). Originally lived at the top of the dashboard
+// (ADR-0022); moved into the chips row so the destructive button
+// reads last, after the safer create actions, instead of
+// floating above the folder/project grid. Returns a bare
+// <button> so it composes inside the parent flex-wrap without an
+// extra wrapper div.
 // ---------------------------------------------------------------
 
 import { useRouter } from 'next/navigation';
@@ -68,16 +71,14 @@ export function DashboardActions({ scope }: { scope: Scope }) {
     'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm';
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onClick={() => void deleteCurrent()}
-        disabled={deleting}
-        className={btnDanger}
-      >
-        <Trash2 size={14} /> Delete this {scope.kind}
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={() => void deleteCurrent()}
+      disabled={deleting}
+      className={btnDanger}
+    >
+      <Trash2 size={14} /> Delete this {scope.kind}
+    </button>
   );
 }
 

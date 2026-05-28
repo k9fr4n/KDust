@@ -251,7 +251,15 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
     <div className="space-y-6">
       <PageHeader icon={<FolderGit2 size={20} />} title="Dashboard" />
       <ScopePath fsPath={scope.fsPath} />
-      <DashboardActions scope={actionsScope} />
+      {/* Project-leaf scope has no children section below, so the
+          destructive "Delete this project" button stays at the top
+          for that case. For folder scope it's rendered as a trailing
+          chip after "+ New project" (Franck 2026-05-28). */}
+      {actionsScope.kind === 'project' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <DashboardActions scope={actionsScope} />
+        </div>
+      )}
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -287,6 +295,10 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             )}
             {/* Trailing "+ New folder" / "+ New project" chips (Franck 2026-05-27) */}
             <DashboardCreateChips scope={actionsScope} />
+            {/* Destructive "Delete this folder" chip — rendered last
+                so it reads as the trailing action of the row
+                (Franck 2026-05-28). */}
+            <DashboardActions scope={actionsScope} />
           </div>
         </section>
       )}

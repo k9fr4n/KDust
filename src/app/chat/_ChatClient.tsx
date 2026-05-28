@@ -26,15 +26,18 @@ import {
   Send,
   Square,
   Trash2,
-  Wrench,
   Pin,
   PinOff,
   Check,
   Paperclip,
   X as XIcon,
   Loader2,
-  ExternalLink,
 } from 'lucide-react';
+import {
+  ConversationStatusPanel,
+  type McpServerStatus,
+  type McpServerView,
+} from '@/components/ConversationStatusPanel';
 
 type Agent = { sId: string; name: string };
 type ConvSummary = {
@@ -1589,29 +1592,21 @@ function ChatPageInner({
   // make future drift impossible to introduce by accident.
   const ACTION_BTN_BASE =
     'inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors';
-  const ACTION_BTN_NEUTRAL =
-    `${ACTION_BTN_BASE} text-slate-500 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800`;
   const pageActions = usePageActions(
     <>
-      {/* MCP tools status indicator. Stateless from React's POV
-          (CSS hover tooltip), so safe to re-create on each render. */}
-      {currentProject && (() => {
-        type Status = 'ready' | 'starting' | 'failed' | 'inactive' | 'task-only';
-        const STATUS_LABEL: Record<Status, string> = {
-          ready: 'ready',
-          starting: 'starting\u2026',
-          failed: 'failed',
-          inactive: 'inactive',
-          'task-only': 'task-only',
-        };
-        const STATUS_DOT: Record<Status, string> = {
-          ready: 'bg-green-500',
-          starting: 'bg-amber-500',
-          failed: 'bg-red-500',
-          inactive: 'bg-red-500',
-          'task-only': 'bg-slate-400 dark:bg-slate-600',
-        };
-        const statusFor = (id: string, scope: 'chat' | 'task'): Status => {
+      {/* Conversation status panel (Franck 2026-05-28). Replaces the
+          legacy "MCP tools" hover tooltip + the standalone Open-in-Dust
+          button. Combines:
+            1. Live Dust context-usage gauge + Compact button
+            2. Open-in-Dust link (moved into the panel)
+            3. Condensed MCP servers status
+          Click to open; click-outside / Escape to close. Mobile
+          layout is a full-width bandeau under the topbar. */}
+      {(() => {
+        const statusFor = (
+          id: string,
+          scope: 'chat' | 'task',
+        ): McpServerStatus => {
           if (scope === 'task') return 'task-only';
           if (id === 'fs') {
             if (mcpStatus === 'ready') return 'ready';
@@ -1629,76 +1624,23 @@ function ChatPageInner({
           { id: 'fs', name: 'fs', description: '', scope: 'chat' as const, tools: [] },
           { id: 'task-runner', name: 'task-runner', description: '', scope: 'chat' as const, tools: [] },
         ];
-        const chatScoped = catalog.filter((c) => c.scope === 'chat');
-        const allReady = chatScoped.length > 0 && chatScoped.every((c) => statusFor(c.id, c.scope) === 'ready');
+        const mcpServers: McpServerView[] = catalog
+          .filter((c) => c.scope === 'chat')
+          .map((c) => ({
+            id: c.id,
+            name: c.name,
+            status: statusFor(c.id, c.scope),
+          }));
+        const conv = currentId ? convs.find((c) => c.id === currentId) : null;
         return (
-          <div className="relative group">
-            <span
-              className={`${ACTION_BTN_BASE} ${
-                allReady
-                  ? 'text-success-strong dark:text-green-400 hover:bg-success-subtle dark:hover:bg-green-950/30'
-                  : 'text-danger-strong dark:text-red-400 hover:bg-danger-subtle dark:hover:bg-red-950/30'
-              }`}
-              aria-label={`MCP tools ${allReady ? 'all ready' : 'partial'}`}
-            >
-              <Wrench size={16} />
-            </span>
-            <div
-              role="tooltip"
-              className="pointer-events-none group-hover:pointer-events-auto absolute right-0 top-full z-50 w-96 origin-top-right scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-lg p-3 text-xs space-y-3 max-h-[70vh] overflow-y-auto"
-            >
-              <p className="font-semibold text-slate-800 dark:text-slate-100">
-                MCP tools{mcpCatalog === null ? ' (loading\u2026)' : ''}
-              </p>
-              {catalog.map((c) => {
-                const st = statusFor(c.id, c.scope);
-                return (
-                  <div key={c.id}>
-                    <p className="font-medium flex items-center gap-1.5">
-                      <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[st]}`} />
-                      <span className="font-mono">{c.name}</span>
-                      <span className="text-slate-500 dark:text-slate-400">&mdash; {STATUS_LABEL[st]}</span>
-                    </p>
-                    {c.description && (
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">{c.description}</p>
-                    )}
-                    {c.id === 'fs' && (
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 ml-3 mt-0.5">
-                        Project: <code className="font-mono">{currentProject}</code>
-                      </p>
-                    )}
-                    {c.tools.length > 0 && (
-                      <ul className="ml-3 mt-1 list-disc list-inside text-[11px] text-slate-600 dark:text-slate-300">
-                        {c.tools.map((t) => (
-                          <li key={t.name}>
-                            <code className="font-mono">{t.name}</code>
-                            {t.description && <span className="text-slate-500 dark:text-slate-500"> &mdash; {t.description}</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
-      {/* Open-in-Dust external link */}
-      {currentId && workspaceId && (() => {
-        const conv = convs.find((c) => c.id === currentId);
-        if (!conv?.dustConversationSId) return null;
-        return (
-          <a
-            href={`https://app.dust.tt/w/${workspaceId}/conversation/${conv.dustConversationSId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open in Dust"
-            aria-label="Open conversation in Dust"
-            className={ACTION_BTN_NEUTRAL}
-          >
-            <ExternalLink size={16} />
-          </a>
+          <ConversationStatusPanel
+            conversationId={currentId}
+            dustConversationSId={conv?.dustConversationSId ?? null}
+            workspaceId={workspaceId}
+            mcpServers={mcpServers}
+            projectName={currentProject}
+            buttonBaseClassName={ACTION_BTN_BASE}
+          />
         );
       })()}
       {/* "+ New chat" button removed from the topbar (Franck 2026-05-28).

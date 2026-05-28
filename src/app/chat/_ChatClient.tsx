@@ -2212,9 +2212,23 @@ function ChatPageInner({
                           : 'Send (Ctrl/Cmd+Enter)'
                     }
                     aria-label={active ? 'Stop' : 'Send'}
-                    className={`inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0 ${tone}`}
+                    className={`relative inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0 ${tone}`}
                   >
-                    {active ? <Square size={16} /> : <Send size={16} />}
+                    {/* "Thinking" indicator (Franck 2026-05-28):
+                        a pulsing ring around the button while the
+                        LLM is streaming, so the button reads as
+                        live/active without obscuring the stop glyph. */}
+                    {active && (
+                      <span
+                        aria-hidden="true"
+                        className={`pointer-events-none absolute inset-0 rounded-full animate-ping ${
+                          streaming ? 'bg-red-500/40' : 'bg-amber-400/40'
+                        }`}
+                      />
+                    )}
+                    <span className="relative inline-flex">
+                      {active ? <Square size={16} /> : <Send size={16} />}
+                    </span>
                   </button>
                 );
               })()}

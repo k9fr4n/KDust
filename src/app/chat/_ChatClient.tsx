@@ -2000,11 +2000,26 @@ function ChatPageInner({
               onChange={(e) => setDraft(e.target.value)}
               onInput={autoResize}
               onKeyDown={(e) => {
-                // Franck 2026-05-28: Enter inserts a newline (native
-                // textarea behavior). Submit on Cmd/Ctrl+Enter only,
-                // so multi-line drafts can be composed without an
-                // accidental send.
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                // Franck 2026-05-29: Enter behavior is device-aware.
+                // - Desktop (fine pointer / no touch): plain Enter
+                //   submits, Shift+Enter inserts a newline — classic
+                //   chat UX.
+                // - Mobile / touch devices (coarse pointer): plain
+                //   Enter inserts a newline (avoids fat-finger sends
+                //   on the on-screen keyboard's return key); only
+                //   Cmd/Ctrl+Enter submits.
+                // Cmd/Ctrl+Enter always submits on both.
+                if (e.key !== 'Enter') return;
+                // Ignore Enter while an IME composition is in flight
+                // (e.g. CJK input). nativeEvent carries the flag.
+                if (e.nativeEvent.isComposing) return;
+                const isTouch =
+                  typeof window !== 'undefined' &&
+                  window.matchMedia?.('(pointer: coarse)').matches;
+                const submitCombo = e.metaKey || e.ctrlKey;
+                const plainEnter = !e.shiftKey && !e.altKey && !submitCombo;
+                const shouldSubmit = submitCombo || (!isTouch && plainEnter);
+                if (shouldSubmit) {
                   e.preventDefault();
                   (e.target as HTMLTextAreaElement).form?.requestSubmit();
                 }
@@ -2158,7 +2173,7 @@ function ChatPageInner({
                         ? 'Stop streaming'
                         : serverStreaming
                           ? 'Stop the background stream'
-                          : 'Send (Ctrl/Cmd+Enter)'
+                          : 'Send (Enter on desktop, Ctrl/Cmd+Enter on mobile)'
                     }
                     aria-label={active ? 'Stop' : 'Send'}
                     className={`relative inline-flex items-center justify-center h-8 w-8 rounded-full transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0 ${tone}`}

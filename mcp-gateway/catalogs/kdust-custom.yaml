@@ -171,8 +171,8 @@ registry:
     # `save.sh --from-file` in the kdust/thruk-monitoring-report skill.
     # DO NOT re-add `volumes:` or `THRUK_MCP_WORKDIR` here.
     # Tools enumerated because --servers= disables dynamic discovery.
-    # Captured 2026-05-29 from thruk-mcp v1.6.1 (catalog/tools.json) —
-    # 50 tools total (was 43 in v1.4.0). Refresh after every minor
+    # Captured 2026-05-30 from thruk-mcp v1.7.0 via stdio tools/list probe —
+    # 52 tools total (was 50 in v1.6.1). Refresh after every minor
     # bump; if the gateway reports a different count, mismatched
     # image cache (run `docker pull ghcr.io/k9fr4n/thruk-mcp:latest`).
     #
@@ -187,6 +187,9 @@ registry:
     #                     - thruk_problems_by_hostgroup (ghost tool,
     #                       never implemented upstream; superseded by
     #                       thruk_problem_counts)
+    #   v1.7.0 (+2): + thruk_notification_heatmap,
+    #                + thruk_notification_summary (read-only
+    #                  notification analytics, mirror alert_heatmap)
     tools:
       # read — state (10)
       - name: thruk_list_hosts
@@ -224,6 +227,9 @@ registry:
       - name: thruk_alert_heatmap
       - name: thruk_concurrent_failures
       - name: thruk_recurring_problems
+      # read — notification analytics (2) — added v1.7.0 (2026-05-30)
+      - name: thruk_notification_heatmap
+      - name: thruk_notification_summary
       # read — availability / SLA (3) — added v1.4 (2026-05-25)
       - name: thruk_host_availability
       - name: thruk_service_availability

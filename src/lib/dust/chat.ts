@@ -618,6 +618,55 @@ export function timelineToJson(
   return out;
 }
 
+import type { DustAPI } from '@dust-tt/client';
+
+/**
+ * Wraps streamAgentAnswerEvents with retry logic targeting the SSE
+ * 404 redirect bug (dust-tt/dust#26472 — double /api prefix in
+ * front-api/lib/api/sse/redirect.ts). The bug causes a 404 on the
+ * event-stream request AFTER the message is successfully created.
+ *
+ * Retries up to 3 times with short delays (200ms, 500ms, 1000ms).
+ * Only retries on status 404 — all other errors bubble immediately.
+ *
+ * Can be removed once dust-tt/dust#26513 is merged and deployed.
+ */
+async function streamAgentAnswerEventsWithRetry(
+  client: DustAPI,
+  args: Parameters<DustAPI['streamAgentAnswerEvents']>[0],
+) {
+  const SSE_RETRY_DELAYS = [200, 500, 1000];
+  let lastResult: Awaited<ReturnType<DustAPI['streamAgentAnswerEvents']>> | null = null;
+
+  for (let attempt = 0; attempt <= SSE_RETRY_DELAYS.length; attempt++) {
+    const result = await client.streamAgentAnswerEvents(args);
+
+    // Success — return immediately.
+    if (!result.isErr()) return result;
+
+    const err = result.error as { status?: number; message?: string };
+    const is404 =
+      err?.status === 404 ||
+      /status_code=404|404/i.test(err?.message ?? '');
+
+    // Not a 404 (auth error, 5xx, etc.) — fail fast, no retry.
+    if (!is404 || attempt === SSE_RETRY_DELAYS.length) {
+      return result;
+    }
+
+    const delay = SSE_RETRY_DELAYS[attempt];
+    console.warn(
+      `[chat/stream] SSE event stream 404 (dust#26472 workaround) — ` +
+        `attempt ${attempt + 1}/${SSE_RETRY_DELAYS.length + 1}, retrying in ${delay}ms`,
+    );
+    await new Promise((r) => setTimeout(r, delay));
+    lastResult = result;
+  }
+
+  // Unreachable but satisfies TypeScript.
+  return lastResult!;
+}
+
 /**
  * Stream the agent's events in response to a user message. Calls
  * `onToken` for every text delta and returns the final, fully
@@ -661,11 +710,10 @@ export async function streamAgentReply(
   const ctx = await getDustClient();
   if (!ctx) throw new Error('Dust not connected');
 
-  const streamRes = await ctx.client.streamAgentAnswerEvents({
-    conversation,
-    userMessageId: userMessageSId,
-    signal,
-  });
+  const streamRes = await streamAgentAnswerEventsWithRetry(
+    ctx.client,
+    { conversation, userMessageId: userMessageSId, signal },
+  );
   if (streamRes.isErr())
     throw new Error(`Dust streamAgentAnswerEvents: ${errMessage(streamRes.error)}`);
 

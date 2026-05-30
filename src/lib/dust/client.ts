@@ -3,6 +3,9 @@ import { jwtDecode } from 'jwt-decode';
 import { loadTokens, saveTokens } from './tokens';
 import { refreshTokens } from './workos';
 import { resolveDustUrl } from './region';
+import { applyDustFetchPatch } from './fetchPatch';
+
+applyDustFetchPatch();
 
 /**
  * Impersonation of the official Dust CLI.

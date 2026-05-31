@@ -1,37 +1,44 @@
 ---
 name: thruk-monitoring-report
 description: |
-  Generate a deterministic HTML monitoring report from Thruk
-  data and send it by email. The agent collects pre-aggregated
-  JSON from the read-only `thruk_*` MCP tools (v1.6.1 — totals,
-  problem_counts, host/service/hostgroup availability included),
-  hands each response verbatim to `scripts/save.sh`, then
-  invokes `scripts/render.py` (pure-Python, stdlib only) to
-  format the dumps into a fixed HTML template, and finally
-  delivers it via the `ews-mcp` `send_email` MCP tool (Exchange
-  Web Services — no more local SMTP). Use this skill for any
-  Thruk "daily alerts digest" task (Windows / Linux / network /
-  …); the perimeter is parameterised by hostgroup + custom_var
-  so the same skill serves multiple scopes. Read this skill
-  BEFORE composing a Thruk report by hand.
+  Generate a deterministic HTML monitoring report from Thruk and
+  send it by email. The agent collects pre-aggregated JSON from the
+  read-only `thruk_*` MCP tools — focused on the AVAILABILITY/SLA,
+  ANALYTICS and PROBLEM-INTELLIGENCE families (thruk-mcp v1.8.0) —
+  hands each response verbatim to `scripts/save.sh`, then runs
+  `scripts/render.py` (pure-Python, stdlib only) to format the dumps
+  into a fixed 3-family HTML template, and finally delivers it via
+  the `ews-mcp` `send_email` tool (Exchange Web Services). Use this
+  skill for any Thruk monitoring digest (Windows / Linux / network /
+  …); the perimeter is parameterised by hostgroup and/or custom_var
+  so the same skill serves multiple scopes. Read this skill BEFORE
+  composing a Thruk report by hand.
 whenToUse: |
   When a task asks for a scheduled or on-demand Thruk monitoring
-  digest (analytics + open problems + notifications) restricted
-  to a perimeter (hostgroup and/or custom_vars KERNEL=…) and
-  delivered as an HTML email. Always prefer this skill over
-  composing the HTML inline in the run output — the template
-  here is byte-stable across runs, which is the whole point.
+  digest (SLA/availability + sliding-window analytics + open
+  problems) restricted to a perimeter (hostgroup and/or custom_vars
+  KERNEL=…) and delivered as an HTML email. Always prefer this skill
+  over composing the HTML inline — the renderer is byte-stable across
+  runs given the same inputs, which is the whole point.
 ---
 
 # Thruk monitoring report
 
-Deterministic Thruk → HTML email pipeline. The agent only
-orchestrates MCP calls and shell commands; **all aggregation is
-done by `thruk-mcp` server-side** (v1.6.1), and the HTML
-formatting is done by a single schema-agnostic Python renderer.
-The final delivery hop is the `ews-mcp` `send_email` tool — no
-local SMTP relay anymore. Two runs with the same inputs produce
-the same report byte-for-byte.
+Deterministic Thruk → HTML email pipeline. The agent only orchestrates
+MCP calls and shell commands; **all aggregation is done by `thruk-mcp`
+server-side** (v1.8.0), and the HTML formatting is done by a single
+schema-aware Python renderer. Final delivery is the `ews-mcp`
+`send_email` tool. Same inputs ⇒ same report.
+
+This v2 rewrite is built almost entirely from three read-only tool
+families:
+
+- **Problem intelligence** (current state): which problems are open,
+  unacked, old, or silently broken.
+- **Analytics** (sliding window over the log): noise, storms,
+  flapping, recurrence, notifications, reliability (MTTR/MTBF).
+- **Availability / SLA & performance**: uptime % per host/service and
+  metrics about to breach their warn/crit threshold.
 
 ## Pipeline
 
@@ -45,67 +52,108 @@ LLM ── thruk_* MCP calls ─▶ save.sh ── /tmp/thruk-report/*.json
                               cat report.html → ews-mcp send_email
 ```
 
-## Sections of the report (fixed order)
+Every analytics / availability / problem-intelligence tool returns an
+**envelope**: `{since, until, total_*, results:[...], _warning?}`.
+`save.sh` stores the response **verbatim**; `render.py` unwraps
+`results`, shows the envelope scalars (counts, window, group_by) as a
+one-line caption, and renders `_warning(s)` as an orange note — nothing
+is dropped.
 
-Each section corresponds to **one slot file** in
-`/tmp/thruk-report/`. `render.py` is auto-table: any
-list-of-dicts JSON becomes an HTML table whose columns mirror
-the keys returned by `thruk-mcp`. Missing slots render as
-"(slot non collecté)" — never a crash. **Order is locked by the
-`SECTIONS` list in `scripts/render.py` — if you add/remove a
-slot, update both this table and `SECTIONS` in the same commit.**
+## Sections of the report (fixed order, 3 families)
 
-| #  | Slot file                      | MCP tool                       | Note |
-|----|--------------------------------|--------------------------------|------|
-| 0  | `totals.json`                  | `thruk_totals`                 | v1.6.1 — compact host+service overview (16 fields) |
-| 1  | `hosts_perimeter.json`         | `thruk_list_hosts`             | host inventory of the scope |
-| 2  | `unacked_critical.json`        | `thruk_unacked_critical`       | CRIT/DOWN not acked for > N min |
-| 3  | `oldest_problems.json`         | `thruk_oldest_problems`        | unhandled problems by age asc |
-| 4  | `problem_counts.json`          | `thruk_problem_counts`         | v1.6.1 — replaces removed `thruk_problems_by_hostgroup` |
-| 5  | `notifications.json`           | `thruk_list_notifications`     | notifications on the window |
-| 6  | `alert_heatmap.json`           | `thruk_alert_heatmap`          | day × hour storm detection |
-| 7  | `concurrent_failures.json`     | `thruk_concurrent_failures`    | sliding-window multi-host outages |
-| 8  | `recurring_problems.json`      | `thruk_recurring_problems`     | chronic objects |
-| 9  | `noisy_hosts.json`             | `thruk_top_noisy_hosts`        | hosts ranked by alert count |
-| 10 | `noisy_services.json`          | `thruk_top_noisy_services`     | services ranked by alert count |
-| 11 | `flap_summary.json`            | `thruk_flap_summary`           | most state transitions |
-| 12 | `stale_acks.json`              | `thruk_stale_acks`             | acks older than N days |
-| 13 | `host_availability.json`       | `thruk_host_availability`      | v1.4 — host SLA % over the window |
-| 14 | `service_availability.json`    | `thruk_service_availability`   | v1.4 — service SLA % over the window |
-| 15 | `hostgroup_availability.json`  | `thruk_hostgroup_availability` | v1.4 — hostgroup-level SLA % |
+One **slot file** per row in `/tmp/thruk-report/`. Order + columns are
+locked by the `SECTIONS` list in `scripts/render.py` — if you add /
+remove / reorder a slot, update BOTH this table and `SECTIONS` in the
+same commit. Missing slots render as "(slot non collecté)", empty
+ones as "✓ (aucun)" — never a crash.
 
-`thruk_recent_events` is intentionally **NOT used** — the raw
-event timeline drowned the mail in 1000-row tables, and every
-useful angle is now exposed as a server-side aggregation.
+### Family A — Problem intelligence (current state)
+
+| Slot file              | MCP tool                  | Key params |
+|------------------------|---------------------------|-----------|
+| `problem_counts.json`  | `thruk_problem_counts`    | filter |
+| `unacked_critical.json`| `thruk_unacked_critical`  | filter, threshold_minutes=60 |
+| `oldest_problems.json` | `thruk_oldest_problems`   | filter, limit=20 |
+| `stale_acks.json`      | `thruk_stale_acks`        | filter, min_days=7 |
+| `stale_checks.json`    | `thruk_stale_checks`      | filter |
+
+### Family B — Analytics (sliding window)
+
+| Slot file                  | MCP tool                      | Key params |
+|----------------------------|-------------------------------|-----------|
+| `alert_heatmap.json`       | `thruk_alert_heatmap`         | filter, since, bucket |
+| `notification_heatmap.json`| `thruk_notification_heatmap`  | filter, since, bucket |
+| `noisy_hosts.json`         | `thruk_top_noisy_hosts`       | filter, since, limit=20 |
+| `noisy_services.json`      | `thruk_top_noisy_services`    | filter, since, limit=20 |
+| `recurring_problems.json`  | `thruk_recurring_problems`    | filter, since, min_alerts=5 |
+| `flap_summary.json`        | `thruk_flap_summary`          | filter, since, limit=20 |
+| `concurrent_failures.json` | `thruk_concurrent_failures`   | filter, since, min_hosts=3 |
+| `notification_summary.json`| `thruk_notification_summary`  | filter, since, group_by='host' |
+| `reliability_report.json`  | `thruk_reliability_report`    | filter, since='-7d', limit=50 |
+
+### Family C — Availability / SLA & performance
+
+| Slot file                    | MCP tool                       | Key params |
+|------------------------------|--------------------------------|-----------|
+| `host_availability.json`     | `thruk_hostgroup_availability` | hostgroup, type='hosts', timeperiod |
+| `service_availability.json`  | `thruk_hostgroup_availability` | hostgroup, type='services', timeperiod |
+| `perfdata_near_threshold.json`| `thruk_perfdata_near_threshold`| filter, within_percent=10, limit |
+
+> The two availability slots come from the SAME tool with a different
+> `type=`. `host_availability` rows carry `time_up_percent`,
+> `service_availability` rows carry `time_ok_percent` — the renderer
+> sorts each worst-first and caps to 50 rows. Do **not** use
+> `type='both'` into one slot (mixes the two column sets and the
+> 900+ row payload always spills).
+
+## Perimeter — one call, OR filter (no more `--merge`)
+
+thruk-mcp's structured `filter` tree supports **OR**, so a perimeter
+that is the UNION of a hostgroup and a custom_var is expressed in a
+**single** MCP call. The old two-call `--merge` dance is gone.
+
+```json
+{"type":"group","operator":"or","conditions":[
+  {"type":"leaf","field":"hostgroup","op":"eq","value":"HG_WINDOWS"},
+  {"type":"leaf","field":"custom_var","op":"eq","value":{"var":"KERNEL","val":"windows"}}
+]}
+```
+
+For a single-filter perimeter, use a bare leaf:
+`{"type":"leaf","field":"hostgroup","op":"eq","value":"HG_WINDOWS"}`.
+
+> **Availability exception**: `thruk_hostgroup_availability` takes a
+> `hostgroup` NAME, not a filter tree — it cannot express the
+> custom_var leg of a union. The SLA tables therefore cover the
+> hostgroup only. If the perimeter has custom_vars but no hostgroup,
+> skip the two availability slots (write nothing) and push a warning
+> into `meta.warnings`.
 
 ## Working directory
 
-`/tmp/thruk-report/` — scratch directory **inside the kdust
-container only** (no host bind mount). `save.sh init` wipes its
-contents (not the directory itself) before each run.
+`/tmp/thruk-report/` — scratch directory inside the kdust container.
+`save.sh init` wipes its CONTENTS (not the dir) before each run.
 
-If a large MCP response is spilled by the runtime, two shapes
-are possible:
-
-- A `thruk-mcp` handle: `{ "mode": "file", "saved_to":
-  "/tmp/thruk-report/…" }` (the file is already on disk because
-  the path is bind-mounted into the thruk-mcp child container).
-- A Dust `fil_*` reference (older fallback). Use
-  `export_fil_to_workdir(file_id,
-  dest_path=/tmp/thruk-report/…)` to materialise it first.
-
-In both cases, pass the resulting path to
-`save.sh <slot>.json --from-file <path>` instead of streaming
-through stdin.
+If a large MCP response is spilled by the runtime as a Dust `fil_*`
+reference, materialise it first with
+`export_fil_to_workdir(file_id, dest_path=/tmp/thruk-report/<slot>.raw.json)`
+then `save.sh <slot>.json --from-file /tmp/thruk-report/<slot>.raw.json`.
+Allowed `--from-file` roots: `/tmp/thruk-report`, `/tmp/kdust-fil-cache`,
+`/projects`, and relative `conversation/*` paths.
 
 ## Procedure for the agent
 
 ### 1. Decide the window (ISO-8601 UTC)
 
-- Monday → `since = now − 72 h` (covers Fri 07:05 → Mon 07:05),
-  `period_label='72h'`.
+- Monday → `since = now − 72 h`, `period_label='72h'`.
 - Tue–Fri → `since = now − 24 h`, `period_label='24h'`.
 - `until = now`.
+- The analytics tools also accept Thruk relative time (`-24h`,
+  `-72h`, `-7d`) directly in `since=` — use that; reserve the ISO
+  values for `meta` + availability `timeperiod`.
+- For availability, prefer the Thruk-native `timeperiod` shortcut
+  (`last24hours`, `lastweek`) over `since/until`.
+- `reliability_report` is best over a longer window (`since='-7d'`).
 
 ### 2. Initialise the workdir + meta
 
@@ -114,75 +162,46 @@ run_skill_script(
   skill='kdust/thruk-monitoring-report',
   command=['scripts/save.sh', 'init'],
   stdin=JSON.stringify({
-    scope_label: 'Windows',             # subject + header
-    hostgroup:   'HG_WINDOWS',          # or null
-    custom_vars: { KERNEL: 'windows' }, # or {}
-    since:       '<ISO UTC>',
-    until:       '<ISO UTC>',
-    period_label:'24h',                 # or '72h'
-    warnings:    []                     # filled by the agent if needed
+    scope_label:  'Windows',             # subject + header
+    hostgroup:    'HG_WINDOWS',          # or null
+    custom_vars:  { KERNEL: 'windows' }, # or {}
+    since:        '<ISO UTC>',
+    until:        '<ISO UTC>',
+    period_label: '24h',                 # or '72h'
+    warnings:     []                     # agent appends caveats here
   })
 )
 ```
 
-### 3. Collect each section
+### 3. Collect each slot
 
-For every row in the table above, call the matching MCP tool
-and persist the response with:
+For every row in the tables above: call the MCP tool with the OR
+filter (or hostgroup name for availability) and persist verbatim:
 
 ```
-scripts/save.sh <slot>.json                  # stdin = MCP response array
+scripts/save.sh <slot>.json                  # stdin = MCP response
 scripts/save.sh <slot>.json --from-file <p>  # large response spilled to <p>
 ```
 
-#### Union rule (perimeter = hostgroup ∪ custom_vars)
+Typical calls (perimeter = HG_WINDOWS ∪ KERNEL=windows):
 
-⚠️ `thruk-mcp` combines `hostgroup` and `custom_vars` filters
-with **AND** at the `/hosts` pre-resolver stage. When the
-perimeter is a **union** (e.g. `HG_WINDOWS` ∪ `KERNEL=windows`),
-do **two MCP calls per section** and merge:
-
-```
-# call 1: hostgroup only
-save.sh <slot>.json
-# call 2: custom_vars only
-save.sh <slot>.json --merge
-```
-
-`--merge` does union + dedupe by canonical JSON of each record.
-If the perimeter is a single filter, one call is enough.
-
-#### Tool-specific window parameters (typical values)
-
-Most v1.1+ analytics accept a window via `hours=` or `since=`:
-
-- `thruk_totals(…)` (current state, no window)
-- `thruk_unacked_critical(min_age_minutes=15, …)`
-- `thruk_oldest_problems(limit=20, …)`
-- `thruk_problem_counts(…)` (v1.6.1 — current state, group_by='hostgroup', no window)
-- `thruk_list_notifications(since=<ISO>, limit=500, …)`
-- `thruk_alert_heatmap(hours=<24|72>, …)`
-- `thruk_concurrent_failures(hours=<24|72>, threshold=3, …)`
-- `thruk_recurring_problems(hours=<24|72>, min_occurrences=3, …)`
-- `thruk_top_noisy_hosts(hours=<24|72>, limit=20, …)`
-- `thruk_top_noisy_services(hours=<24|72>, limit=20, …)`
-- `thruk_flap_summary(hours=<24|72>, limit=20, …)`
-- `thruk_stale_acks(min_age_days=7, …)`
-- `thruk_host_availability(since=<ISO>, until=<ISO>, …)` — v1.4
-- `thruk_service_availability(since=<ISO>, until=<ISO>, …)` — v1.4
-- `thruk_hostgroup_availability(hostgroup=…, since=<ISO>, until=<ISO>, …)` — v1.4
-
-Always include either `hostgroup=` or `custom_vars={…}` (one
-per call — see union rule). For the perimeter inventory:
-`thruk_list_hosts(columns='name', limit=10000, hostgroup=…)`.
-
-> **Availability slots gotcha**: `thruk_host_availability` and
-> `thruk_service_availability` are per-object queries — call
-> them in batch for the scoped host list (slot 1 output) and
-> persist a flat list-of-dicts. `thruk_hostgroup_availability`
-> takes the hostgroup name directly; when the perimeter is
-> custom_vars-only and there is no canonical hostgroup, skip
-> slot 15 and write `[]` to keep the renderer happy.
+- `thruk_problem_counts(filter=<OR>)`
+- `thruk_unacked_critical(filter=<OR>, threshold_minutes=60)`
+- `thruk_oldest_problems(filter=<OR>, limit=20)`
+- `thruk_stale_acks(filter=<OR>, min_days=7)`
+- `thruk_stale_checks(filter=<OR>)`
+- `thruk_alert_heatmap(filter=<OR>, since='-24h', bucket='1h')`
+- `thruk_notification_heatmap(filter=<OR>, since='-24h', bucket='1h')`
+- `thruk_top_noisy_hosts(filter=<OR>, since='-24h', limit=20)`
+- `thruk_top_noisy_services(filter=<OR>, since='-24h', limit=20)`
+- `thruk_recurring_problems(filter=<OR>, since='-24h', min_alerts=5)`
+- `thruk_flap_summary(filter=<OR>, since='-24h', limit=20)`
+- `thruk_concurrent_failures(filter=<OR>, since='-24h', min_hosts=3)`
+- `thruk_notification_summary(filter=<OR>, since='-24h', group_by='host')`
+- `thruk_reliability_report(filter=<OR>, since='-7d', limit=50)`
+- `thruk_hostgroup_availability(hostgroup='HG_WINDOWS', type='hosts', timeperiod='last24hours')` → `host_availability.json`
+- `thruk_hostgroup_availability(hostgroup='HG_WINDOWS', type='services', timeperiod='last24hours')` → `service_availability.json`
+- `thruk_perfdata_near_threshold(filter=<OR>, within_percent=10, limit=200)`
 
 ### 4. Render the HTML
 
@@ -193,43 +212,18 @@ run_skill_script(
 )
 ```
 
-`render.py` is **schema-agnostic** — each slot is rendered as
-an auto-table whose columns are the keys returned by the MCP
-tool. No section-specific code, no aggregation. Stdout = a
-one-line summary with row counts per slot.
+Stdout = a one-line summary with row counts per slot (`NA` = slot not
+collected). The HTML lands at `/tmp/thruk-report/report.html`.
 
-### 5. Send the email (via `ews-mcp`, Exchange Web Services)
+### 5. Send the email (via `ews-mcp`)
 
-The legacy `send_mail.py` (SMTP `mailing.ecritel.net:25`) has
-been removed. Delivery now goes through the `ews-mcp` MCP server
-already wired into the gateway. The mailbox bound to the
-`ews-mcp.email` secret in `/settings/mcp` is the `From:` — there
-is no override knob; the report is always sent as that user
-(currently `fsallet@ecritel.net`).
-
-Three steps:
-
-1. **Read the rendered HTML** from inside the kdust container:
-
-   ```
-   run_command(cat /tmp/thruk-report/report.html)
-   ```
-
-   (or any equivalent FS read). Cap the output: the report is
-   typically 30-200 KB — well under the MCP tool body cap. If
-   it ever overflows, trim columns in `render.py`, do NOT
-   truncate at the agent level (would break the auto-table).
-
-2. **Build the subject** from `meta.json`:
-
-   ```
-   [Monitoring <scope_label>] Rapport alertes <period_label> — <YYYY-MM-DD>
-   ```
-
-   (UTC date is fine — matches what the old `send_mail.py` did.)
-
-3. **Call `send_email`** (ews-mcp tool, exposed via the gateway):
-
+1. Read the HTML: `run_command(cat /tmp/thruk-report/report.html)`.
+   Typically 30–200 KB — well under the tool body cap. If it ever
+   overflows, lower `MAX_ROWS_PER_SECTION` / `limit=`, never truncate
+   at the agent level.
+2. Build the subject from `meta.json`:
+   `[Monitoring <scope_label>] Rapport <period_label> — <YYYY-MM-DD>`
+3. Call `send_email`:
    ```
    send_email(
      to:          ["fsallet@ecritel.net"],
@@ -239,56 +233,45 @@ Three steps:
      importance:  "Normal"
    )
    ```
-
-   Do **not** set `target_mailbox` — the default bound mailbox
-   is the right `From:`. Do **not** add a plain-text alternative
-   from the agent side; `ews-mcp` handles MIME shaping. Do
-   **not** attach `report.html` as a file — the HTML IS the
-   body.
-
-Return shape on success is `{ message_id: "<EWS id>", ... }`.
-Surface that id in the run output for traceability.
+   Do **not** set `target_mailbox` (the bound mailbox is the right
+   From:), do **not** add a plain-text part, do **not** attach the
+   HTML as a file — the HTML IS the body. Surface the returned
+   `message_id` in the run output.
 
 ## Read-only contract
 
-This skill never calls `thruk_acknowledge`, `thruk_schedule_*`,
+This skill NEVER calls `thruk_acknowledge`, `thruk_schedule_*`,
 `thruk_recheck`, `thruk_remove_acknowledgement`, `thruk_delete_*`,
-or any other write tool. Keep it that way — the `Thruk-Report`
-task does not need write access.
+`thruk_checks`, `thruk_notifications`, or any other write tool. Keep
+it that way — the report task needs read access only.
 
 ## Caps & gotchas
 
-- `thruk-mcp` pre-resolver caps `/hosts` lookups at 1000
-  entries. If a perimeter exceeds 1000 hosts, push a warning
-  into `meta.warnings` so the report flags it, and open an
-  issue against thruk-mcp.
-- Large MCP responses → handle shape
-  `{"mode":"file","saved_to":…}` OR a Dust `fil_*` ref. Both
-  flow through `save.sh --from-file <path>`.
-- `save.sh init` wipes the workdir contents at the start of
-  each run; `saved_to` paths from previous runs are invalid.
-- Determinism: same JSON inputs ⇒ same `report.html` byte for
-  byte. If you see drift, the bug is in `render.py` — open an
-  issue, do **not** patch the task prompt.
+- Analytics tools cap the log scan at 10000 entries (`_warning` in the
+  envelope, rendered as an orange note). Narrow `since=` if you hit it.
+- `thruk_hostgroup_availability(type='both')` returns hosts+services
+  in one shot (900+ rows) and always spills — use two `type=` calls.
+- `save.sh init` wipes the workdir contents; `saved_to` / spill paths
+  from previous runs are invalid afterwards.
+- Determinism: same JSON inputs ⇒ same `report.html` (only
+  `meta.generated_at`, defaulted to now, varies — set it explicitly
+  for byte-stable output). If you see drift, the bug is in
+  `render.py`; open an issue, do not patch the task prompt.
 
 ## Failure modes
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `render.py` exits with `missing input: meta.json` | `save.sh init` not run | Run init first |
-| Section shows "(slot non collecté)" | Corresponding MCP call was skipped, or returned a non-list shape the auto-renderer rejected | Re-collect that slot, or write `[]` if the slot is irrelevant for the scope |
-| `save.sh --from-file: path does not exist` | Path is from a previous run, or `fil_*` not exported | Re-export with `export_fil_to_workdir`, re-run save.sh |
-| `send_email` returns auth error | `ews-mcp.password` rotated / expired | Re-bind the Secret in `/settings/mcp`, retry once |
-| `send_email` returns "mailbox not found" | `ews-mcp.email` secret unbound or wrong | Bind the user mailbox in `/settings/mcp`, retry |
+| `render.py` exits `missing input: meta.json` | `save.sh init` not run | Run init first |
+| Section shows "(slot non collecté)" | MCP call skipped | Collect that slot (or leave it — it is optional) |
+| Section shows "✓ (aucun)" | Tool returned an empty `results` | Nothing to do — healthy perimeter |
+| `save.sh: stdin is not valid JSON` | Streamed a non-JSON blob | Re-collect, or use `--from-file` for spilled payloads |
+| `--from-file: path outside allowed roots` | Spill landed elsewhere | Re-export with `export_fil_to_workdir` to `/tmp/thruk-report/` |
+| `send_email` auth / mailbox error | `ews-mcp` secret rotated / unbound | Re-bind the Secret in `/settings/mcp`, retry once |
 
 ## Extending the perimeter (Linux, network, …)
 
-Scope-agnostic by design. To add a new daily report:
-
-1. Create a Task with a short prompt that calls this skill with
-   `scope_label='Linux'`, `hostgroup='HG_LINUX'`,
-   `custom_vars={"KERNEL":"linux"}` (or similar).
-2. No skill code change needed.
-
-See `references/perimeters.md` for the current Ecritel
-perimeter conventions.
+Scope-agnostic by design. To add a report: create a Task whose prompt
+calls this skill with `scope_label`, `hostgroup` and/or `custom_vars`
+set for the scope. No skill code change needed. See
+`references/perimeters.md` for Ecritel perimeter conventions.

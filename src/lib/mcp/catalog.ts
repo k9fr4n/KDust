@@ -47,6 +47,8 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
     tools: [
       { name: 'read_file',      description: 'Read a file under the project root.' },
       { name: 'edit_file',      description: 'Replace an exact text snippet in a file.' },
+      { name: 'create_file',    description: 'Create a new file (overwrite opt-in).' },
+      { name: 'apply_patch',    description: 'Apply a multi-file *** Begin Patch envelope atomically.' },
       { name: 'search_files',   description: 'Glob over the project tree.' },
       { name: 'search_content', description: 'Grep (fixed-string) inside files.' },
       { name: 'run_command',    description: 'Spawn a shell command in the project root.' },

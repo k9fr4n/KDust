@@ -25,12 +25,15 @@ whenToUse: |
 # Thruk monitoring report
 
 Deterministic Thruk → HTML email pipeline. The agent only orchestrates
-MCP calls and shell commands; **all aggregation is done by `thruk-mcp`
-server-side** (v1.8.0), and the HTML formatting is done by a single
-schema-aware Python renderer. Final delivery is the `ews-mcp`
-`send_email` tool. Same inputs ⇒ same report.
+MCP calls and shell commands; aggregation is done by `thruk-mcp`
+server-side (v1.8.0) — the lone exception is a UNION perimeter on the
+log-based **analytics** family, which `thruk-mcp` cannot OR server-side,
+so `save.sh --merge` unions the two single-leaf responses (see
+Perimeter §). HTML formatting is done by a single schema-aware Python
+renderer. Final delivery is the `ews-mcp` `send_email` tool. Same
+inputs ⇒ same report.
 
-This v2 rewrite is built almost entirely from three read-only tool
+This skill is built almost entirely from three read-only tool
 families:
 
 - **Problem intelligence** (current state): which problems are open,
@@ -106,11 +109,16 @@ ones as "✓ (aucun)" — never a crash.
 > `type='both'` into one slot (mixes the two column sets and the
 > 900+ row payload always spills).
 
-## Perimeter — one call, OR filter (no more `--merge`)
+## Perimeter — OR where supported, two-call `--merge` for analytics
 
-thruk-mcp's structured `filter` tree supports **OR**, so a perimeter
-that is the UNION of a hostgroup and a custom_var is expressed in a
-**single** MCP call. The old two-call `--merge` dance is gone.
+thruk-mcp's `OR` filter support is **partial**, and the skill MUST
+follow it per family. A perimeter that is the UNION of a hostgroup and
+a custom_var is handled two different ways:
+
+### Families A (problem-intelligence) & C-perfdata → single OR call
+
+These tools accept an `OR` filter tree and de-duplicate server-side, so
+the union is **one** MCP call (one `save.sh <slot>`):
 
 ```json
 {"type":"group","operator":"or","conditions":[
@@ -119,8 +127,36 @@ that is the UNION of a hostgroup and a custom_var is expressed in a
 ]}
 ```
 
-For a single-filter perimeter, use a bare leaf:
-`{"type":"leaf","field":"hostgroup","op":"eq","value":"HG_WINDOWS"}`.
+Slots using the OR call: `problem_counts`, `unacked_critical`,
+`oldest_problems`, `stale_acks`, `stale_checks`,
+`perfdata_near_threshold`.
+
+### Family B (log-based analytics) → two single-leaf calls + `--merge`
+
+The 9 analytics tools **reject** an `OR` on `hostgroup`/`custom_var`
+(*"Log/alert/notification filters do not support OR on hostgroup or
+custom_var — these fields require a secondary /hosts lookup and can
+only be AND-combined"*). **Do NOT** send an OR to them and **do NOT**
+substitute a single leg (that would silently shrink the perimeter).
+
+Instead collect each slot in **two calls** — one per perimeter leg —
+and union them client-side with `save.sh <slot> --merge`:
+
+1. `tool(filter={leaf hostgroup=HG_WINDOWS})`  → `save.sh <slot> --merge`
+2. `tool(filter={leaf custom_var KERNEL=windows})` → `save.sh <slot> --merge`
+
+The first `--merge` writes verbatim; the second unions into it. The
+merge is **deduplicated** (Option A): rows are keyed by `(host,
+service)` (or the bucket/group key); a host present in both legs
+reports the SAME window stat, so per-object counters are kept at MAX
+(never summed → no double-count), while genuinely additive bucket rows
+(heatmaps, notification summary) ARE summed. The dedup/sum policy per
+slot lives in `scripts/_save_helper.py` (`MERGE_POLICY`).
+
+Single-leaf perimeter (only a hostgroup, or only a custom_var)? Then
+each Family-B slot is just **one** call — still use `--merge` (it
+writes verbatim when the slot does not yet exist), so the procedure is
+uniform.
 
 > **Availability exception**: `thruk_hostgroup_availability` takes a
 > `hostgroup` NAME, not a filter tree — it cannot express the
@@ -128,6 +164,16 @@ For a single-filter perimeter, use a bare leaf:
 > hostgroup only. If the perimeter has custom_vars but no hostgroup,
 > skip the two availability slots (write nothing) and push a warning
 > into `meta.warnings`.
+>
+> **`report_max_objects` guard**: the availability backend caps a
+> report at 1000 objects and returns HTTP 500 past it ("too many
+> objects"). For large hostgroups the `service_availability`
+> (`type='services'`) leg overflows first. If it 500s, skip that slot,
+> keep `host_availability`, and push a warning into `meta.warnings` —
+> do NOT retry with a creative workaround. If `host_availability`
+> spills to a `fil_*` that `export_fil_to_workdir` refuses (HTTP 400
+> "file use case not supported"), treat it as non-collectable: skip
+> the slot with a warning rather than halting the whole report.
 
 ## Working directory
 
@@ -175,32 +221,44 @@ run_skill_script(
 
 ### 3. Collect each slot
 
-For every row in the tables above: call the MCP tool with the OR
-filter (or hostgroup name for availability) and persist verbatim:
+Persist every response with `save.sh`. Families A and C-perfdata use
+**one OR call** per slot; Family B uses **two single-leaf calls** per
+slot with `--merge`; availability uses the hostgroup name.
 
 ```
-scripts/save.sh <slot>.json                  # stdin = MCP response
-scripts/save.sh <slot>.json --from-file <p>  # large response spilled to <p>
+scripts/save.sh <slot>.json                       # A / C : stdin = MCP response
+scripts/save.sh <slot>.json --merge               # B     : per-leg, unions
+scripts/save.sh <slot>.json [--merge] --from-file <p>  # large response spilled to <p>
 ```
 
-Typical calls (perimeter = HG_WINDOWS ∪ KERNEL=windows):
+Let `<OR>` = the OR filter tree, `<HG>` = `{leaf hostgroup=HG_WINDOWS}`,
+`<CV>` = `{leaf custom_var KERNEL=windows}`.
+
+**Family A — one OR call each (no `--merge`):**
 
 - `thruk_problem_counts(filter=<OR>)`
 - `thruk_unacked_critical(filter=<OR>, threshold_minutes=60)`
 - `thruk_oldest_problems(filter=<OR>, limit=20)`
 - `thruk_stale_acks(filter=<OR>, min_days=7)`
 - `thruk_stale_checks(filter=<OR>)`
-- `thruk_alert_heatmap(filter=<OR>, since='-24h', bucket='1h')`
-- `thruk_notification_heatmap(filter=<OR>, since='-24h', bucket='1h')`
-- `thruk_top_noisy_hosts(filter=<OR>, since='-24h', limit=20)`
-- `thruk_top_noisy_services(filter=<OR>, since='-24h', limit=20)`
-- `thruk_recurring_problems(filter=<OR>, since='-24h', min_alerts=5)`
-- `thruk_flap_summary(filter=<OR>, since='-24h', limit=20)`
-- `thruk_concurrent_failures(filter=<OR>, since='-24h', min_hosts=3)`
-- `thruk_notification_summary(filter=<OR>, since='-24h', group_by='host')`
-- `thruk_reliability_report(filter=<OR>, since='-7d', limit=50)`
+
+**Family B — two calls each (`<HG>` then `<CV>`), both `--merge`:**
+(if the perimeter has a single leg, do that one call only — still `--merge`)
+
+- `thruk_alert_heatmap(filter=<HG|CV>, since='-24h', bucket='1h')` → `alert_heatmap.json --merge`
+- `thruk_notification_heatmap(filter=<HG|CV>, since='-24h', bucket='1h')` → `notification_heatmap.json --merge`
+- `thruk_top_noisy_hosts(filter=<HG|CV>, since='-24h', limit=20)` → `noisy_hosts.json --merge`
+- `thruk_top_noisy_services(filter=<HG|CV>, since='-24h', limit=20)` → `noisy_services.json --merge`
+- `thruk_recurring_problems(filter=<HG|CV>, since='-24h', min_alerts=5)` → `recurring_problems.json --merge`
+- `thruk_flap_summary(filter=<HG|CV>, since='-24h', limit=20)` → `flap_summary.json --merge`
+- `thruk_concurrent_failures(filter=<HG|CV>, since='-24h', min_hosts=3)` → `concurrent_failures.json --merge`
+- `thruk_notification_summary(filter=<HG|CV>, since='-24h', group_by='host')` → `notification_summary.json --merge`
+- `thruk_reliability_report(filter=<HG|CV>, since='-7d', limit=50)` → `reliability_report.json --merge`
+
+**Family C — availability (hostgroup name) + perfdata (one OR call):**
+
 - `thruk_hostgroup_availability(hostgroup='HG_WINDOWS', type='hosts', timeperiod='last24hours')` → `host_availability.json`
-- `thruk_hostgroup_availability(hostgroup='HG_WINDOWS', type='services', timeperiod='last24hours')` → `service_availability.json`
+- `thruk_hostgroup_availability(hostgroup='HG_WINDOWS', type='services', timeperiod='last24hours')` → `service_availability.json` (skip + warn on HTTP 500 `report_max_objects`)
 - `thruk_perfdata_near_threshold(filter=<OR>, within_percent=10, limit=200)`
 
 ### 4. Render the HTML
@@ -266,6 +324,8 @@ it that way — the report task needs read access only.
 | Section shows "(slot non collecté)" | MCP call skipped | Collect that slot (or leave it — it is optional) |
 | Section shows "✓ (aucun)" | Tool returned an empty `results` | Nothing to do — healthy perimeter |
 | `save.sh: stdin is not valid JSON` | Streamed a non-JSON blob | Re-collect, or use `--from-file` for spilled payloads |
+| Analytics tool rejects OR (`do not support OR on hostgroup or custom_var`) | Sent an OR filter to a Family-B log tool | Split into two single-leaf calls (`<HG>`, `<CV>`) + `save.sh <slot> --merge` (Perimeter §) |
+| `save.sh --merge: ... no 'results' list to merge` | Merged a non-envelope / scalar slot | Only Family-B slots take `--merge`; Family A/C use a single call |
 | `--from-file: path outside allowed roots` | Spill landed elsewhere | Re-export with `export_fil_to_workdir` to `/tmp/thruk-report/` |
 | `send_email` auth / mailbox error | `ews-mcp` secret rotated / unbound | Re-bind the Secret in `/settings/mcp`, retry once |
 

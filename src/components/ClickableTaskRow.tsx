@@ -1,6 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import React from 'react';
+import { scopedHref } from '@/lib/scope-href';
 
 /**
  * <tr> wrapper making the whole row clickable to /task/<id>,
@@ -13,17 +14,23 @@ import React from 'react';
  */
 export function ClickableTaskRow({
   taskId,
+  scopePrefix,
   className = '',
   children,
 }: {
   taskId: string;
+  /** Active scope fsPath (`getCurrentScope().fsPath`). When set, the
+   *  row links to `/<scopePrefix>/task/<id>` so navigation keeps the
+   *  scope (ADR-0023). Empty / undefined → root-absolute `/task/<id>`
+   *  (Franck 2026-06-01). */
+  scopePrefix?: string;
   /** Extra classes merged after the defaults \u2014 used on /task to
    *  paint a kind-specific left border (automation vs audit). */
   className?: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const href = `/task/${taskId}`;
+  const href = scopedHref(scopePrefix, `/task/${taskId}`);
 
   const onClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
     const t = e.target as HTMLElement;

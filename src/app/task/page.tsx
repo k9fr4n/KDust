@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Clock, ChevronUp, ChevronDown } from 'lucide-react';
 import { db } from '@/lib/db';
 import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
+import { scopedHref } from '@/lib/scope-href';
 import { RunNowButton } from '@/components/RunNowButton';
 import { ClickableTaskRow } from '@/components/ClickableTaskRow';
 import { Pagination } from '@/components/Pagination';
@@ -399,7 +400,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
                 className={`relative rounded-md border border-slate-200 dark:border-slate-800 ${kindBorder}`}
               >
                 <Link
-                  href={`/task/${c.id}`}
+                  href={scopedHref(scope.fsPath, `/task/${c.id}`)}
                   className="block px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-900"
                 >
                   <div className="flex items-center gap-2 pr-20">
@@ -523,7 +524,7 @@ export default async function TasksPage({ searchParams }: SearchProps) {
               // orchestrator/worker distinction.
               const kindBorder = 'border-l-4 border-l-sky-400 dark:border-l-sky-500';
               return (
-                <ClickableTaskRow key={c.id} taskId={c.id} className={kindBorder}>
+                <ClickableTaskRow key={c.id} taskId={c.id} scopePrefix={scope.fsPath} className={kindBorder}>
                   {/* Name cell. 2026-04-24 19:58: a compact
                       violet pill marks templates, since the left
                       border now encodes role (orch/worker) only.

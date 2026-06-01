@@ -32,6 +32,8 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, ChevronRight, MessageCircle, Settings, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { db } from '@/lib/db';
+import { getCurrentScope } from '@/lib/project-url';
+import { scopedHref } from '@/lib/scope-href';
 import { getContextUsage } from '@/lib/dust/internal-api';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
@@ -127,6 +129,13 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
     include: { task: true },
   });
   if (!run) return notFound();
+
+  // Active project/folder scope (ADR-0023). On a scoped URL such as
+  // /Perso/fsallet/Claw/run/<id> the browser keeps the scope; all
+  // internal task/run links below must re-prepend it via scopedHref
+  // so navigation doesn't drop the tree (Franck 2026-06-01).
+  const scope = await getCurrentScope();
+  const sp = scope.fsPath;
 
   // Lineage. Two flavours coexist after ADR-0008 (2026-05-02):
   //   - Legacy hierarchical tree (parentRunId / childRuns) for runs
@@ -272,13 +281,13 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
     <div>
       {/* Breadcrumb */}
       <div className="mb-4 flex items-center gap-2 text-sm">
-        <Link href="/run" className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600">
+        <Link href={scopedHref(sp, '/run')} className="inline-flex items-center gap-1 text-slate-500 hover:text-brand-600">
           <ArrowLeft size={14} /> Back to runs
         </Link>
         {run.task && (
           <>
             <span className="text-slate-300">·</span>
-            <Link href={`/task/${run.task.id}`} className="text-slate-500 hover:text-brand-600">
+            <Link href={scopedHref(sp, `/task/${run.task.id}`)} className="text-slate-500 hover:text-brand-600">
               {run.task.name}
             </Link>
           </>
@@ -305,7 +314,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
           <>
             {run.task && (
               <Link
-                href={`/task/${run.task.id}`}
+                href={scopedHref(sp, `/task/${run.task.id}`)}
                 className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
                 title="View task"
               >
@@ -388,7 +397,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <div className="mb-2">
               <span className="text-slate-500 text-xs">◀ Previous run in chain: </span>
               <Link
-                href={`/run/${predecessorRun.id}`}
+                href={scopedHref(sp, `/run/${predecessorRun.id}`)}
                 className="underline font-mono text-xs hover:text-brand-500"
               >
                 {predecessorRun.id.slice(0, 8)}
@@ -404,7 +413,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
             <div className="mb-2">
               <span className="text-slate-500 text-xs">▶ Successor enqueued: </span>
               <Link
-                href={`/run/${followupRun.id}`}
+                href={scopedHref(sp, `/run/${followupRun.id}`)}
                 className="underline font-mono text-xs hover:text-brand-500"
               >
                 {followupRun.id.slice(0, 8)}
@@ -427,7 +436,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
               const taskLabel = pendingFollowupTask?.name
                 ?? `(deleted task ${run.pendingFollowupTaskId.slice(0, 8)})`;
               const taskHref = pendingFollowupTask
-                ? `/task/${pendingFollowupTask.id}`
+                ? scopedHref(sp, `/task/${pendingFollowupTask.id}`)
                 : null;
               // ADR-0010 (2026-05-09): no-op runs are now expected to dispatch
               // their followup too, so a no-op + missing followupRunId is the
@@ -494,7 +503,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                 <div className="mb-2">
                   <span className="text-slate-500 text-xs">▲ Parent run: </span>
                   <Link
-                    href={`/run/${parentRun.id}`}
+                    href={scopedHref(sp, `/run/${parentRun.id}`)}
                     className="underline font-mono text-xs hover:text-brand-500"
                   >
                     {parentRun.id.slice(0, 8)}
@@ -513,7 +522,7 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
                     {childRuns.map((c, i) => (
                       <li key={c.id} className="text-xs flex items-center gap-2">
                         <span className="text-slate-400 font-mono">#{i + 1}</span>
-                        <Link href={`/run/${c.id}`} className="underline font-mono hover:text-brand-500">
+                        <Link href={scopedHref(sp, `/run/${c.id}`)} className="underline font-mono hover:text-brand-500">
                           {c.id.slice(0, 8)}
                         </Link>
                         <span className="font-mono">{c.task?.name ?? '(deleted)'}</span>

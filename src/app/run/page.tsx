@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { getCurrentScope, buildProjectUrl } from '@/lib/project-url';
+import { scopedHref } from '@/lib/scope-href';
 import {
   Clock,
   MessageCircle,
@@ -420,7 +421,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
               card lands on /run/:id where everything lives anyway. */}
           <ul className="lg:hidden divide-y divide-slate-200 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-md overflow-hidden">
             {runs.map((r) => (
-              <RunCard run={r} key={`m-${r.id}`} />
+              <RunCard run={r} key={`m-${r.id}`} scopePrefix={scope.fsPath} />
             ))}
           </ul>
 
@@ -454,6 +455,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                 <ClickableRunRow
                   key={r.id}
                   runId={r.id}
+                  scopePrefix={scope.fsPath}
                 >
                   <td className="py-2">
                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${statusCls}`}>
@@ -471,7 +473,7 @@ export default async function RunsPage({ searchParams }: SearchProps) {
                   </td>
                   <td>
                     {r.task ? (
-                      <Link href={`/task/${r.task.id}`} className="underline">
+                      <Link href={scopedHref(scope.fsPath, `/task/${r.task.id}`)} className="underline">
                         {r.task.name}
                       </Link>
                     ) : (

@@ -1,6 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import React from 'react';
+import { scopedHref } from '@/lib/scope-href';
 
 /**
  * <tr> wrapper that navigates to /run/<id> on any click inside the
@@ -20,10 +21,16 @@ import React from 'react';
  */
 export function ClickableRunRow({
   runId,
+  scopePrefix,
   children,
   compact = false,
 }: {
   runId: string;
+  /** Active scope fsPath (`getCurrentScope().fsPath`). When set the
+   *  row navigates to `/<scopePrefix>/run/<id>` so the scope tree
+   *  stays in the URL (ADR-0023, Franck 2026-06-01). Empty/undefined
+   *  → root-absolute `/run/<id>`. */
+  scopePrefix?: string;
   children: React.ReactNode;
   /**
    * When true, suppress the top separator border. Used in tree
@@ -40,7 +47,7 @@ export function ClickableRunRow({
   compact?: boolean;
 }) {
   const router = useRouter();
-  const href = `/run/${runId}`;
+  const href = scopedHref(scopePrefix, `/run/${runId}`);
 
   const onClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
     const t = e.target as HTMLElement;

@@ -21,6 +21,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { FolderGit2, Pin, PinOff, Trash2 } from 'lucide-react';
 import { publishConvEvent } from '@/lib/client/conversationsBus';
+import { scopedHref } from '@/lib/scope-href';
 
 export type RunCardData = {
   id: string;
@@ -56,7 +57,16 @@ function fmtRel(d: Date | string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-export function RunCard({ run }: { run: RunCardData }) {
+export function RunCard({
+  run,
+  scopePrefix,
+}: {
+  run: RunCardData;
+  /** Active scope fsPath. When set the card links to
+   *  `/<scopePrefix>/run/<id>` (scoped run list, ADR-0023). Omitted
+   *  on the root dashboard → `/run/<id>` (Franck 2026-06-01). */
+  scopePrefix?: string;
+}) {
   const router = useRouter();
   const [pinned, setPinned] = useState(!!run.pinned);
   const [busy, setBusy] = useState(false);
@@ -106,7 +116,7 @@ export function RunCard({ run }: { run: RunCardData }) {
   // must open the *run* detail page (/run/:id), not the task page.
   // The task name itself is still just the label; clicking the row
   // takes you straight to that specific run's logs/output.
-  const href = `/run/${run.id}`;
+  const href = scopedHref(scopePrefix, `/run/${run.id}`);
 
   return (
     <li className="group relative">

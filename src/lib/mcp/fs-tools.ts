@@ -10,6 +10,12 @@ import { glob } from 'glob';
 import { errMessage } from '../errors';
 import { fetchFilBody, type FilFetchError } from '../dust/files';
 import { getDustClient } from '../dust/client';
+import {
+  parsePatch,
+  applyHunksToContent,
+  PatchError,
+  type PatchOp,
+} from './apply-patch';
 
 const pExecFile = promisify(execFile);
 
@@ -489,9 +495,185 @@ export const exportFilToWorkdir = defineTool({
   },
 });
 
+// ---------------- create_file ----------------
+export const createFile = defineTool({
+  name: 'create_file',
+  description:
+    'Create a NEW file under the project root with the given content. ' +
+    'Parent directories are created as needed. Refuses to clobber an ' +
+    'existing file unless overwrite=true. Use edit_file/apply_patch to ' +
+    'modify an existing file.',
+  schema: z.object({
+    path: z.string().describe('Absolute path to the new file (must be under the project root).'),
+    content: z.string().describe('Full UTF-8 content to write.'),
+    overwrite: z
+      .boolean()
+      .optional()
+      .describe('If true, replace an existing file. Default false (fail if it exists).'),
+  }),
+  async execute(root, args) {
+    try {
+      const abs = chroot(root, args.path);
+      if (existsSync(abs)) {
+        if (statSync(abs).isDirectory()) {
+          return toText(`Error: path is a directory: ${abs}`, true);
+        }
+        if (!args.overwrite) {
+          return toText(
+            `Error: file already exists: ${abs} (pass overwrite=true to replace)`,
+            true,
+          );
+        }
+      }
+      await fsp.mkdir(path.dirname(abs), { recursive: true });
+      await fsp.writeFile(abs, args.content, 'utf-8');
+      return toText(
+        `${existsSync(abs) ? 'Wrote' : 'Created'} ${abs} (${Buffer.byteLength(args.content, 'utf-8')} bytes)`,
+      );
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
+    }
+  },
+});
+
+// ---------------- apply_patch ----------------
+/**
+ * Atomic, multi-file structured edit (Franck 2026-06-02). Accepts a
+ * Claude-Code / Codex-style `*** Begin Patch` envelope (see
+ * apply-patch.ts for the grammar). The whole patch is validated and
+ * applied IN MEMORY first; only when every op succeeds do we touch
+ * the disk. If a write fails mid-batch we restore everything already
+ * written so the tree never lands in a half-applied state.
+ */
+interface PlannedWrite {
+  abs: string;
+  /** null => delete the file. */
+  next: string | null;
+  /** Previous on-disk content for rollback (undefined => did not exist). */
+  prev: string | undefined;
+  label: string;
+}
+
+export const applyPatch = defineTool({
+  name: 'apply_patch',
+  description:
+    'Apply a multi-file, multi-hunk patch atomically (all-or-nothing). ' +
+    'Input is a "*** Begin Patch / *** End Patch" envelope supporting ' +
+    '"*** Add File:", "*** Update File:" (with @@ hunks of " " context, ' +
+    '"-" removed, "+" added lines), "*** Delete File:" and an optional ' +
+    '"*** Move to:". Prefer this over many edit_file calls for coherent ' +
+    'changes. The patch is validated in memory and only written if every ' +
+    'hunk applies cleanly.',
+  schema: z.object({
+    patch: z.string().describe('The full apply_patch envelope.'),
+  }),
+  async execute(root, args) {
+    let ops: PatchOp[];
+    try {
+      ops = parsePatch(args.patch);
+    } catch (e: unknown) {
+      const msg = e instanceof PatchError ? e.message : errMessage(e);
+      return toText(`Error: malformed patch: ${msg}`, true);
+    }
+
+    // Phase 1 — plan every write in memory; never touch disk yet.
+    const plan: PlannedWrite[] = [];
+    try {
+      for (const op of ops) {
+        if (op.kind === 'add') {
+          const abs = chroot(root, op.path);
+          if (existsSync(abs)) {
+            return toText(
+              `Error: Add File "${op.path}": already exists. Use Update File or create_file(overwrite=true).`,
+              true,
+            );
+          }
+          plan.push({ abs, next: op.contents, prev: undefined, label: `add ${op.path}` });
+        } else if (op.kind === 'delete') {
+          const abs = chroot(root, op.path);
+          if (!existsSync(abs)) {
+            return toText(`Error: Delete File "${op.path}": not found.`, true);
+          }
+          const prev = await fsp.readFile(abs, 'utf-8');
+          plan.push({ abs, next: null, prev, label: `delete ${op.path}` });
+        } else {
+          // update
+          const abs = chroot(root, op.path);
+          if (!existsSync(abs)) {
+            return toText(`Error: Update File "${op.path}": not found.`, true);
+          }
+          const prev = await fsp.readFile(abs, 'utf-8');
+          let updated: string;
+          try {
+            updated = applyHunksToContent(prev, op.hunks);
+          } catch (e: unknown) {
+            const msg = e instanceof PatchError ? e.message : errMessage(e);
+            return toText(`Error: Update File "${op.path}": ${msg}`, true);
+          }
+          if (op.moveTo) {
+            const dest = chroot(root, op.moveTo);
+            if (existsSync(dest)) {
+              return toText(
+                `Error: Update File "${op.path}": Move to "${op.moveTo}" already exists.`,
+                true,
+              );
+            }
+            // Delete the source, write the moved+updated content at dest.
+            plan.push({ abs, next: null, prev, label: `move-from ${op.path}` });
+            plan.push({ abs: dest, next: updated, prev: undefined, label: `move-to ${op.moveTo}` });
+          } else {
+            plan.push({ abs, next: updated, prev, label: `update ${op.path}` });
+          }
+        }
+      }
+    } catch (e: unknown) {
+      return toText(`Error: ${errMessage(e)}`, true);
+    }
+
+    // Phase 2 — commit. Track what we changed for rollback on failure.
+    const done: PlannedWrite[] = [];
+    try {
+      for (const w of plan) {
+        if (w.next === null) {
+          await fsp.rm(w.abs, { force: true });
+        } else {
+          await fsp.mkdir(path.dirname(w.abs), { recursive: true });
+          await fsp.writeFile(w.abs, w.next, 'utf-8');
+        }
+        done.push(w);
+      }
+    } catch (e: unknown) {
+      // Roll back in reverse order.
+      for (const w of done.reverse()) {
+        try {
+          if (w.prev === undefined) {
+            await fsp.rm(w.abs, { force: true });
+          } else {
+            await fsp.mkdir(path.dirname(w.abs), { recursive: true });
+            await fsp.writeFile(w.abs, w.prev, 'utf-8');
+          }
+        } catch {
+          /* best-effort rollback */
+        }
+      }
+      return toText(
+        `Error: write failed, patch rolled back: ${errMessage(e)}`,
+        true,
+      );
+    }
+
+    return toText(
+      `Applied patch: ${plan.length} file operation(s)\n` +
+        plan.map((w) => `  - ${w.label}`).join('\n'),
+    );
+  },
+});
+
 export const allFsTools = [
   readFile,
   editFile,
+  createFile,
+  applyPatch,
   searchFiles,
   searchContent,
   runCommand,

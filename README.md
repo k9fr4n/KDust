@@ -2612,3 +2612,58 @@ La surface MCP — serveur Node, ensure-route, 4 sites
   skill, son prochain run échouera silencieusement (tools
   absents). À grep dans les prompts de Task au moment du déploy.
 - Pas de migration DB — rollback = `git revert`.
+
+---
+
+## ADR — `create_file` & `apply_patch` fs-cli tools
+
+**Status**: Accepted · **Date**: 2026-06-02
+
+**Context**. The `fs-cli` MCP server let agents read and *modify* files
+(`edit_file`) but had no way to **create** a new file: `edit_file`
+bails with `File not found` when the target doesn't exist, forcing
+agents into brittle `run_command` heredocs. It also offered only
+single-snippet replacement, so a coherent change spanning several spots
+or files meant N sequential `edit_file` round-trips with no atomicity —
+a failure on call 3 left calls 1–2 already written. This is the main
+ergonomic gap versus a Claude-Code-style agent loop.
+
+**Decision**. Add two write tools to `fs-tools.ts` (auto-registered by
+`fs-server.ts` via `allFsTools`):
+
+- `create_file` — create a new file under the chroot, parent dirs
+  auto-created, `overwrite` opt-in (default refuse-if-exists).
+- `apply_patch` — apply a Claude-Code / Codex-style `*** Begin Patch`
+  envelope (`Add` / `Update` / `Delete` / `Move to`, `@@` hunks).
+  Parsing + in-memory application live in a pure, FS-free module
+  (`apply-patch.ts`) so the matcher is unit-testable; the tool wraps it
+  with chroot + a two-phase commit (validate everything in memory, then
+  write; roll back every written file on a mid-batch failure).
+
+Hunk matching is intentionally **strict** (contiguous block, forward
+search, no fuzzing): a stale-context patch is rejected wholesale rather
+than misapplied.
+
+**Consequences**.
+
+- Agents can now express multi-file edits atomically — closes the
+  biggest "local action" gap with Claude Code without weakening any
+  guard (chroot, output cap, secret redaction on the exec path are
+  untouched).
+- No new dependency, no Prisma migration, no auth/crypto/push change.
+  Purely additive; rollback = `git revert`.
+- `OUTPUT_MAX_BYTES` still applies, so a giant patch result is capped
+  like any other tool output.
+- Catalogue (`catalog.ts`) and `docs/fs-tools.md` updated; parser
+  covered by `src/lib/mcp/__tests__/apply-patch.spec.ts` (13 tests).
+
+**Alternatives considered**.
+
+- *Shell out to `git apply`*. Battle-tested unified-diff parsing, but
+  ties the tool to a git working tree and the less agent-friendly
+  unified-diff format. Rejected to keep the tool VCS-agnostic and
+  aligned with the envelope agents already emit.
+- *`create_file` only*. Smaller, but leaves the multi-hunk atomicity
+  gap open. `apply_patch` subsumes `create_file` (`Add File`) anyway;
+  both shipped since `create_file` is the simpler primitive agents
+  reach for on a single new file.

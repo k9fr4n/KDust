@@ -20,7 +20,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { RunCard } from '@/components/RunCard';
 import { ScopePath } from '@/components/ScopePath';
 import { ChildChip } from '@/components/dashboard/ChildChip';
-import { DashboardActions, DashboardCreateChips } from '@/components/dashboard/DashboardActions';
+import { ScopeActionsMenu } from '@/components/dashboard/ScopeActionsMenu';
 // Cross-tab sync listener is mounted once in src/app/layout.tsx,
 // so every route \u2014 including this one \u2014 already refreshes
 // on pin/delete events from other tabs.
@@ -254,16 +254,15 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
   return (
     <div className="space-y-6">
       <PageHeader icon={<FolderGit2 size={20} />} title="Dashboard" />
-      <ScopePath fsPath={scope.fsPath} />
-      {/* Project-leaf scope has no children section below, so the
-          destructive "Delete this project" button stays at the top
-          for that case. For folder scope it's rendered as a trailing
-          chip after "+ New project" (Franck 2026-05-28). */}
-      {actionsScope.kind === 'project' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <DashboardActions scope={actionsScope} />
-        </div>
-      )}
+      {/* Breadcrumb path on the left, a single kebab (⋮) actions menu
+          aligned to the right (Franck 2026-06-02). The menu holds
+          every scope-level action (New chat / Open repo / New folder /
+          New project / Delete), contextual to the active scope. Root
+          scope still gets the menu (New folder / New project). */}
+      <div className="flex items-start justify-between gap-2">
+        <ScopePath fsPath={scope.fsPath} />
+        <ScopeActionsMenu scope={actionsScope} />
+      </div>
 
       {reason === 'select-a-project' && (
         <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -276,33 +275,26 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             {scope.kind === 'root' ? 'Folders & projects' : 'Children'}
           </h2>
+          {/* Create / delete actions moved into the breadcrumb kebab
+              menu (Franck 2026-06-02). This row now only lists the
+              existing folder/project children. */}
           <div className="flex flex-wrap gap-2">
-            {children.map((c) => (
-              <ChildChip
-                key={c.key}
-                kind={c.kind}
-                id={c.id}
-                label={c.label}
-                href={c.href}
-                sub={c.sub}
-              />
-            ))}
-            {/* Visual separator between existing folder/project chips and
-                the create chips ("+ New folder" / "+ New project").
-                Only rendered when there is at least one existing child,
-                otherwise the divider would float alone. (Franck 2026-05-28) */}
-            {children.length > 0 && (
-              <div
-                aria-hidden
-                className="self-stretch w-px bg-slate-300 dark:bg-slate-700 mx-1"
-              />
+            {children.length === 0 ? (
+              <p className="text-sm text-slate-400 dark:text-slate-500">
+                No folders or projects yet — use the ⋮ menu to create one.
+              </p>
+            ) : (
+              children.map((c) => (
+                <ChildChip
+                  key={c.key}
+                  kind={c.kind}
+                  id={c.id}
+                  label={c.label}
+                  href={c.href}
+                  sub={c.sub}
+                />
+              ))
             )}
-            {/* Trailing "+ New folder" / "+ New project" chips (Franck 2026-05-27) */}
-            <DashboardCreateChips scope={actionsScope} />
-            {/* Destructive "Delete this folder" chip — rendered last
-                so it reads as the trailing action of the row
-                (Franck 2026-05-28). */}
-            <DashboardActions scope={actionsScope} />
           </div>
         </section>
       )}

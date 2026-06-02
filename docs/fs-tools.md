@@ -30,10 +30,26 @@ the file's style). The fuzziness is limited to quote equivalence — there is
 **no** whitespace-drift or offset matching, so otherwise-stale context is
 still rejected. Disable process-wide with `KDUST_FS_QUOTE_NORMALIZE=0`.
 
+## Edit feedback (#176 — B1/B2/B3)
+
+`edit_file` returns more than a count so the agent can self-correct:
+
+- **B1 — unified diff.** On success the result appends a Claude-Code-style
+  unified diff (`--- a/… / +++ b/… / @@ …`, 3 lines of context) of exactly
+  what changed, byte-capped like every payload. The shared prefix/suffix is
+  collapsed to a single hunk; a multi-occurrence edit merges into one hunk.
+- **B2 — no-op rejection.** `old_string === new_string` is refused up front
+  (it can never make progress and usually means a copy/paste slip).
+- **B3 — CRLF-aware matching.** A CRLF file is normalized to LF *for the
+  match/replace only*, then the original EOL is re-applied on write, so a
+  CRLF file stays CRLF — the LF `old_string` matches without churning line
+  endings or polluting the git diff. Quote-normalized matches get the same
+  diff treatment.
+
 | Tool | Kind | Purpose |
 |---|---|---|
 | `read_file` | read | Read text, or extract PDF text (`pages`); binary → descriptor. |
-| `edit_file` | write | Replace one exact snippet (`old_string`→`new_string`). |
+| `edit_file` | write | Replace one exact snippet (`old_string`→`new_string`); returns a unified diff. |
 | `create_file` | write | Create a NEW file (parent dirs auto-created). |
 | `apply_patch` | write | Apply a multi-file, multi-hunk patch atomically. |
 | `search_files` | read | Glob over the project tree. |

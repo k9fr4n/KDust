@@ -96,6 +96,65 @@ function truncateForMcp(text: string, kind: string): string {
   return head + marker + tail;
 }
 
+/**
+ * B1 (#176) — render a Claude-Code-style unified diff of an edit so the
+ * agent SEES its effect and can self-correct. Inputs are LF-normalized
+ * `before`/`after` strings (CRLF handling lives in the caller); the diff
+ * is for display only, so LF is fine here. We exploit the fact that an
+ * edit changes one contiguous region in the common case: collapse the
+ * shared prefix/suffix and emit a single hunk with `contextLines` of
+ * surrounding context (3, like Claude Code's structuredPatch). Multiple
+ * replacements collapse into one merged hunk — the unchanged span between
+ * them then shows as both `-`/`+`, which is correct if occasionally
+ * verbose. Output is byte-capped like every other tool payload.
+ */
+function unifiedEditDiff(
+  relPath: string,
+  before: string,
+  after: string,
+  contextLines = 3,
+): string {
+  if (before === after) return '(no textual change)';
+  const a = before.split('\n');
+  const b = after.split('\n');
+
+  // Common prefix.
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  // Common suffix (not overlapping the prefix on either side).
+  let s = 0;
+  while (
+    s < a.length - p &&
+    s < b.length - p &&
+    a[a.length - 1 - s] === b[b.length - 1 - s]
+  ) {
+    s++;
+  }
+
+  const ctxStart = Math.max(0, p - contextLines);
+  const ctxBefore = a.slice(ctxStart, p);
+  const changedA = a.slice(p, a.length - s);
+  const changedB = b.slice(p, b.length - s);
+  const tailStart = a.length - s;
+  const ctxAfter = a.slice(tailStart, Math.min(a.length, tailStart + contextLines));
+
+  const oldStart = ctxStart + 1;
+  const newStart = ctxStart + 1;
+  const oldCount = ctxBefore.length + changedA.length + ctxAfter.length;
+  const newCount = ctxBefore.length + changedB.length + ctxAfter.length;
+
+  const lines: string[] = [];
+  lines.push(`--- a/${relPath}`);
+  lines.push(`+++ b/${relPath}`);
+  lines.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`);
+  for (const l of ctxBefore) lines.push(` ${l}`);
+  for (const l of changedA) lines.push(`-${l}`);
+  for (const l of changedB) lines.push(`+${l}`);
+  for (const l of ctxAfter) lines.push(` ${l}`);
+
+  return truncateForMcp(lines.join('\n'), 'diff');
+}
+
 const IGNORE = [
   '**/node_modules/**',
   '**/.git/**',
@@ -349,11 +408,34 @@ export const editFile = defineTool({
     try {
       const abs = chroot(root, args.path);
       if (!existsSync(abs)) return toText(`Error: File not found: ${abs}`, true);
+
+      // B2 (#176) — reject no-op edits. old_string === new_string can never
+      // make progress and usually signals a copy/paste slip by the agent;
+      // failing fast is cheaper than a silent self-overwrite.
+      if (args.old_string === args.new_string) {
+        return toText(
+          'Error: old_string and new_string are identical — no-op edit rejected',
+          true,
+        );
+      }
+
       const stale = freshnessError(abs);
       if (stale) return toText(`Error: ${stale}`, true);
-      const original = await fsp.readFile(abs, 'utf-8');
+      const raw = await fsp.readFile(abs, 'utf-8');
+
+      // B3 (#176) — CRLF normalization for MATCHING ONLY. The agent emits
+      // LF old_string/new_string, so a CRLF file would never match a raw
+      // byte scan. Normalize the file (and the args) to LF for the match/
+      // replace, then re-apply the file's original EOL on write so a CRLF
+      // file stays CRLF — no silent line-ending churn, no polluted git diff.
+      const hasCRLF = /\r\n/.test(raw);
+      const original = hasCRLF ? raw.replace(/\r\n/g, '\n') : raw;
+      const oldStr = hasCRLF ? args.old_string.replace(/\r\n/g, '\n') : args.old_string;
+      const newStr = hasCRLF ? args.new_string.replace(/\r\n/g, '\n') : args.new_string;
+      const toDisk = (lf: string) => (hasCRLF ? lf.replace(/\n/g, '\r\n') : lf);
+
       const expected = args.expected_replacements ?? 1;
-      const escaped = args.old_string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escaped = oldStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const re = new RegExp(escaped, 'g');
       const count = (original.match(re) ?? []).length;
 
@@ -361,10 +443,14 @@ export const editFile = defineTool({
         // Function replacer so `$&`, `$1`, ... inside new_string are
         // written literally instead of being interpreted as replacement
         // patterns by String.prototype.replace.
-        const updated = original.replace(re, () => args.new_string);
-        await fsp.writeFile(abs, updated, 'utf-8');
+        const updated = original.replace(re, () => newStr);
+        await fsp.writeFile(abs, toDisk(updated), 'utf-8');
         recordRead(abs); // refresh so our own write doesn't trip the next edit
-        return toText(`Replaced ${count} occurrence(s) in ${abs}`);
+        // B1 (#176) — show the unified diff of what changed.
+        return toText(
+          `Replaced ${count} occurrence(s) in ${abs}\n\n` +
+            unifiedEditDiff(args.path, original, updated),
+        );
       }
 
       // Exact match failed. Try the NARROW curly-straight quote fuzzy pass
@@ -373,22 +459,23 @@ export const editFile = defineTool({
       // Only attempt it when there is no exact match at all, to avoid
       // surprising behaviour when some occurrences match and some don't.
       if (count === 0 && quoteNormalizeEnabled()) {
-        const idxs = findNormalizedMatchIndices(original, args.old_string);
+        const idxs = findNormalizedMatchIndices(original, oldStr);
         if (idxs.length === expected) {
-          const len = args.old_string.length;
+          const len = oldStr.length;
           let out = '';
           let cursor = 0;
           for (const idx of idxs) {
             const actual = original.substring(idx, idx + len);
-            const replacement = preserveQuoteStyle(args.old_string, actual, args.new_string);
+            const replacement = preserveQuoteStyle(oldStr, actual, newStr);
             out += original.slice(cursor, idx) + replacement;
             cursor = idx + len;
           }
           out += original.slice(cursor);
-          await fsp.writeFile(abs, out, 'utf-8');
+          await fsp.writeFile(abs, toDisk(out), 'utf-8');
           recordRead(abs);
           return toText(
-            `Replaced ${idxs.length} occurrence(s) in ${abs} (matched via curly-quote normalization)`,
+            `Replaced ${idxs.length} occurrence(s) in ${abs} (matched via curly-quote normalization)\n\n` +
+              unifiedEditDiff(args.path, original, out),
           );
         }
         if (idxs.length > 0) {

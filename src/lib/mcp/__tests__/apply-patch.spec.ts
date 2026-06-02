@@ -135,3 +135,54 @@ describe('applyHunksToContent', () => {
     expect(applyHunksToContent('', op.hunks)).toBe('first\nsecond');
   });
 });
+
+describe('applyHunksToContent — curly-quote normalization (#175 item 2)', () => {
+  const LDQ = '\u201C';
+  const RDQ = '\u201D';
+
+  it('matches a straight-quote hunk against a curly-quote file', () => {
+    const original = `const s = ${LDQ}hi${RDQ};`;
+    const op = onlyUpdate(
+      parsePatch(
+        [
+          '*** Begin Patch',
+          '*** Update File: f',
+          '@@',
+          '-const s = "hi";',
+          '+const s = "bye";',
+          '*** End Patch',
+        ].join('\n'),
+      ),
+    );
+    // '+' line typography is re-curled to match the file's style.
+    expect(applyHunksToContent(original, op.hunks)).toBe(`const s = ${LDQ}bye${RDQ};`);
+  });
+
+  it('keeps untouched context lines verbatim (no typography rewrite)', () => {
+    const original = `head ${LDQ}keep${RDQ}\ntarget\ntail`;
+    const op = onlyUpdate(
+      parsePatch(
+        [
+          '*** Begin Patch',
+          '*** Update File: f',
+          '@@',
+          ' head "keep"',
+          '-target',
+          '+TARGET',
+          ' tail',
+          '*** End Patch',
+        ].join('\n'),
+      ),
+    );
+    // The context line is emitted from the file, so its curly quotes survive.
+    expect(applyHunksToContent(original, op.hunks)).toBe(`head ${LDQ}keep${RDQ}\nTARGET\ntail`);
+  });
+
+  it('exact match still wins and leaves output byte-identical', () => {
+    const original = `a\nb\nc`;
+    const op = onlyUpdate(
+      parsePatch(['*** Begin Patch', '*** Update File: f', '@@', ' a', '-b', '+B', ' c', '*** End Patch'].join('\n')),
+    );
+    expect(applyHunksToContent(original, op.hunks)).toBe('a\nB\nc');
+  });
+});

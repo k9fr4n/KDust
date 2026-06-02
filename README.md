@@ -2782,3 +2782,72 @@ Two deliberate divergences from Claude Code:
 - *Hash instead of mtime+size*. More robust against mtime-preserving
   edits but costs a full file read per write check; rejected as
   over-engineering for an advisory guard.
+
+### ADR-0026 — fs-cli edit_file/apply_patch curly-quote normalization (2026-06-02)
+
+**Status**: Proposed (2026-06-02, Franck).
+
+**Context**. Issue #175 item 2 (the last remaining parity item). An
+LLM cannot reliably emit typographic curly quotes (`‘ ’ “ ”`). When a
+source file uses them, the model's straight-quote `old_string`
+(`edit_file`) or hunk context (`apply_patch`) never matches, so a
+semantically-correct edit is rejected as "old_string not found" /
+"stale context". Claude Code's `FileEditTool` solves this with a
+narrow fuzzy pass: `normalizeQuotes` / `findActualString` /
+`preserveQuoteStyle`.
+
+**Decision**. Port that narrow pass — and *only* that — into a new
+PURE module `src/lib/mcp/quote-normalize.ts` (no FS, unit-tested
+alongside `apply-patch.ts`):
+
+- `edit_file`: exact regex match runs first (unchanged). If it finds
+  **zero** exact matches, a curly⇄straight normalized pass runs
+  (`findNormalizedMatchIndices`); on an `expected_replacements`-count
+  match it splices the original by index and re-applies the file's
+  curly typography to `new_string` via `preserveQuoteStyle`.
+- `apply_patch`: `findBlock` runs an exact line-equality scan first,
+  then a quote-normalized fallback. Matched **context** lines are now
+  emitted from the file verbatim (preserving the file's own
+  typography), and `+` added lines get `preserveQuoteStyle` only when
+  the block matched via normalization.
+- Opt-out: process-wide `KDUST_FS_QUOTE_NORMALIZE=0` (default on),
+  mirroring ADR-0024's guard flag.
+
+The fuzziness is deliberately limited to curly⇄straight quote
+equivalence. There is **no** whitespace-drift or offset matching:
+otherwise-stale context is still rejected wholesale, preserving
+`apply_patch`'s deterministic, anti-misplacement contract.
+
+**Drive-by fix**. `edit_file` switched from `original.replace(re,
+new_string)` to a function replacer `replace(re, () => new_string)`
+so `- *Hash instead of mtime+size*. More robust against mtime-preserving
+  edits but costs a full file read per write check; rejected as
+  over-engineering for an advisory guard.` / `$1` sequences inside `new_string` are written literally
+instead of being interpreted as replacement patterns. (This very bug
+corrupted the file once during development when the *deployed* tool
+expanded a `- *Hash instead of mtime+size*. More robust against mtime-preserving
+  edits but costs a full file read per write check; rejected as
+  over-engineering for an advisory guard.` in the new code — the function replacer prevents a
+recurrence.)
+
+**Consequences**.
+
+- Edits to files with typographic quotes (Markdown docs, i18n
+  strings, prose) now succeed without the agent guessing the exact
+  Unicode codepoint.
+- Exact matches always win (full exact scan before any normalized
+  scan), so existing behaviour is byte-identical when no curly quotes
+  are involved.
+- `- *Hash instead of mtime+size*. More robust against mtime-preserving
+  edits but costs a full file read per write check; rejected as
+  over-engineering for an advisory guard.`/`$1` in `new_string` are now safe.
+- No new dependency; no schema change; pure module + two call sites.
+
+**Alternatives considered**.
+
+- *Whitespace-drift / Levenshtein fuzzy matching*. Higher hit rate
+  but risks applying an edit to the wrong location — rejected; the
+  whole point of `apply_patch` is determinism.
+- *Normalize on write (rewrite curly→straight in the file)*. Mutates
+  the user's chosen typography; rejected. We match across the
+  difference and preserve the file's style instead.

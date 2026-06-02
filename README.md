@@ -2716,3 +2716,69 @@ the conversation (Dust's native `files` server handles vision).
   Deferred to a future ADR if a concrete need appears.
 - *`pdfjs` / `pdf-parse` (npm)*. Pure-JS PDF text, but a top-level
   dep (ADR-gated) and heavier than shelling to a system binary.
+
+### ADR-0024 — fs-cli read-before-write freshness guard (2026-06-02)
+
+**Status**: Proposed (2026-06-02, Franck).
+
+**Context**. Issue #175 item 3. Claude Code's `FileWriteTool`
+maintains a per-session `readFileState` map and refuses to write a
+file that was never read, or that changed on disk since the last
+read ("File has been modified since read … read it again"). KDust's
+`edit_file` / `create_file` / `apply_patch` had no such notion: an
+agent could read a file, invoke a formatter/codegen via
+`run_command` that rewrites it, then `edit_file` from a stale
+`old_string` and silently clobber the newer content.
+
+The open question was scope. The fs-cli MCP server is registered
+**per project**, not per run (`src/lib/mcp/fs-server.ts`), and tool
+callbacks receive only `(root, args)` — there is no `runId` to key
+per-run state on without threading a run handle through the whole
+MCP wiring.
+
+**Decision**. Add a process-wide `readFileState: Map<absPath,
+{mtimeMs, size}>` in `src/lib/mcp/fs-tools.ts`. `read_file` records
+each file's identity; `edit_file`, `create_file` (overwrite only)
+and `apply_patch` (update/delete/move ops) call `freshnessError()`
+before writing and refuse with a structured, re-read-me message if
+the on-disk mtime/size diverged from the recorded read. Every
+successful write refreshes the entry (so a tool's own write does not
+trip the next edit); deletes evict it.
+
+Keying by **absolute path** (which embeds the project root) makes
+cross-project collisions impossible. Per-project automation is
+already serialised by the project concurrency lock, so cross-run
+interference is bounded to interleaved `/chat` sessions on the same
+project — an accepted, documented edge.
+
+Two deliberate divergences from Claude Code:
+
+1. We enforce only the **modified-since-read** check, **not** the
+   stricter "refuse if never read". Many existing KDust automations
+   legitimately patch/write files they never `read_file` (generated
+   content, blind `apply_patch`); the never-read rule would be a
+   breaking behavioural change.
+2. Opt-out is a **process-wide** env flag `KDUST_FS_FRESHNESS_GUARD=0`
+   (default on). A true per-task opt-out would need per-run state
+   plumbing, which this ADR explicitly avoids.
+
+**Consequences**.
+
+- Catches the real clobber case (stale read → formatter rewrite →
+  blind edit) with negligible cost (one `statSync` per write).
+- Behaviour change is opt-out, not opt-in: bulk/non-interactive
+  runs that genuinely want last-write-wins set the env flag.
+- The guard is advisory and best-effort: it cannot detect a change
+  that preserves both mtime and size, and the shared map is not
+  isolated per run. It is a safety net, not a lock.
+- No new dependency; no schema change; read-only-state only.
+
+**Alternatives considered**.
+
+- *True per-run state*. Thread a run handle into every fs-cli tool
+  call so each run gets its own map. Correct but invasive (changes
+  the MCP server registration + every tool signature); deferred
+  until a concrete need for run isolation appears.
+- *Hash instead of mtime+size*. More robust against mtime-preserving
+  edits but costs a full file read per write check; rejected as
+  over-engineering for an advisory guard.

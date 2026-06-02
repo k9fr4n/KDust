@@ -119,6 +119,79 @@ function defineTool<S extends z.ZodTypeAny>(t: {
   return t;
 }
 
+/**
+ * Read-before-write freshness guard (#175 item 3, ADR-0024, 2026-06-02).
+ *
+ * Mirrors Claude Code's `readFileState`: read_file records each file's
+ * (mtime, size); the write tools refuse to overwrite a file that changed
+ * on disk since that recorded read — typically because a linter,
+ * formatter or codegen invoked via `run_command` rewrote it between the
+ * agent's read and its edit, so the agent's `old_string` / patch context
+ * is stale and a write would clobber newer content.
+ *
+ * KDust-specific scoping (the issue's open question): the fs-cli server
+ * is registered PER PROJECT, not per run, and tool callbacks receive only
+ * `(root, args)` — there is no runId to key per-run state on. We therefore
+ * keep a single process-wide map keyed by ABSOLUTE path (which embeds the
+ * project root, so cross-project collisions are impossible). The mtime/size
+ * check is content-truthful regardless of which run populated the entry,
+ * and per-project automation is already serialised by the project lock, so
+ * cross-run interference is limited to interleaved /chat sessions on the
+ * same project — an acceptable, documented edge.
+ *
+ * Deliberate divergence from Claude Code: we enforce ONLY the
+ * "modified since read" check, NOT the stricter "refuse if never read"
+ * rule. Many existing KDust automations legitimately `apply_patch` or
+ * `edit_file` a file they never `read_file` (generated content, blind
+ * patches); blocking those would be a breaking behavioural change.
+ *
+ * Opt-out: KDUST_FS_FRESHNESS_GUARD=0 (process-wide). Default on.
+ */
+const readFileState = new Map<string, { mtimeMs: number; size: number }>();
+
+function freshnessGuardEnabled(): boolean {
+  const v = (process.env.KDUST_FS_FRESHNESS_GUARD ?? '1').toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no';
+}
+
+/** Record (or refresh) the on-disk identity of `abs` after a read/write. */
+function recordRead(abs: string): void {
+  try {
+    const st = statSync(abs);
+    if (st.isDirectory()) return;
+    readFileState.set(abs, { mtimeMs: st.mtimeMs, size: st.size });
+  } catch {
+    /* file vanished between op and stat — nothing to record */
+  }
+}
+
+/**
+ * Return a structured error string if `abs` changed since its recorded
+ * read, else null. No recorded entry => allowed (we don't enforce the
+ * never-read rule). Guard disabled via env => always allowed.
+ */
+function freshnessError(abs: string): string | null {
+  if (!freshnessGuardEnabled()) return null;
+  const recorded = readFileState.get(abs);
+  if (!recorded) return null;
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(abs);
+  } catch {
+    return null; // file gone; let the tool's own existence check handle it
+  }
+  if (st.mtimeMs !== recorded.mtimeMs || st.size !== recorded.size) {
+    return (
+      `File modified since last read: ${abs} ` +
+      `(recorded mtime=${Math.round(recorded.mtimeMs)}ms size=${recorded.size}, ` +
+      `now mtime=${Math.round(st.mtimeMs)}ms size=${st.size}). ` +
+      `Re-read it before writing so your edit is based on the current content. ` +
+      `(set KDUST_FS_FRESHNESS_GUARD=0 to disable this guard)`
+    );
+  }
+  return null;
+}
+
 // ---------------- read_file ----------------
 /**
  * Multimodal read_file (#175 item 4, ADR-0025, 2026-06-02).
@@ -236,6 +309,8 @@ export const readFile = defineTool({
 
       // --- Text path (unchanged behaviour) ---
       const buf = await fsp.readFile(abs, 'utf-8');
+      // Record on-disk identity for the read-before-write freshness guard.
+      recordRead(abs);
       if (args.offset !== undefined || args.limit !== undefined) {
         const lines = buf.split('\n');
         const start = args.offset ?? 0;
@@ -267,6 +342,8 @@ export const editFile = defineTool({
     try {
       const abs = chroot(root, args.path);
       if (!existsSync(abs)) return toText(`Error: File not found: ${abs}`, true);
+      const stale = freshnessError(abs);
+      if (stale) return toText(`Error: ${stale}`, true);
       const original = await fsp.readFile(abs, 'utf-8');
       const escaped = args.old_string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const re = new RegExp(escaped, 'g');
@@ -277,6 +354,7 @@ export const editFile = defineTool({
         return toText(`Error: expected ${expected} replacements, found ${count}`, true);
       const updated = original.replace(re, args.new_string);
       await fsp.writeFile(abs, updated, 'utf-8');
+      recordRead(abs); // refresh so our own write doesn't trip the next edit
       return toText(`Replaced ${count} occurrence(s) in ${abs}`);
     } catch (e: unknown) {
       return toText(`Error: ${errMessage(e)}`, true);
@@ -331,45 +409,186 @@ export const searchFiles = defineTool({
 });
 
 // ---------------- search_content ----------------
+/**
+ * ripgrep-backed content search (#175 item 1, 2026-06-02).
+ *
+ * Re-implemented on top of `rg` (v13, /usr/bin/rg) to reach
+ * Claude-Code `GrepTool` parity: regex, context lines, output
+ * modes, glob file filter and a total match cap. Backward
+ * compatible: the default call is still a case-insensitive,
+ * fixed-string substring search (`rg -F -i`) returning
+ * `file:line:match` lines, just like the old `grep -rni -F`.
+ *
+ * Read-only \u2192 AUTO-EXECUTE class. chroot + OUTPUT_MAX_BYTES
+ * byte cap are preserved; `head_limit` caps the number of result
+ * lines/files BEFORE the byte cap.
+ *
+ * rg exit codes: 0 = matches, 1 = no match (NOT an error here),
+ * 2 = real error (bad regex, unreadable path). We map 1 to the
+ * friendly "no matches" message and surface 2's stderr.
+ */
 export const searchContent = defineTool({
   name: 'search_content',
-  description: 'Search for a string inside files using grep (fixed-string mode).',
+  description:
+    'Search file contents with ripgrep. Default is a case-insensitive fixed-string ' +
+    '(substring) search. Set regex=true for a regular-expression pattern, output_mode ' +
+    "to switch between matching lines / file names / per-file counts, and context/glob " +
+    'to widen or narrow the search.',
   schema: z.object({
-    pattern: z.string().describe('The text to search for.'),
-    path: z.string().optional().describe('Absolute directory to search in.'),
-    file_pattern: z.string().optional().describe("glob file pattern, e.g. '*.ts'"),
+    pattern: z.string().describe('The text or regular expression to search for.'),
+    path: z.string().optional().describe('Absolute directory (or file) to search in.'),
+    // Kept for backward compatibility; `glob` is the preferred name.
+    file_pattern: z
+      .string()
+      .optional()
+      .describe("Deprecated alias for `glob`, e.g. '*.ts'. Use `glob`."),
+    glob: z
+      .string()
+      .optional()
+      .describe("ripgrep --glob to include/exclude files, e.g. '*.ts' or '!*.test.ts'."),
+    regex: z
+      .boolean()
+      .optional()
+      .describe('Treat pattern as a regular expression (default false \u2192 fixed string).'),
+    case_insensitive: z
+      .boolean()
+      .optional()
+      .describe('Case-insensitive match (default true, matching the legacy behaviour).'),
+    output_mode: z
+      .enum(['content', 'files_with_matches', 'count'])
+      .optional()
+      .describe(
+        "content (default): matching lines; files_with_matches: file names only; count: per-file match counts.",
+      ),
+    context: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Lines of context before AND after each match (rg -C). content mode only.'),
+    before_context: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Lines of context before each match (rg -B). content mode only.'),
+    after_context: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Lines of context after each match (rg -A). content mode only.'),
+    type: z
+      .string()
+      .optional()
+      .describe("ripgrep --type filter for standard file types, e.g. 'ts', 'py', 'go'."),
+    multiline: z
+      .boolean()
+      .optional()
+      .describe('Enable multiline mode (rg -U --multiline-dotall): . matches newlines, patterns span lines. Implies regex.'),
+    head_limit: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Cap the number of output lines (matches/files/counts) returned.'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Skip the first N output lines before applying head_limit (paging).'),
   }),
   async execute(root, args) {
     try {
       const cwd = chroot(root, args.path);
       const pattern = args.pattern;
-      const filePattern = args.file_pattern ?? '*';
-      const { stdout } = await pExecFile(
-        'grep',
-        [
-          '-rni',
-          '--binary-files=without-match',
-          '--exclude-dir=node_modules',
-          '--exclude-dir=.git',
-          '--exclude-dir=dist',
-          '--exclude-dir=.next',
-          '--include=' + filePattern,
-          '-F',
-          pattern,
-          cwd,
-        ],
-        { maxBuffer: 5 * 1024 * 1024 },
-      ).catch((err) => ({ stdout: err.stdout ?? '' }));
-      const out = (stdout as string).trim();
+      const mode = args.output_mode ?? 'content';
+      // Legacy behaviour was always case-insensitive (`grep -i`).
+      const caseInsensitive = args.case_insensitive ?? true;
+
+      // --max-columns bounds pathological lines (minified/base64) so a
+      // single match can't blow the byte budget on its own; the preview
+      // flag keeps a usable head of the line instead of dropping it.
+      const rgArgs: string[] = ['--color=never', '--max-columns', '500', '--max-columns-preview'];
+
+      // Pattern interpretation. multiline implies regex (no -F).
+      if (!args.regex && !args.multiline) rgArgs.push('-F');
+      if (caseInsensitive) rgArgs.push('-i');
+      if (args.multiline) rgArgs.push('-U', '--multiline-dotall');
+
+      // Exclude the same noise directories the rest of fs-tools ignores.
+      // rg honours .gitignore by default, but projects without one would
+      // otherwise descend into node_modules/dist/.next.
+      for (const dir of ['node_modules', '.git', 'dist', 'build', '.next', 'coverage']) {
+        rgArgs.push('--glob', `!**/${dir}/**`);
+      }
+      // User glob comes AFTER the excludes so an explicit include wins.
+      const userGlob = args.glob ?? args.file_pattern;
+      if (userGlob) rgArgs.push('--glob', userGlob);
+      if (args.type) rgArgs.push('--type', args.type);
+
+      // Output mode.
+      if (mode === 'files_with_matches') {
+        rgArgs.push('--files-with-matches');
+      } else if (mode === 'count') {
+        rgArgs.push('--count');
+      } else {
+        // content: file:line:match, like the old grep -n output.
+        rgArgs.push('--no-heading', '--with-filename', '--line-number');
+        if (args.context !== undefined) rgArgs.push('-C', String(args.context));
+        if (args.before_context !== undefined) rgArgs.push('-B', String(args.before_context));
+        if (args.after_context !== undefined) rgArgs.push('-A', String(args.after_context));
+      }
+
+      // Pattern terminator so a leading-dash pattern isn't parsed as a flag.
+      rgArgs.push('-e', pattern, '--', cwd);
+
+      const { stdout, code, stderr } = await pExecFile('rg', rgArgs, {
+        maxBuffer: 10 * 1024 * 1024,
+      })
+        .then((r) => ({ stdout: r.stdout as string, code: 0, stderr: '' }))
+        .catch(
+          (err: NodeJS.ErrnoException & {
+            stdout?: string;
+            stderr?: string;
+            code?: number | string;
+          }) => ({
+            stdout: err.stdout ?? '',
+            // rg uses exit code 1 for "no match"; anything else is a real error.
+            code: typeof err.code === 'number' ? err.code : 2,
+            stderr: err.stderr ?? errMessage(err),
+          }),
+        );
+
+      if (code === 2) {
+        return toText(`Error: ripgrep failed: ${stderr.trim() || 'unknown error'}`, true);
+      }
+
+      const out = stdout.trim();
       if (!out) return toText(`No matches found for: ${pattern}`);
-      const lines = out.split('\n').slice(0, 500);
-      // Extra byte-cap on top of the 500-line cap: long matched
-      // lines (e.g. minified assets) can still blow the budget.
+
+      const allLines = out.split('\n');
+      const total = allLines.length;
+      const offset = args.offset ?? 0;
+      // head_limit caps the window; default to the legacy 500-line ceiling.
+      const limit = args.head_limit ?? 500;
+      const lines = allLines.slice(offset, offset + limit);
+      const shown = lines.length;
+      const capped =
+        shown < total ? ` (showing ${shown} of ${total}, offset ${offset})` : '';
+
+      const label =
+        mode === 'files_with_matches'
+          ? `Files matching "${pattern}"${capped}:`
+          : mode === 'count'
+          ? `Match counts for "${pattern}"${capped}:`
+          : `Found ${lines.length} matching line(s) for "${pattern}"${capped}:`;
+
+      // Extra byte-cap on top of the line cap: long matched lines
+      // (e.g. minified assets) can still blow the budget.
       return toText(
-        truncateForMcp(
-          `Found ${lines.length} matches for "${pattern}" in the following files:\n\n${lines.join('\n')}`,
-          'search_content',
-        ),
+        truncateForMcp(`${label}\n\n${lines.join('\n')}`, 'search_content'),
       );
     } catch (e: unknown) {
       return toText(`Error: ${errMessage(e)}`, true);
@@ -616,7 +835,8 @@ export const createFile = defineTool({
   async execute(root, args) {
     try {
       const abs = chroot(root, args.path);
-      if (existsSync(abs)) {
+      const existed = existsSync(abs);
+      if (existed) {
         if (statSync(abs).isDirectory()) {
           return toText(`Error: path is a directory: ${abs}`, true);
         }
@@ -626,11 +846,15 @@ export const createFile = defineTool({
             true,
           );
         }
+        // Overwriting an existing file is a clobber risk → apply the guard.
+        const stale = freshnessError(abs);
+        if (stale) return toText(`Error: ${stale}`, true);
       }
       await fsp.mkdir(path.dirname(abs), { recursive: true });
       await fsp.writeFile(abs, args.content, 'utf-8');
+      recordRead(abs); // refresh so the new content is the baseline for later edits
       return toText(
-        `${existsSync(abs) ? 'Wrote' : 'Created'} ${abs} (${Buffer.byteLength(args.content, 'utf-8')} bytes)`,
+        `${existed ? 'Wrote' : 'Created'} ${abs} (${Buffer.byteLength(args.content, 'utf-8')} bytes)`,
       );
     } catch (e: unknown) {
       return toText(`Error: ${errMessage(e)}`, true);
@@ -696,6 +920,8 @@ export const applyPatch = defineTool({
           if (!existsSync(abs)) {
             return toText(`Error: Delete File "${op.path}": not found.`, true);
           }
+          const stale = freshnessError(abs);
+          if (stale) return toText(`Error: Delete File "${op.path}": ${stale}`, true);
           const prev = await fsp.readFile(abs, 'utf-8');
           plan.push({ abs, next: null, prev, label: `delete ${op.path}` });
         } else {
@@ -704,6 +930,8 @@ export const applyPatch = defineTool({
           if (!existsSync(abs)) {
             return toText(`Error: Update File "${op.path}": not found.`, true);
           }
+          const stale = freshnessError(abs);
+          if (stale) return toText(`Error: Update File "${op.path}": ${stale}`, true);
           const prev = await fsp.readFile(abs, 'utf-8');
           let updated: string;
           try {
@@ -738,9 +966,11 @@ export const applyPatch = defineTool({
       for (const w of plan) {
         if (w.next === null) {
           await fsp.rm(w.abs, { force: true });
+          readFileState.delete(w.abs); // gone — drop any stale freshness entry
         } else {
           await fsp.mkdir(path.dirname(w.abs), { recursive: true });
           await fsp.writeFile(w.abs, w.next, 'utf-8');
+          recordRead(w.abs); // refresh baseline to the just-written content
         }
         done.push(w);
       }

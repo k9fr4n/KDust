@@ -231,6 +231,10 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
             kind: 'project' as const,
             projectId: scope.project.id,
             fsPath: scope.fsPath,
+            // Raw git remote → "Open repo" button is rendered client-
+            // side only when gitUrlToWebUrl resolves it (Franck
+            // 2026-06-02).
+            gitUrl: scope.project.gitUrl,
             parentFsPath: scope.folder
               ? (await getFolderAncestors(scope.folder.id)).map((f) => f.name).join('/')
               : '',

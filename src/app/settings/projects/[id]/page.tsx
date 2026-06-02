@@ -24,10 +24,23 @@
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Save, RefreshCw, Trash2, Check, Bot, Plus, X, Folder } from 'lucide-react';
+import {
+  ArrowLeft,
+  Save,
+  RefreshCw,
+  Trash2,
+  Check,
+  Bot,
+  Plus,
+  X,
+  Folder,
+  MessageSquarePlus,
+  ExternalLink,
+} from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { errMessage } from '@/lib/errors';
 import { UI_SAVE_RESET_MS } from '@/lib/constants';
+import { gitUrlToWebUrl } from '@/lib/git-web-url';
 import { DocumentTitle } from '@/components/DocumentTitle';
 
 type Project = {
@@ -298,6 +311,16 @@ export default function ProjectSettingsPage({
     );
   }
 
+  // Scope segment for the chat surface. fsPath is the canonical
+  // scope (ADR-0020); falls back to name on un-migrated rows. The
+  // ADR-0023 middleware rewrites `/<fsPath>/chat` to the root chat
+  // route and getCurrentScope validates the head against
+  // Project.fsPath, so a stale value harmlessly degrades to root.
+  const chatScope = p.fsPath ?? p.name;
+  // Browser URL of the git host for the "Open repo" button. null
+  // when gitUrl is empty or unrecognised → button rendered disabled.
+  const repoWebUrl = gitUrlToWebUrl(p.gitUrl);
+
   return (
     <div className="space-y-6">
       <DocumentTitle title={p.name ? `${p.name} · Project` : 'Project'} />
@@ -307,6 +330,27 @@ export default function ProjectSettingsPage({
         scope={p.name}
         right={
           <>
+            <button
+              onClick={() => router.push(`/${chatScope}/chat`)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm"
+              title="Start a new chat scoped to this project"
+            >
+              <MessageSquarePlus size={14} /> New chat
+            </button>
+            {/* Only shown when the project is linked to a recognisable
+                git repo (gitUrlToWebUrl returns non-null). Franck
+                2026-06-02: no disabled placeholder when there's no repo. */}
+            {repoWebUrl && (
+              <a
+                href={repoWebUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm"
+                title={`Open the git repository in a new tab (${repoWebUrl})`}
+              >
+                <ExternalLink size={14} /> Open repo
+              </a>
+            )}
             <button
               onClick={() => router.push('/settings/projects?create=1')}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 text-sm"

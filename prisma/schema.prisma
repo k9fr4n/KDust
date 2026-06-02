@@ -61,6 +61,13 @@ model AppConfig {
   // When unset the bot replies with a /agent <sId> hint on first
   // contact instead of failing.
   telegramDefaultAgentSId String?
+  // Global default Dust agent sId for the web /chat composer when
+  // NO project is active (root / folder scope) and the user has
+  // not picked an agent (Franck 2026-06-02). Inserted in the chat
+  // agent-resolution chain just before the list[0] auto-fallback:
+  //   conv > user pick > Project.defaultAgentSId > THIS > list[0]
+  // null = keep the legacy list[0] (alphabetical first) behaviour.
+  chatDefaultAgentSId     String?
   // getUpdates long-poll cursor. Persisted across restarts so we
   // don't re-deliver pending Telegram messages on a redeploy.
   // Stored as last_update_id + 1 (the value to pass back as

@@ -48,6 +48,11 @@ const Patch = z.object({
   telegramChatEnabled: z.boolean().optional(),
   telegramAllowedChatIds: z.string().nullable().optional(),
   telegramDefaultAgentSId: z.string().nullable().optional(),
+  // Global web-chat default agent sId (Franck 2026-06-02). Lightly
+  // validated like telegramDefaultAgentSId — the chat composer
+  // re-validates against the live agents list and falls back to
+  // list[0] if the sId no longer resolves.
+  chatDefaultAgentSId: z.string().nullable().optional(),
   leafRunTimeoutMs: timeoutMs,
   // IANA timezone validated against Node's Intl database. Refuse
   // typos at the boundary rather than silently saving a value

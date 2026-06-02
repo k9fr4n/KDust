@@ -168,6 +168,15 @@ export type ChatInitialScope = {
   projectName: string | null;
   /** Project-level default agent override (kind='project' only). */
   defaultAgentSId: string | null;
+  /**
+   * Global web-chat default agent (AppConfig.chatDefaultAgentSId).
+   * Used as a fallback BEFORE the list[0] auto-pick when no project
+   * default, no open-conversation agent and no manual pick claim the
+   * selection. Lets the operator make their own assistant the chat
+   * default in root / folder scope instead of the alphabetical
+   * first agent. null = legacy list[0] behaviour.
+   */
+  globalDefaultAgentSId: string | null;
 };
 
 export default function ChatPage({
@@ -710,11 +719,20 @@ function ChatPageInner({
       .then((j) => {
         const list = j.agents ?? [];
         setAgents(list);
-        // Auto-fallback to list[0]. Only applied when nothing stronger
-        // has claimed the selection yet. Project default (resolved
-        // later in /api/projects/current) will overwrite this.
+        // Auto-fallback chain. Only applied when nothing stronger
+        // has claimed the selection yet. The project default
+        // (resolved in the scope effect below) still overwrites
+        // this 'auto' pick. The global chat default
+        // (AppConfig.chatDefaultAgentSId) is preferred over the
+        // alphabetical list[0] so root/folder chats land on the
+        // operator's chosen assistant — but only if it still
+        // resolves to a live agent, else we degrade to list[0].
         if (list.length) {
-          setAgentSId((prev) => prev || list[0].sId);
+          const globalDef = initialScope.globalDefaultAgentSId;
+          const globalResolves =
+            !!globalDef && list.some((a: { sId: string }) => a.sId === globalDef);
+          const fallback = globalResolves ? globalDef! : list[0].sId;
+          setAgentSId((prev) => prev || fallback);
           setAgentPickedBy((p) => (p === 'none' ? 'auto' : p));
         }
       })

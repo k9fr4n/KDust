@@ -40,6 +40,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl ca-certificates tini git openssh-client gosu curl gnupg rsync jq \
     ripgrep unzip xz-utils make \
+    # poppler-utils provides `pdftotext` for fs-cli read_file PDF extraction
+    # (ADR-0025). System binary, no npm dependency (like ripgrep above).
+    poppler-utils \
     # python3 stack (Franck 2026-05-12, ADR-0016).
     # Provides a working Python runtime to skills whose
     # `scripts/` are written in Python. No pip install at image

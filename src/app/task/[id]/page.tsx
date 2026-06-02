@@ -9,10 +9,8 @@
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Pencil, History } from 'lucide-react';
 import { db } from '@/lib/db';
-import { TaskDeleteButton } from '@/components/TaskDeleteButton';
-import { TaskRunButton } from '@/components/TaskRunButton';
+import { TaskActionsMenu } from '@/components/TaskActionsMenu';
 import { PageHeader } from '@/components/PageHeader';
 import { resolveBranchPolicy } from '@/lib/branch-policy';
 import { getAppTimezone } from '@/lib/config';
@@ -89,32 +87,15 @@ export default async function TaskDetail({ params }: { params: Promise<{ id: str
       <PageHeader
         title={task.name}
         right={
-          <>
-            <TaskRunButton
-              id={task.id}
-              name={task.name}
-              isGeneric={task.projectPath === null}
-            />
-            <Link
-              href={`/run?task=${task.id}`}
-              className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-              title={`${runCount.toLocaleString('fr-FR')} past run${runCount === 1 ? '' : 's'}`}
-            >
-              <History size={14} />
-              <span className="hidden sm:inline">
-                History ({runCount.toLocaleString('fr-FR')})
-              </span>
-            </Link>
-            <Link
-              href={`/task/${task.id}/edit`}
-              className="flex items-center gap-1 text-sm px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
-              title="Edit"
-            >
-              <Pencil size={14} />
-              <span className="hidden sm:inline">Edit</span>
-            </Link>
-            <TaskDeleteButton id={task.id} name={task.name} mandatory={task.mandatory} />
-          </>
+          <TaskActionsMenu
+            id={task.id}
+            name={task.name}
+            isGeneric={task.projectPath === null}
+            mandatory={task.mandatory}
+            runCount={runCount}
+            historyHref={`/run?task=${task.id}`}
+            editHref={`/task/${task.id}/edit`}
+          />
         }
       />
       <p className="text-sm text-slate-500 mb-4">

@@ -29,7 +29,7 @@
  */
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ChevronRight, MessageCircle, Settings, Clock } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { db } from '@/lib/db';
 import { getCurrentScope } from '@/lib/project-url';
@@ -37,8 +37,7 @@ import { scopedHref } from '@/lib/scope-href';
 import { getContextUsage } from '@/lib/dust/internal-api';
 import { TaskLiveStatus } from '@/components/TaskLiveStatus';
 import { CommandsLive } from '@/components/CommandsLive';
-import { OpenConversationLink } from '@/components/OpenConversationLink';
-import { RunDetailActions } from '@/components/RunDetailActions';
+import { RunActionsMenu } from '@/components/RunActionsMenu';
 import { ToolInvocationsPanel } from '@/components/ChatMessageBubble';
 import { parseToolInvocations } from '@/lib/tool-invocations';
 import { MessageMarkdown } from '@/components/MessageMarkdown';
@@ -311,34 +310,13 @@ export default async function RunDetail({ params }: { params: Promise<{ id: stri
         title={<>Run <span className="font-mono text-base">{run.id.slice(0, 8)}</span></>}
         scope={run.task ? run.task.name : '(task deleted)'}
         right={
-          <>
-            {run.task && (
-              <Link
-                href={scopedHref(sp, `/task/${run.task.id}`)}
-                className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium"
-                title="View task"
-              >
-                <Settings size={14} />
-                <span className="hidden sm:inline">View task</span>
-              </Link>
-            )}
-            {conv && (
-              <span title="Open chat" className="inline-flex">
-                <OpenConversationLink
-                  conversationId={conv.id}
-                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded border border-brand-500 text-brand-700 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 hover:bg-brand-100 dark:hover:bg-brand-900/40 text-sm font-medium"
-                >
-                  <MessageCircle size={14} />
-                  <span className="hidden sm:inline">Open chat</span>
-                </OpenConversationLink>
-              </span>
-            )}
-            <RunDetailActions
-              runId={run.id}
-              taskId={run.taskId}
-              status={run.status}
-            />
-          </>
+          <RunActionsMenu
+            runId={run.id}
+            taskId={run.taskId}
+            status={run.status}
+            conversationId={conv ? conv.id : null}
+            taskHref={run.task ? scopedHref(sp, `/task/${run.task.id}`) : null}
+          />
         }
       />
       <p className="text-sm text-slate-500 mb-4">

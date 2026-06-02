@@ -193,19 +193,121 @@ function freshnessError(abs: string): string | null {
 }
 
 // ---------------- read_file ----------------
+/**
+ * Multimodal read_file (#175 item 4, ADR-0025, 2026-06-02).
+ *
+ * The fs-cli result wire shape is text-only, so we can't return image
+ * vision blocks here (that would need an fs-server content-shape change
+ * + a `sharp`-class dependency, deliberately out of scope). What we CAN
+ * do cheaply and with real value is:
+ *   - extract PDF text via `pdftotext` (poppler-utils, a system binary
+ *     like rg — no npm dependency), with optional page ranges;
+ *   - detect other binary files (images, archives) and return a short,
+ *     honest note instead of dumping raw bytes that pollute the context.
+ * Plain-text reads are unchanged.
+ */
+const IMAGE_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.ico', '.avif', '.heic',
+]);
+
+/** Parse a poppler page spec: "3" or "1-5". Returns null if malformed. */
+function parsePageRange(spec: string): { first: number; last: number } | null {
+  const s = spec.trim();
+  if (/^\d+$/.test(s)) {
+    const n = parseInt(s, 10);
+    return n > 0 ? { first: n, last: n } : null;
+  }
+  const m = s.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (m) {
+    const first = parseInt(m[1], 10);
+    const last = parseInt(m[2], 10);
+    if (first > 0 && last >= first) return { first, last };
+  }
+  return null;
+}
+
+/** Read up to `n` leading bytes for magic/binary sniffing. */
+async function readHead(abs: string, n: number): Promise<Buffer> {
+  const fd = await fsp.open(abs, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const { bytesRead } = await fd.read(buf, 0, n, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fd.close();
+  }
+}
+
 export const readFile = defineTool({
   name: 'read_file',
   description:
-    "Reads a file from the project workspace and returns its contents. Supports text files. " +
-    "Optionally reads only a range of lines via offset and limit.",
+    "Reads a file from the project workspace. Returns text for text files, " +
+    "and extracted text for PDFs (optionally a `pages` range, e.g. '1-5'). " +
+    "Optionally reads only a range of lines via offset and limit (text only). " +
+    "Binary files (images, archives) return a short descriptor, not raw bytes.",
   schema: z.object({
     path: z.string().describe('Absolute path to the file (must be under the project root).'),
-    offset: z.number().int().min(0).optional().describe('0-indexed line number to start from.'),
-    limit: z.number().int().positive().optional().describe('Max number of lines to read.'),
+    offset: z.number().int().min(0).optional().describe('0-indexed line number to start from (text only).'),
+    limit: z.number().int().positive().optional().describe('Max number of lines to read (text only).'),
+    pages: z
+      .string()
+      .optional()
+      .describe("PDF page range, e.g. '3' or '1-5'. Ignored for non-PDF files."),
   }),
   async execute(root, args) {
     try {
       const abs = chroot(root, args.path);
+      if (!existsSync(abs)) return toText(`Error: File not found: ${abs}`, true);
+      if (statSync(abs).isDirectory()) return toText(`Error: path is a directory: ${abs}`, true);
+
+      const ext = path.extname(abs).toLowerCase();
+      const head = await readHead(abs, 8192);
+      const isPdf = ext === '.pdf' || head.subarray(0, 5).toString('latin1') === '%PDF-';
+
+      // --- PDF: extract text via poppler `pdftotext` ---
+      if (isPdf) {
+        const pdfArgs = ['-q', '-enc', 'UTF-8'];
+        if (args.pages !== undefined) {
+          const range = parsePageRange(args.pages);
+          if (!range) {
+            return toText(`Error: invalid pages "${args.pages}" (use "3" or "1-5")`, true);
+          }
+          pdfArgs.push('-f', String(range.first), '-l', String(range.last));
+        }
+        // `pdftotext [opts] <file> -` writes the extracted text to stdout.
+        pdfArgs.push(abs, '-');
+        const { stdout, ok, errMsg } = await pExecFile('pdftotext', pdfArgs, {
+          maxBuffer: 10 * 1024 * 1024,
+        })
+          .then((r) => ({ stdout: r.stdout as string, ok: true, errMsg: '' }))
+          .catch((err: NodeJS.ErrnoException & { stdout?: string; stderr?: string }) => ({
+            stdout: err.stdout ?? '',
+            ok: false,
+            errMsg:
+              err.code === 'ENOENT'
+                ? 'pdftotext not installed (poppler-utils missing from the image)'
+                : (err.stderr ?? errMessage(err)),
+          }));
+        if (!ok && !stdout) {
+          return toText(`Error: PDF text extraction failed: ${errMsg}`, true);
+        }
+        const text = String(stdout);
+        const label = `[PDF text${args.pages ? ` pages ${args.pages}` : ''}: ${abs}]\n\n`;
+        const body = text.trim() || '(no extractable text — likely a scanned/image-only PDF)';
+        return toText(truncateForMcp(label + body, 'read_file'));
+      }
+
+      // --- Other binary (images, archives, ...): don't dump raw bytes ---
+      if (head.includes(0)) {
+        const size = statSync(abs).size;
+        const kind = IMAGE_EXTS.has(ext) ? `image (${ext.slice(1)})` : 'binary';
+        return toText(
+          `[${kind} file, ${size} bytes: ${abs}] — not text. fs-cli read_file returns ` +
+            `text and PDF only; for images, attach the file to the conversation to view it.`,
+        );
+      }
+
+      // --- Text path (unchanged behaviour) ---
       const buf = await fsp.readFile(abs, 'utf-8');
       // Record on-disk identity for the read-before-write freshness guard.
       recordRead(abs);

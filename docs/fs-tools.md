@@ -20,7 +20,7 @@ writable, preserving blind `apply_patch` flows). Disable process-wide with
 
 | Tool | Kind | Purpose |
 |---|---|---|
-| `read_file` | read | Read a file (optional offset/limit). |
+| `read_file` | read | Read text, or extract PDF text (`pages`); binary → descriptor. |
 | `edit_file` | write | Replace one exact snippet (`old_string`→`new_string`). |
 | `create_file` | write | Create a NEW file (parent dirs auto-created). |
 | `apply_patch` | write | Apply a multi-file, multi-hunk patch atomically. |
@@ -28,6 +28,21 @@ writable, preserving blind `apply_patch` flows). Disable process-wide with
 | `search_content` | read | ripgrep inside files (regex, context, output modes). |
 | `run_command` | exec | Spawn a shell command in the project root. |
 | `export_fil_to_workdir` | write | Materialise a Dust `fil_*` onto disk. |
+
+## `read_file` (text + PDF)
+
+Returns text for text files. For **PDFs** (by `.pdf` extension or `%PDF-`
+magic) it extracts text via `pdftotext` (poppler-utils, shipped in the
+image), with an optional `pages` range (`"3"` or `"1-5"`). A scanned /
+image-only PDF yields a clear "no extractable text" note. **Binary** files
+(images, archives) return a short `[image …]` / `[binary …]` descriptor
+instead of raw bytes — image *vision* blocks are not supported by fs-cli
+(the result wire shape is text-only); attach the image to the conversation
+to view it. `offset`/`limit` apply to text reads only.
+
+```json
+{ "path": "docs/spec.pdf", "pages": "1-5" }
+```
 
 ## `create_file`
 

@@ -2668,6 +2668,55 @@ than misapplied.
   both shipped since `create_file` is the simpler primitive agents
   reach for on a single new file.
 
+### ADR-0025 — fs-cli read_file: PDF text extraction + binary guard (2026-06-02)
+
+**Status**: Proposed (2026-06-02, Franck).
+
+**Context**. Issue #175 item 4. Claude Code's `FileReadTool` reads
+images as resized vision blocks (via `sharp`) and extracts PDF pages.
+KDust's `read_file` was text-only and would dump raw bytes for a PDF
+or PNG, polluting the model context. Two KDust constraints shape the
+response: (1) adding a top-level npm dependency (`sharp`, native)
+requires an ADR and bloats the image; (2) the fs-cli result wire
+shape is **text-only** (`src/lib/mcp/fs-server.ts` types tool results
+as `{type:'text'}[]`), so returning image vision blocks would require
+reworking that shape and the byte-accounting around it.
+
+**Decision**. Implement the high-value, low-risk half:
+
+- **PDF → text** via `pdftotext` (poppler-utils), a *system* binary
+  added to the runner image (like `ripgrep`) — **no npm dependency**.
+  `read_file` detects a PDF by `.pdf` extension or `%PDF-` magic and
+  shells out to `pdftotext -q -enc UTF-8 [-f F -l L] <file> -`. An
+  optional `pages` arg (`"3"` / `"1-5"`) maps to `-f/-l`. Scanned /
+  image-only PDFs return a clear "no extractable text" note.
+- **Other binary** (NUL byte in the first 8 KB) returns a short
+  `[image …]` / `[binary …]` descriptor instead of raw bytes.
+- **Text** reads are unchanged (offset/limit preserved).
+
+**Explicitly out of scope**: image *vision* blocks. For a coding
+agent the value is marginal and the cost is high (new dep +
+result-shape change). Agents that must *see* an image attach it to
+the conversation (Dust's native `files` server handles vision).
+
+**Consequences**.
+
+- PDFs in project repos (specs, vendor docs) become readable with no
+  npm dependency and no result-shape change; +~15 MB image for
+  poppler-utils.
+- A `read_file` on an image now returns a useful descriptor instead
+  of garbage, saving context budget.
+- `pdftotext` absence is handled gracefully (ENOENT → clear error),
+  so the tool degrades rather than throwing if the binary is missing.
+
+**Alternatives considered**.
+
+- *`sharp` + vision blocks*. Full Claude-Code parity, but a native
+  npm dep + fs-server content-shape change for marginal coding value.
+  Deferred to a future ADR if a concrete need appears.
+- *`pdfjs` / `pdf-parse` (npm)*. Pure-JS PDF text, but a top-level
+  dep (ADR-gated) and heavier than shelling to a system binary.
+
 ### ADR-0024 — fs-cli read-before-write freshness guard (2026-06-02)
 
 **Status**: Proposed (2026-06-02, Franck).

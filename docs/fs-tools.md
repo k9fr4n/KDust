@@ -18,6 +18,18 @@ the *modified-since-read* case is blocked (files never read are still
 writable, preserving blind `apply_patch` flows). Disable process-wide with
 `KDUST_FS_FRESHNESS_GUARD=0`.
 
+## Curly-quote normalization (ADR-0026)
+
+An LLM can't reliably emit typographic curly quotes (`‘ ’ “ ”`), so a
+straight-quote `old_string` / hunk context never matches a file that uses
+them. `edit_file` and `apply_patch` therefore run an **exact match first**,
+and only on failure fall back to a **curly⇄straight normalized** match. On
+a normalized hit the original file's typography is preserved (context lines
+are emitted from the file; `new_string` / `+` lines are re-curled to match
+the file's style). The fuzziness is limited to quote equivalence — there is
+**no** whitespace-drift or offset matching, so otherwise-stale context is
+still rejected. Disable process-wide with `KDUST_FS_QUOTE_NORMALIZE=0`.
+
 | Tool | Kind | Purpose |
 |---|---|---|
 | `read_file` | read | Read text, or extract PDF text (`pages`); binary → descriptor. |
@@ -81,9 +93,12 @@ file already written, so the tree never lands half-applied.
 
 Matching is **strict and deterministic**: each hunk's `(context + removed)`
 lines must appear as a *contiguous* block, searched forward from the end of
-the previous hunk. There is no fuzzy/offset matching — if the agent's
-context is stale the patch is rejected wholesale (`stale context?`) rather
-than applied at the wrong location. Prefer `apply_patch` over a series of
+the previous hunk. The only tolerated fuzziness is curly⇄straight quote
+equivalence (ADR-0026): an exact scan runs first, then a quote-normalized
+fallback. There is no whitespace-drift or offset matching — if the agent's
+context is otherwise stale the patch is rejected wholesale (`stale
+context?`) rather than applied at the wrong location. Prefer `apply_patch`
+over a series of
 `edit_file` calls when a change spans several spots or files and must land
 atomically.
 

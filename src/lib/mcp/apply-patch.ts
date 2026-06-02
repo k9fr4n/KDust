@@ -28,10 +28,16 @@
  * Hunk matching for Update File is intentionally STRICT and
  * deterministic: each hunk's (context + removed) lines must appear as
  * a contiguous block in the current file, searched forward from the
- * previous hunk's end. No fuzzy/offset matching — if the agent's
- * context is stale, the patch is rejected wholesale rather than
+ * previous hunk's end. The ONLY tolerated fuzziness is curly⇄straight
+ * quote equivalence (#175 item 2): an exact line-equality scan runs
+ * first, and only if it fails does a quote-normalized scan run as a
+ * fallback (opt-out via KDUST_FS_QUOTE_NORMALIZE=0). There is NO
+ * whitespace-drift or offset matching — if the agent's context is
+ * otherwise stale, the patch is rejected wholesale rather than
  * applied to the wrong location.
  */
+
+import { normalizeQuotes, preserveQuoteStyle, quoteNormalizeEnabled } from './quote-normalize';
 
 export type PatchLineOp = ' ' | '-' | '+';
 
@@ -193,10 +199,10 @@ export function applyHunksToContent(original: string, hunks: Hunk[]): string {
   for (let h = 0; h < hunks.length; h++) {
     const lines = hunks[h].lines;
     const search = lines.filter((l) => l.op === ' ' || l.op === '-').map((l) => l.text);
-    const replace = lines.filter((l) => l.op === ' ' || l.op === '+').map((l) => l.text);
 
     if (search.length === 0) {
       // Pure insertion with no anchor: only valid for an empty file.
+      const replace = lines.filter((l) => l.op === ' ' || l.op === '+').map((l) => l.text);
       if (origLines.length === 1 && origLines[0] === '' && cursor === 0) {
         out.push(...replace);
         cursor = origLines.length;
@@ -215,7 +221,27 @@ export function applyHunksToContent(original: string, hunks: Hunk[]): string {
     }
     // Carry over untouched lines between the cursor and the match.
     out.push(...origLines.slice(cursor, at));
-    out.push(...replace);
+
+    // The matched file region carries the file's REAL typography (which may
+    // differ from the patch's straight quotes when the block matched via
+    // quote normalization). Emit context lines from the file itself, and
+    // re-apply the file's curly-quote style to '+' added lines so the edit
+    // doesn't silently rewrite typography it never meant to touch.
+    const matched = origLines.slice(at, at + search.length);
+    const searchText = search.join('\n');
+    const actualText = matched.join('\n');
+    const normalized = searchText !== actualText;
+    let m = 0; // pointer into the matched file region (consumed by ' ' and '-')
+    for (const l of lines) {
+      if (l.op === ' ') {
+        out.push(matched[m]);
+        m++;
+      } else if (l.op === '-') {
+        m++;
+      } else {
+        out.push(normalized ? preserveQuoteStyle(searchText, actualText, l.text) : l.text);
+      }
+    }
     cursor = at + search.length;
   }
   // Tail after the last hunk.
@@ -223,14 +249,37 @@ export function applyHunksToContent(original: string, hunks: Hunk[]): string {
   return out.join('\n');
 }
 
-/** Find `needle` as a contiguous block in `hay` starting at >= from. */
+/**
+ * Find `needle` as a contiguous block in `hay` starting at >= from.
+ * Runs an EXACT line-equality scan first; only if that finds nothing
+ * does it fall back to a curly⇄straight quote-normalized scan
+ * (#175 item 2, opt-out via KDUST_FS_QUOTE_NORMALIZE=0). Exact matches
+ * therefore always win over normalized ones across the whole array.
+ */
 function findBlock(hay: string[], needle: string[], from: number): number {
   if (needle.length === 0) return -1;
   const last = hay.length - needle.length;
-  for (let i = Math.max(0, from); i <= last; i++) {
+  const start = Math.max(0, from);
+
+  // Pass 1 — exact equality (unchanged behaviour).
+  for (let i = start; i <= last; i++) {
     let ok = true;
     for (let j = 0; j < needle.length; j++) {
       if (hay[i + j] !== needle[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return i;
+  }
+
+  // Pass 2 — curly-quote normalized fallback.
+  if (!quoteNormalizeEnabled()) return -1;
+  const nNeedle = needle.map(normalizeQuotes);
+  for (let i = start; i <= last; i++) {
+    let ok = true;
+    for (let j = 0; j < nNeedle.length; j++) {
+      if (normalizeQuotes(hay[i + j]) !== nNeedle[j]) {
         ok = false;
         break;
       }

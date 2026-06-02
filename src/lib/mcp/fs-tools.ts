@@ -16,6 +16,11 @@ import {
   PatchError,
   type PatchOp,
 } from './apply-patch';
+import {
+  findNormalizedMatchIndices,
+  preserveQuoteStyle,
+  quoteNormalizeEnabled,
+} from './quote-normalize';
 
 const pExecFile = promisify(execFile);
 
@@ -331,7 +336,9 @@ export const editFile = defineTool({
   name: 'edit_file',
   description:
     "Replace text in a file. `old_string` must uniquely identify the target (include 3+ lines of context). " +
-    "Use expected_replacements to update multiple identical occurrences.",
+    "Use expected_replacements to update multiple identical occurrences. " +
+    "If an exact match fails, a curly\u21c4straight quote-normalized match is tried automatically " +
+    "(typographic \u2018 \u2019 \u201c \u201d in the file are matched by plain ' and \" in old_string).",
   schema: z.object({
     path: z.string().describe('Absolute path to the file (must be under the project root).'),
     old_string: z.string().describe('Exact text to find.'),
@@ -345,17 +352,55 @@ export const editFile = defineTool({
       const stale = freshnessError(abs);
       if (stale) return toText(`Error: ${stale}`, true);
       const original = await fsp.readFile(abs, 'utf-8');
+      const expected = args.expected_replacements ?? 1;
       const escaped = args.old_string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const re = new RegExp(escaped, 'g');
       const count = (original.match(re) ?? []).length;
-      const expected = args.expected_replacements ?? 1;
+
+      if (count === expected) {
+        // Function replacer so `$&`, `$1`, ... inside new_string are
+        // written literally instead of being interpreted as replacement
+        // patterns by String.prototype.replace.
+        const updated = original.replace(re, () => args.new_string);
+        await fsp.writeFile(abs, updated, 'utf-8');
+        recordRead(abs); // refresh so our own write doesn't trip the next edit
+        return toText(`Replaced ${count} occurrence(s) in ${abs}`);
+      }
+
+      // Exact match failed. Try the NARROW curly-straight quote fuzzy pass
+      // (#175 item 2) before giving up: an LLM can't emit curly quotes, so
+      // a straight-quote old_string never matches a typographic source file.
+      // Only attempt it when there is no exact match at all, to avoid
+      // surprising behaviour when some occurrences match and some don't.
+      if (count === 0 && quoteNormalizeEnabled()) {
+        const idxs = findNormalizedMatchIndices(original, args.old_string);
+        if (idxs.length === expected) {
+          const len = args.old_string.length;
+          let out = '';
+          let cursor = 0;
+          for (const idx of idxs) {
+            const actual = original.substring(idx, idx + len);
+            const replacement = preserveQuoteStyle(args.old_string, actual, args.new_string);
+            out += original.slice(cursor, idx) + replacement;
+            cursor = idx + len;
+          }
+          out += original.slice(cursor);
+          await fsp.writeFile(abs, out, 'utf-8');
+          recordRead(abs);
+          return toText(
+            `Replaced ${idxs.length} occurrence(s) in ${abs} (matched via curly-quote normalization)`,
+          );
+        }
+        if (idxs.length > 0) {
+          return toText(
+            `Error: expected ${expected} replacements, found ${idxs.length} (after curly-quote normalization)`,
+            true,
+          );
+        }
+      }
+
       if (count === 0) return toText(`Error: old_string not found`, true);
-      if (count !== expected)
-        return toText(`Error: expected ${expected} replacements, found ${count}`, true);
-      const updated = original.replace(re, args.new_string);
-      await fsp.writeFile(abs, updated, 'utf-8');
-      recordRead(abs); // refresh so our own write doesn't trip the next edit
-      return toText(`Replaced ${count} occurrence(s) in ${abs}`);
+      return toText(`Error: expected ${expected} replacements, found ${count}`, true);
     } catch (e: unknown) {
       return toText(`Error: ${errMessage(e)}`, true);
     }

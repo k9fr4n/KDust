@@ -6,6 +6,18 @@ access. Every tool is **chrooted** to `/projects/<project>` via `chroot()`
 and its output is byte-capped (`KDUST_MCP_TOOL_OUTPUT_MAX_BYTES`) to stay
 under the model context window.
 
+## Read-before-write freshness guard (ADR-0024)
+
+`read_file` records each file's `(mtime, size)`. `edit_file`,
+`create_file` (overwrite) and `apply_patch` (update/delete/move) refuse to
+write a file that **changed on disk since that recorded read** — the
+typical cause being a formatter/codegen run via `run_command` between the
+agent's read and its edit, which would make the agent's `old_string` /
+patch context stale. The error asks the agent to re-read the file. Only
+the *modified-since-read* case is blocked (files never read are still
+writable, preserving blind `apply_patch` flows). Disable process-wide with
+`KDUST_FS_FRESHNESS_GUARD=0`.
+
 | Tool | Kind | Purpose |
 |---|---|---|
 | `read_file` | read | Read a file (optional offset/limit). |

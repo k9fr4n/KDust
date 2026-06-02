@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { DocumentTitle } from '@/components/DocumentTitle';
 import { PageHeader } from '@/components/PageHeader';
+import { ChatDefaultAgentCard } from '@/components/ChatDefaultAgentCard';
 import { extractRepoSlugFromGitUrl } from '@/lib/git-url';
 
 type P = {
@@ -429,6 +430,11 @@ function ProjectsPageInner() {
           <ArrowLeft size={16} /> Settings
         </Link>
       </nav>
+
+      {/* Global web-chat default agent (Franck 2026-06-02). Governs
+          /chat agent selection in root / folder scope — see the
+          component header for the full resolution order. */}
+      <ChatDefaultAgentCard />
 
       {showFolders && (
         <FoldersPanel tree={tree} onChanged={refresh} setMsg={setMsg} />

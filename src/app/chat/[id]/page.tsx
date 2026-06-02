@@ -1,6 +1,7 @@
 import { db } from '@/lib/db';
 import ChatClient from '../_ChatClient';
 import { getCurrentScope } from '@/lib/project-url';
+import { getAppConfig } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +33,7 @@ export default async function ChatDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const scope = await getCurrentScope();
+  const [scope, cfg] = await Promise.all([getCurrentScope(), getAppConfig()]);
   return (
     <ChatClient
       initialConversationId={id}
@@ -42,6 +43,7 @@ export default async function ChatDetailPage({
         projectName: scope.kind === 'root' ? null : scope.fsPath,
         defaultAgentSId:
           scope.kind === 'project' ? scope.project.defaultAgentSId ?? null : null,
+        globalDefaultAgentSId: cfg.chatDefaultAgentSId ?? null,
       }}
     />
   );

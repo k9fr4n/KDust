@@ -72,3 +72,32 @@ No extra dependency: pure pointer events + CSS transitions.
 Legacy `ToolInvocationsPanel` (pre-ADR-0017 message rows) still uses
 the old inline `<details>` UI — those rows have no `result` to show
 anyway.
+
+## Agent selection (Franck 2026-06-02)
+
+The composer in `_ChatClient` resolves which agent a new turn targets
+through a priority chain. Highest claim wins:
+
+| Priority | Source | `agentPickedBy` | Scope |
+|----------|--------|-----------------|-------|
+| 1 | Open conversation's stored `agentSId` | `conv` | any |
+| 2 | Manual pick in the agent dropdown | `user` | any |
+| 3 | `Project.defaultAgentSId` | `auto` | project only |
+| 4 | `AppConfig.chatDefaultAgentSId` (global chat default) | `auto` | root / folder |
+| 5 | `list[0]` — alphabetical first agent | `auto` | any |
+
+- **Priority 3** comes from the server-resolved scope
+  (`initialScope.defaultAgentSId`, set only when `kind === 'project'`).
+- **Priority 4** is the global web-chat default. It is read by the
+  `/chat` server components (`getAppConfig().chatDefaultAgentSId`) and
+  passed in as `initialScope.globalDefaultAgentSId`. It is applied as
+  the fallback *before* `list[0]`, and only when it still resolves to a
+  live agent in `/api/agents` (else it degrades to `list[0]`). A project
+  with its own default agent (priority 3) always wins inside that
+  project, so the global default only governs root / folder scope.
+- Configured at **/settings/projects** via `ChatDefaultAgentCard`
+  (PATCH `/api/settings { chatDefaultAgentSId }`). `null` = legacy
+  `list[0]` behaviour.
+- This is the web-chat analogue of `AppConfig.telegramDefaultAgentSId`
+  for the Telegram bridge — distinct columns so the two surfaces can
+  diverge.

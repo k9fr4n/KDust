@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import ChatClient from './_ChatClient';
 import { getCurrentScope } from '@/lib/project-url';
+import { getAppConfig } from '@/lib/config';
 
 export const metadata: Metadata = { title: 'Chat' };
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export const dynamic = 'force-dynamic';
  * matching dynamic route /chat/[id]/page.tsx forwards params.id.
  */
 export default async function ChatRootPage() {
-  const scope = await getCurrentScope();
+  const [scope, cfg] = await Promise.all([getCurrentScope(), getAppConfig()]);
   return (
     <ChatClient
       initialConversationId={null}
@@ -25,6 +26,7 @@ export default async function ChatRootPage() {
         projectName: scope.kind === 'root' ? null : scope.fsPath,
         defaultAgentSId:
           scope.kind === 'project' ? scope.project.defaultAgentSId ?? null : null,
+        globalDefaultAgentSId: cfg.chatDefaultAgentSId ?? null,
       }}
     />
   );

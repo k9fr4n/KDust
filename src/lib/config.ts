@@ -20,6 +20,10 @@ export interface AppConfigData {
   telegramChatEnabled: boolean;
   telegramAllowedChatIds: string | null;
   telegramDefaultAgentSId: string | null;
+  // Global default agent for the web /chat composer when no
+  // project is active (Franck 2026-06-02). See schema comment on
+  // AppConfig.chatDefaultAgentSId for the resolution order.
+  chatDefaultAgentSId: string | null;
   // Note: telegramUpdateOffset is NOT exposed here. It's a
   // runtime cursor read/written directly from the poller via
   // dedicated helpers (getTelegramOffset / setTelegramOffset)
@@ -41,6 +45,7 @@ export async function getAppConfig(): Promise<AppConfigData> {
       telegramChatEnabled: existing.telegramChatEnabled,
       telegramAllowedChatIds: existing.telegramAllowedChatIds,
       telegramDefaultAgentSId: existing.telegramDefaultAgentSId,
+      chatDefaultAgentSId: existing.chatDefaultAgentSId,
     };
   }
   // bootstrap from env (one-shot, first boot only)
@@ -68,6 +73,7 @@ export async function getAppConfig(): Promise<AppConfigData> {
     telegramChatEnabled: created.telegramChatEnabled,
     telegramAllowedChatIds: created.telegramAllowedChatIds,
     telegramDefaultAgentSId: created.telegramDefaultAgentSId,
+    chatDefaultAgentSId: created.chatDefaultAgentSId,
   };
 }
 

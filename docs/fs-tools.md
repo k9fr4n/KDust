@@ -13,7 +13,7 @@ under the model context window.
 | `create_file` | write | Create a NEW file (parent dirs auto-created). |
 | `apply_patch` | write | Apply a multi-file, multi-hunk patch atomically. |
 | `search_files` | read | Glob over the project tree. |
-| `search_content` | read | grep (fixed-string) inside files. |
+| `search_content` | read | ripgrep inside files (regex, context, output modes). |
 | `run_command` | exec | Spawn a shell command in the project root. |
 | `export_fil_to_workdir` | write | Materialise a Dust `fil_*` onto disk. |
 
@@ -79,3 +79,37 @@ atomically.
 The envelope parser + in-memory applier live in a pure, FS-free module
 (`src/lib/mcp/apply-patch.ts`) and are unit-tested under Vitest
 (`src/lib/mcp/__tests__/apply-patch.spec.ts`).
+
+## `search_content`
+
+ripgrep-backed (`/usr/bin/rg`, v13) content search. **Backward
+compatible**: with no optional args it behaves like the old
+`grep -rni -F` — a case-insensitive, fixed-string substring search
+returning `file:line:match` lines.
+
+| Arg | Default | Effect |
+|---|---|---|
+| `pattern` | — | Text or regex to search for. |
+| `path` | project root | Directory or file to search in. |
+| `regex` | `false` | `true` → pattern is a regular expression (drops `-F`). |
+| `case_insensitive` | `true` | `false` → case-sensitive (drops `-i`). |
+| `output_mode` | `content` | `content` (lines) / `files_with_matches` / `count`. |
+| `context` | — | Lines before AND after each match (`rg -C`). |
+| `before_context` / `after_context` | — | `rg -B` / `-A`. |
+| `glob` | — | `rg --glob` include/exclude, e.g. `*.ts` or `!*.test.ts`. |
+| `file_pattern` | — | Deprecated alias for `glob`. |
+| `type` | — | `rg --type` for standard file types, e.g. `ts`, `py`, `go`. |
+| `multiline` | `false` | `rg -U --multiline-dotall`; `.` matches newlines (implies regex). |
+| `head_limit` | 500 | Cap the number of returned lines (matches/files/counts). |
+| `offset` | 0 | Skip the first N output lines before `head_limit` (paging). |
+
+`node_modules`, `.git`, `dist`, `build`, `.next` and `coverage` are
+always excluded; an explicit `glob` is applied after the excludes so an
+include can win. Output is line-capped (500, or `head_limit`) and then
+byte-capped by `KDUST_MCP_TOOL_OUTPUT_MAX_BYTES`. rg exit code 1
+(no match) yields a friendly "No matches" message; code 2 surfaces the
+ripgrep error.
+
+```json
+{ "pattern": "TODO|FIXME", "regex": true, "glob": "*.ts", "context": 2 }
+```

@@ -14,7 +14,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { FolderPlus, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, FolderPlus, MessageSquarePlus, Plus, Trash2 } from 'lucide-react';
+import { gitUrlToWebUrl } from '@/lib/git-web-url';
 
 type Scope =
   | { kind: 'root' }
@@ -24,7 +25,17 @@ type Scope =
       fsPath: string;
       parentFsPath: string | null;
     }
-  | { kind: 'project'; projectId: string; fsPath: string; parentFsPath: string };
+  | {
+      kind: 'project';
+      projectId: string;
+      fsPath: string;
+      parentFsPath: string;
+      // Raw git remote (ssh or https) of the project, or null when
+      // unset. Used to render the "Open repo" button only when the
+      // project is linked to a recognisable git repo (Franck
+      // 2026-06-02).
+      gitUrl: string | null;
+    };
 
 export function DashboardActions({ scope }: { scope: Scope }) {
   const router = useRouter();
@@ -69,16 +80,48 @@ export function DashboardActions({ scope }: { scope: Scope }) {
 
   const btnDanger =
     'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-red-300 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-sm';
+  const btnNeutral =
+    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm';
+
+  // Quick-action buttons available only at project scope (Franck
+  // 2026-06-02). "New chat" opens the project-scoped chat surface;
+  // "Open repo" is rendered only when gitUrl resolves to a web URL.
+  const repoWebUrl = scope.kind === 'project' ? gitUrlToWebUrl(scope.gitUrl) : null;
 
   return (
-    <button
-      type="button"
-      onClick={() => void deleteCurrent()}
-      disabled={deleting}
-      className={btnDanger}
-    >
-      <Trash2 size={14} /> Delete this {scope.kind}
-    </button>
+    <>
+      {scope.kind === 'project' && (
+        <>
+          <button
+            type="button"
+            onClick={() => router.push(`/${scope.fsPath}/chat`)}
+            className={btnNeutral}
+            title="Start a new chat scoped to this project"
+          >
+            <MessageSquarePlus size={14} /> New chat
+          </button>
+          {repoWebUrl && (
+            <a
+              href={repoWebUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={btnNeutral}
+              title={`Open the git repository in a new tab (${repoWebUrl})`}
+            >
+              <ExternalLink size={14} /> Open repo
+            </a>
+          )}
+        </>
+      )}
+      <button
+        type="button"
+        onClick={() => void deleteCurrent()}
+        disabled={deleting}
+        className={btnDanger}
+      >
+        <Trash2 size={14} /> Delete this {scope.kind}
+      </button>
+    </>
   );
 }
 

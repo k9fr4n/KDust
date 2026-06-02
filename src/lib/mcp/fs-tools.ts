@@ -229,45 +229,186 @@ export const searchFiles = defineTool({
 });
 
 // ---------------- search_content ----------------
+/**
+ * ripgrep-backed content search (#175 item 1, 2026-06-02).
+ *
+ * Re-implemented on top of `rg` (v13, /usr/bin/rg) to reach
+ * Claude-Code `GrepTool` parity: regex, context lines, output
+ * modes, glob file filter and a total match cap. Backward
+ * compatible: the default call is still a case-insensitive,
+ * fixed-string substring search (`rg -F -i`) returning
+ * `file:line:match` lines, just like the old `grep -rni -F`.
+ *
+ * Read-only \u2192 AUTO-EXECUTE class. chroot + OUTPUT_MAX_BYTES
+ * byte cap are preserved; `head_limit` caps the number of result
+ * lines/files BEFORE the byte cap.
+ *
+ * rg exit codes: 0 = matches, 1 = no match (NOT an error here),
+ * 2 = real error (bad regex, unreadable path). We map 1 to the
+ * friendly "no matches" message and surface 2's stderr.
+ */
 export const searchContent = defineTool({
   name: 'search_content',
-  description: 'Search for a string inside files using grep (fixed-string mode).',
+  description:
+    'Search file contents with ripgrep. Default is a case-insensitive fixed-string ' +
+    '(substring) search. Set regex=true for a regular-expression pattern, output_mode ' +
+    "to switch between matching lines / file names / per-file counts, and context/glob " +
+    'to widen or narrow the search.',
   schema: z.object({
-    pattern: z.string().describe('The text to search for.'),
-    path: z.string().optional().describe('Absolute directory to search in.'),
-    file_pattern: z.string().optional().describe("glob file pattern, e.g. '*.ts'"),
+    pattern: z.string().describe('The text or regular expression to search for.'),
+    path: z.string().optional().describe('Absolute directory (or file) to search in.'),
+    // Kept for backward compatibility; `glob` is the preferred name.
+    file_pattern: z
+      .string()
+      .optional()
+      .describe("Deprecated alias for `glob`, e.g. '*.ts'. Use `glob`."),
+    glob: z
+      .string()
+      .optional()
+      .describe("ripgrep --glob to include/exclude files, e.g. '*.ts' or '!*.test.ts'."),
+    regex: z
+      .boolean()
+      .optional()
+      .describe('Treat pattern as a regular expression (default false \u2192 fixed string).'),
+    case_insensitive: z
+      .boolean()
+      .optional()
+      .describe('Case-insensitive match (default true, matching the legacy behaviour).'),
+    output_mode: z
+      .enum(['content', 'files_with_matches', 'count'])
+      .optional()
+      .describe(
+        "content (default): matching lines; files_with_matches: file names only; count: per-file match counts.",
+      ),
+    context: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Lines of context before AND after each match (rg -C). content mode only.'),
+    before_context: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Lines of context before each match (rg -B). content mode only.'),
+    after_context: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Lines of context after each match (rg -A). content mode only.'),
+    type: z
+      .string()
+      .optional()
+      .describe("ripgrep --type filter for standard file types, e.g. 'ts', 'py', 'go'."),
+    multiline: z
+      .boolean()
+      .optional()
+      .describe('Enable multiline mode (rg -U --multiline-dotall): . matches newlines, patterns span lines. Implies regex.'),
+    head_limit: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Cap the number of output lines (matches/files/counts) returned.'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Skip the first N output lines before applying head_limit (paging).'),
   }),
   async execute(root, args) {
     try {
       const cwd = chroot(root, args.path);
       const pattern = args.pattern;
-      const filePattern = args.file_pattern ?? '*';
-      const { stdout } = await pExecFile(
-        'grep',
-        [
-          '-rni',
-          '--binary-files=without-match',
-          '--exclude-dir=node_modules',
-          '--exclude-dir=.git',
-          '--exclude-dir=dist',
-          '--exclude-dir=.next',
-          '--include=' + filePattern,
-          '-F',
-          pattern,
-          cwd,
-        ],
-        { maxBuffer: 5 * 1024 * 1024 },
-      ).catch((err) => ({ stdout: err.stdout ?? '' }));
-      const out = (stdout as string).trim();
+      const mode = args.output_mode ?? 'content';
+      // Legacy behaviour was always case-insensitive (`grep -i`).
+      const caseInsensitive = args.case_insensitive ?? true;
+
+      // --max-columns bounds pathological lines (minified/base64) so a
+      // single match can't blow the byte budget on its own; the preview
+      // flag keeps a usable head of the line instead of dropping it.
+      const rgArgs: string[] = ['--color=never', '--max-columns', '500', '--max-columns-preview'];
+
+      // Pattern interpretation. multiline implies regex (no -F).
+      if (!args.regex && !args.multiline) rgArgs.push('-F');
+      if (caseInsensitive) rgArgs.push('-i');
+      if (args.multiline) rgArgs.push('-U', '--multiline-dotall');
+
+      // Exclude the same noise directories the rest of fs-tools ignores.
+      // rg honours .gitignore by default, but projects without one would
+      // otherwise descend into node_modules/dist/.next.
+      for (const dir of ['node_modules', '.git', 'dist', 'build', '.next', 'coverage']) {
+        rgArgs.push('--glob', `!**/${dir}/**`);
+      }
+      // User glob comes AFTER the excludes so an explicit include wins.
+      const userGlob = args.glob ?? args.file_pattern;
+      if (userGlob) rgArgs.push('--glob', userGlob);
+      if (args.type) rgArgs.push('--type', args.type);
+
+      // Output mode.
+      if (mode === 'files_with_matches') {
+        rgArgs.push('--files-with-matches');
+      } else if (mode === 'count') {
+        rgArgs.push('--count');
+      } else {
+        // content: file:line:match, like the old grep -n output.
+        rgArgs.push('--no-heading', '--with-filename', '--line-number');
+        if (args.context !== undefined) rgArgs.push('-C', String(args.context));
+        if (args.before_context !== undefined) rgArgs.push('-B', String(args.before_context));
+        if (args.after_context !== undefined) rgArgs.push('-A', String(args.after_context));
+      }
+
+      // Pattern terminator so a leading-dash pattern isn't parsed as a flag.
+      rgArgs.push('-e', pattern, '--', cwd);
+
+      const { stdout, code, stderr } = await pExecFile('rg', rgArgs, {
+        maxBuffer: 10 * 1024 * 1024,
+      })
+        .then((r) => ({ stdout: r.stdout as string, code: 0, stderr: '' }))
+        .catch(
+          (err: NodeJS.ErrnoException & {
+            stdout?: string;
+            stderr?: string;
+            code?: number | string;
+          }) => ({
+            stdout: err.stdout ?? '',
+            // rg uses exit code 1 for "no match"; anything else is a real error.
+            code: typeof err.code === 'number' ? err.code : 2,
+            stderr: err.stderr ?? errMessage(err),
+          }),
+        );
+
+      if (code === 2) {
+        return toText(`Error: ripgrep failed: ${stderr.trim() || 'unknown error'}`, true);
+      }
+
+      const out = stdout.trim();
       if (!out) return toText(`No matches found for: ${pattern}`);
-      const lines = out.split('\n').slice(0, 500);
-      // Extra byte-cap on top of the 500-line cap: long matched
-      // lines (e.g. minified assets) can still blow the budget.
+
+      const allLines = out.split('\n');
+      const total = allLines.length;
+      const offset = args.offset ?? 0;
+      // head_limit caps the window; default to the legacy 500-line ceiling.
+      const limit = args.head_limit ?? 500;
+      const lines = allLines.slice(offset, offset + limit);
+      const shown = lines.length;
+      const capped =
+        shown < total ? ` (showing ${shown} of ${total}, offset ${offset})` : '';
+
+      const label =
+        mode === 'files_with_matches'
+          ? `Files matching "${pattern}"${capped}:`
+          : mode === 'count'
+          ? `Match counts for "${pattern}"${capped}:`
+          : `Found ${lines.length} matching line(s) for "${pattern}"${capped}:`;
+
+      // Extra byte-cap on top of the line cap: long matched lines
+      // (e.g. minified assets) can still blow the budget.
       return toText(
-        truncateForMcp(
-          `Found ${lines.length} matches for "${pattern}" in the following files:\n\n${lines.join('\n')}`,
-          'search_content',
-        ),
+        truncateForMcp(`${label}\n\n${lines.join('\n')}`, 'search_content'),
       );
     } catch (e: unknown) {
       return toText(`Error: ${errMessage(e)}`, true);

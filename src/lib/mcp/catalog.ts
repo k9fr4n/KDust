@@ -50,7 +50,7 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
       { name: 'create_file',    description: 'Create a new file (overwrite opt-in).' },
       { name: 'apply_patch',    description: 'Apply a multi-file *** Begin Patch envelope atomically.' },
       { name: 'search_files',   description: 'Glob over the project tree.' },
-      { name: 'search_content', description: 'Grep (fixed-string) inside files.' },
+      { name: 'search_content', description: 'ripgrep inside files (regex, context, output modes; defaults to fixed-string).' },
       { name: 'run_command',    description: 'Spawn a shell command in the project root.' },
     ],
   },

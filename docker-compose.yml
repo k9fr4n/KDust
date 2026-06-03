@@ -124,10 +124,13 @@ services:
       - /projects
     volumes:
       - ./projects:/projects
-      # Named volumes inherit coder(1000) ownership from the image dirs
-      # on first mount (no bind-mount permission dance needed).
-      - ide-config:/home/coder/.config
-      - ide-data:/home/coder/.local/share
+      # Persist the whole home on ONE named volume. Mounting on
+      # /home/coder (which EXISTS in the image, owned by coder uid 1000)
+      # makes Docker init the volume with coder ownership, so
+      # code-server can create ~/.config and ~/.local itself. Mounting
+      # the non-existent ~/.config / ~/.local/share subpaths instead
+      # yields root-owned volumes -> EACCES on startup (ADR-0028 fix).
+      - ide-home:/home/coder
     expose:
       - "8080"
     mem_limit: 2g
@@ -245,8 +248,9 @@ services:
     # Watchtower ne surveille que les conteneurs qui portent ce label
     command: --label-enable --interval 300 --cleanup
 
-# Named volumes — code-server IDE persistence (ADR-0028). Settings,
-# extensions and VS Code user data survive container recreation.
+# Named volumes — code-server IDE persistence (ADR-0028). The whole
+# coder home (settings, extensions, VS Code user data) survives
+# container recreation. Single volume mounted on /home/coder so it
+# inherits coder(1000) ownership from the image (avoids EACCES).
 volumes:
-  ide-config:
-  ide-data:
+  ide-home:

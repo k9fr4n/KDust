@@ -157,6 +157,7 @@ export const RESERVED_URL_NAMES: readonly string[] = [
   'conversation',
   'logs',
   'about',
+  'ide',
   'settings',
   'login',
   'api',

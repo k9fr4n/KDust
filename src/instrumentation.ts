@@ -238,6 +238,21 @@ export async function register() {
       );
     }
 
+    // Boot the code-server IDE auth-proxy (Franck 2026-06-03,
+    // ADR-0028). No-op unless IDE_ENABLED=true. Runs as an extra
+    // http.Server listener in THIS process on IDE_PROXY_PORT, verifies
+    // the kdust_session JWT, and proxies HTTP+WS to the kdust-ide
+    // sidecar (no docker.sock). Best-effort: a proxy failure must
+    // never abort the runtime — flip IDE_ENABLED=false to kill it.
+    try {
+      const { bootIdeProxy } = await import('./lib/ide/proxy');
+      await bootIdeProxy();
+    } catch (e) {
+      console.error(
+        `[instrumentation] IDE proxy boot failed: ${(e as Error).message}`,
+      );
+    }
+
     // Boot notification (Franck 2026-04-30). Sends a single Telegram
     // message to AppConfig.defaultTelegramChatId so the operator
     // knows when the container restarts (planned redeploy, OOM kill,

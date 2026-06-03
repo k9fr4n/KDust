@@ -36,9 +36,22 @@ services:
       - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
     ports:
       - "4000:3000"
+      # IDE auth-proxy (ADR-0028). Nothing listens unless
+      # IDE_ENABLED=true; keep this behind your host TLS reverse-proxy.
+      - "4001:8443"
     env_file: .env
     environment:
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
+      # code-server IDE (ADR-0028). Opt-in: set IDE_ENABLED=true in .env
+      # AND start the kdust-ide sidecar. The proxy verifies the
+      # kdust_session JWT before reaching code-server.
+      - IDE_ENABLED=${IDE_ENABLED:-false}
+      - IDE_UPSTREAM=http://kdust-ide:8080
+      - IDE_PROXY_PORT=8443
+      # Public base URL the browser uses to reach the IDE proxy. Leave
+      # empty to derive <current-host>:4001 client-side. Set it when
+      # KDust sits behind a TLS reverse-proxy (e.g. https://kdust.example.com:4001).
+      - IDE_PUBLIC_URL=${IDE_PUBLIC_URL:-}
       # Chemin HÔTE du répertoire projects (résolu par Compose via ${PWD}).
       # Nécessaire pour les montages DooD (-v host_path:container_path).
       - KDUST_HOST_PROJECTS_ROOT=${PWD}/projects
@@ -83,6 +96,41 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # -------------------------------------------------------------------------- #
+  # code-server IDE sidecar (Franck 2026-06-03, ADR-0028).                     #
+  #                                                                            #
+  # Browser VS Code scoped to /projects, reached ONLY through the KDust        #
+  # auth-proxy (kdust :4001 -> kdust_session JWT -> kdust-ide:8080).           #
+  #                                                                            #
+  # [SECURITY] Deliberately has NO docker.sock mount: the web terminal         #
+  # can edit /projects but cannot reach the host Docker daemon, so the         #
+  # blast radius is the workspace, not the host. Do NOT add docker.sock        #
+  # here. Not published directly (expose only) and not Watchtower-scoped       #
+  # (pinned tag, manual upgrades).                                             #
+  # -------------------------------------------------------------------------- #
+  kdust-ide:
+    image: codercom/code-server:4.122.0-bookworm
+    container_name: kdust-ide
+    restart: unless-stopped
+    # Default image user is `coder` (uid 1000) — matches the host
+    # ./projects ownership (node, uid 1000), so edits work without chown.
+    command:
+      - --auth=none
+      - --bind-addr=0.0.0.0:8080
+      - --disable-telemetry
+      - --disable-update-check
+      - /projects
+    volumes:
+      - ./projects:/projects
+      # Named volumes inherit coder(1000) ownership from the image dirs
+      # on first mount (no bind-mount permission dance needed).
+      - ide-config:/home/coder/.config
+      - ide-data:/home/coder/.local/share
+    expose:
+      - "8080"
+    mem_limit: 2g
+    mem_reservation: 256m
 
   # -------------------------------------------------------------------------- #
   # Docker MCP Gateway (Franck 2026-05-10, ADR-0012).                          #
@@ -195,3 +243,9 @@ services:
       WATCHTOWER_NOTIFICATION_URL: ""   # laisser vide = logs uniquement
     # Watchtower ne surveille que les conteneurs qui portent ce label
     command: --label-enable --interval 300 --cleanup
+
+# Named volumes — code-server IDE persistence (ADR-0028). Settings,
+# extensions and VS Code user data survive container recreation.
+volumes:
+  ide-config:
+  ide-data:

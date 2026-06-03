@@ -2914,3 +2914,71 @@ threat model rule #1).
 - *Key injected via `docker exec -e` from the host env*. Viable and
   more hermetic, but Franck explicitly wants centralised/audited
   storage in the Secret Manager (`lastUsedAt`, rotation, redaction).
+
+### ADR-0028 — Embedded code-server IDE (`/ide`) via an authenticated proxy + sidecar (2026-06-03)
+
+**Status**: Accepted (2026-06-03, Franck).
+
+**Context**. Franck wants a dedicated KDust page that opens
+[code-server](https://github.com/coder/code-server) (browser VS Code)
+on the path of the project/folder he is currently in, with KDust
+hosted remotely. Constraints: no public ingress without TLS+auth in
+front; no second weak auth system; bound the blast radius of a web
+terminal that, in the KDust container, would otherwise reach the host
+`docker.sock` (DooD) — i.e. host root.
+
+**Decision**.
+
+- **Sidecar, not in-container.** code-server runs as a dedicated
+  `kdust-ide` compose service (`codercom/code-server:4.122.0-bookworm`,
+  pinned) with **no `docker.sock` mount** and only `/projects` +
+  named config/data volumes. The web terminal can edit the workspace
+  but cannot reach the host daemon — blast radius = `/projects`, not
+  the host.
+- **Authenticated proxy, no custom server.** `src/lib/ide/proxy.ts`
+  runs as an extra `http.Server` listener **inside the KDust Node
+  process** (booted from `instrumentation.ts` behind `IDE_ENABLED`),
+  on `IDE_PROXY_PORT` (published as `4001`). It verifies the
+  `kdust_session` JWT (same cookie + `SESSION_SECRET` as
+  `middleware.ts`) on every HTTP request and WS upgrade, then proxies
+  verbatim to `kdust-ide:8080` (HTTP via `http.request`, WS via a raw
+  `net` socket pipe). code-server runs `--auth none` because it is
+  unreachable except through the proxy on the internal network.
+  - Crucially, because the JWT is verifiable outside Next, **no custom
+    Next server is needed** — the standalone `server.js` is untouched.
+  - **No new dependency**: `node:http`/`node:net` + the existing
+    `jose` (no `http-proxy`).
+- **Page**: `src/app/ide/page.tsx` (server) resolves `getCurrentScope()`
+  → `/projects/<fsPath>` and hands off to a client `<IdeFrame>` that
+  embeds `<IDE_PUBLIC_URL or <host>:4001>/?folder=…`. `/ide` is added
+  to `RESERVED_URL_NAMES` + middleware `RESERVED_SEGMENTS` so it is not
+  rewritten as a project scope.
+
+**Consequences**.
+
+- One extra published port (`4001`), JWT-gated, that must sit behind
+  the same host TLS reverse-proxy as `4000`. Opt-in: `IDE_ENABLED`
+  defaults to `false` (proxy is a no-op; `/ide` shows a disabled
+  notice). Kill switch = `IDE_ENABLED=false` or stop the sidecar.
+- A small copy of the session-verification logic lives in the proxy,
+  annotated to stay in lockstep with `session.ts`/`middleware.ts`
+  (same pattern as the ADR-0027 decrypt copy).
+- `IDE_PUBLIC_URL` must stay same-site as KDust so the `kdust_session`
+  cookie is sent; a different subdomain would need a wider cookie
+  domain (out of scope).
+- `Dockerfile` and the DB schema are untouched; scheduler / push
+  pipeline / MCP / Telegram are unaffected. Full guide in
+  [`docs/ide.md`](docs/ide.md).
+
+**Alternatives considered**.
+
+- *code-server in the main KDust container*. Rejected: the web
+  terminal would inherit `docker.sock` → host root. The sidecar split
+  removes that vector while still editing `/projects`.
+- *Custom Next server to proxy WS same-origin on `:3000`*. Rejected:
+  rewrites the boot model the whole app relies on; unnecessary once we
+  realised the JWT can be verified in a standalone listener.
+- *`http-proxy` dependency*. Rejected: a ~150-line `node:net` upgrade
+  pipe avoids a new top-level dep (which would need its own ADR).
+- *SSH tunnel to a loopback code-server*. Cheapest/safest but gives no
+  integrated KDust page — which was the explicit requirement.

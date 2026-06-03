@@ -32,7 +32,7 @@ const CURRENT_PROJECT_COOKIE = 'kdust_project';
 // _next, favicon.ico) are NOT scope-rewritable: a URL like
 // `/foo/bar/settings` is not a valid scoped route under ADR-0020
 // either, and is left to 404 naturally. (ADR-0023, Franck 2026-05-27.)
-const SCOPED_SUBPAGES = new Set(['chat', 'task', 'run', 'conversation']);
+const SCOPED_SUBPAGES = new Set(['chat', 'task', 'run', 'conversation', 'ide']);
 
 /**
  * Split a pathname against the reserved-segment vocabulary.

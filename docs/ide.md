@@ -64,6 +64,64 @@ disable it, set `IDE_ENABLED=false` and restart KDust.
 
    Use **“Open in new tab ↗”** for a full-window editor.
 
+## Claude Code via `dust-exporter`
+
+_Franck 2026-06-03._
+
+The stack ships a **`dust-exporter`** sidecar — an
+Anthropic/OpenAI-compatible HTTP proxy in front of your Dust agents
+([k9fr4n/dust-exporter](https://github.com/k9fr4n/dust-exporter)). It
+lets **Claude Code** (which speaks the Anthropic Messages API) in the
+IDE terminal drive your Dust agents.
+
+```
+kdust-ide  ──ANTHROPIC_BASE_URL──▶  dust-exporter :8787  ──OAuth──▶  Dust API
+ (claude)                              (proxy, /v1/messages)
+```
+
+- **Internal only.** `dust-exporter` is `expose`d on the compose network
+  (no host `ports:`), so it is never published — same no-ingress rule as
+  the rest of the stack.
+- **No `docker.sock`, no `env_file`.** The image ships sane defaults
+  (`0.0.0.0:8787`, file credential store on `/data`). It is started with
+  `--client-tools`, so Claude Code's own Read/Edit/Bash execute **in the
+  `kdust-ide` sidecar** (blast radius `/projects`, not the host).
+- `kdust-ide` is wired via `ANTHROPIC_BASE_URL=http://dust-exporter:8787`
+  and a placeholder `ANTHROPIC_API_KEY=dummy` (the proxy requires no key
+  by default).
+
+### One-time authentication (device flow)
+
+`dust-exporter` reuses the `dust-cli` OAuth session, persisted on the
+`dust-exporter-data` volume. Log in **once** — the device-flow URL opens
+on *your* machine, no browser needed inside the container:
+
+```bash
+docker compose run --rm dust-exporter login
+docker compose run --rm dust-exporter status   # authenticated: true
+docker compose up -d                            # (re)start the proxy
+```
+
+### Use it from the IDE terminal
+
+Pick the agent at runtime with its sId (list them with
+`GET /v1/models`, or the Dust UI):
+
+```bash
+# inside the /ide terminal
+ANTHROPIC_MODEL=<agent-sId> \
+ANTHROPIC_SMALL_FAST_MODEL=<agent-sId> \
+claude
+```
+
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` are already injected by the
+sidecar, so you only set the model(s).
+
+> **Note.** `dust-exporter`'s repo and GHCR image are private; Watchtower
+> pulls it with the host `~/.docker/config.json` credentials, like the
+> `kdust` image. The image is multi-arch (amd64 + arm64), so it runs on
+> the Pi.
+
 ## Configuration reference
 
 | Var | Default | Meaning |

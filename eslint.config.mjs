@@ -29,7 +29,10 @@ export default [
   {
     // Same default ignore set as next lint, plus the Prisma client
     // (generated, intentionally not type-checked here) and the
-    // standalone build artifacts.
+    // standalone build artifacts. `projects/**` is the runtime volume
+    // holding the repos agents read/modify (foreign code, often with
+    // their own .next builds); `skills/**` is vendored third-party
+    // skill libraries/examples. Neither is ours to lint.
     ignores: [
       'node_modules/**',
       '.next/**',
@@ -39,6 +42,8 @@ export default [
       'src/generated/**',
       'prisma/migrations/**',
       'public/**',
+      'projects/**',
+      'skills/**',
       '*.config.js',
       '*.config.mjs',
     ],

@@ -43,7 +43,6 @@ import {
   timelineToJson,
 } from '@/lib/dust/chat';
 import { getDustClient } from '@/lib/dust/client';
-import { listProjects } from '@/lib/projects';
 import { resolveProjectByPathOrName } from '@/lib/folder-path';
 import {
   getFsServerId,

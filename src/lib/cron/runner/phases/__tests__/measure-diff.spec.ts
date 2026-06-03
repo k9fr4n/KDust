@@ -37,6 +37,7 @@ vi.mock('../../../../db', () => ({
 vi.mock('../../../../git', () => ({
   diffStatFromHead: vi.fn(),
   parseGitRepo: vi.fn(),
+  discardLocalBranch: vi.fn(),
 }));
 
 import { db } from '../../../../db';

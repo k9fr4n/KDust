@@ -31,7 +31,9 @@
 // lockstep.
 
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
+import fs from 'node:fs';
 import { jwtVerify } from 'jose';
 
 const COOKIE_NAME = 'kdust_session';
@@ -88,7 +90,35 @@ export async function bootIdeProxy(): Promise<void> {
   const upstream = parseUpstream(process.env.IDE_UPSTREAM ?? 'http://127.0.0.1:8080');
   const port = Number(process.env.IDE_PROXY_PORT ?? '8443');
 
-  const server = http.createServer((req, res) => {
+  // Optional TLS termination (Franck 2026-06-03). When IDE_TLS_CERT +
+  // IDE_TLS_KEY point at a readable PEM keypair, the proxy serves
+  // HTTPS instead of HTTP. This is REQUIRED for code-server webviews
+  // (extension READMEs, the Claude Code chat panel, settings UI…):
+  // those are rendered by a service worker, which browsers refuse to
+  // register outside a *secure context* (HTTPS or localhost). Reaching
+  // the proxy over plain HTTP on a LAN IP (e.g. http://192.168.0.3:4001)
+  // therefore yields blank webviews. With TLS the origin is secure and
+  // webviews load. The upstream stays plaintext loopback — TLS is a
+  // pure front-edge concern, the auth logic below is untouched.
+  // When the env is unset the proxy falls back to HTTP (unchanged
+  // legacy behaviour), so this is fully backward compatible.
+  const certPath = process.env.IDE_TLS_CERT;
+  const keyPath = process.env.IDE_TLS_KEY;
+  let tlsOpts: { cert: Buffer; key: Buffer } | null = null;
+  if (certPath && keyPath) {
+    try {
+      tlsOpts = { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
+    } catch (e) {
+      console.error(
+        `[ide-proxy] IDE_TLS_CERT/IDE_TLS_KEY set but unreadable ` +
+          `(${certPath}, ${keyPath}): ${(e as Error).message} — falling back to HTTP. ` +
+          `code-server webviews will stay blank over a non-localhost HTTP origin.`,
+      );
+      tlsOpts = null;
+    }
+  }
+
+  const handleRequest: http.RequestListener = (req, res) => {
     void (async () => {
       if (!(await isAuthed(req.headers.cookie))) {
         res.writeHead(302, { Location: '/login' });
@@ -114,7 +144,11 @@ export async function bootIdeProxy(): Promise<void> {
       });
       req.pipe(proxyReq);
     })();
-  });
+  };
+
+  const server = tlsOpts
+    ? https.createServer(tlsOpts, handleRequest)
+    : http.createServer(handleRequest);
 
   // WebSocket (and any other) upgrade: code-server is WS-heavy.
   server.on('upgrade', (req, clientSocket, head) => {
@@ -146,8 +180,10 @@ export async function bootIdeProxy(): Promise<void> {
 
   server.listen(port, () => {
     console.log(
-      `[ide-proxy] listening on :${port} -> http://${upstream.host}:${upstream.port} ` +
-        `(ADR-0028; auth=${process.env.APP_PASSWORD ? 'kdust_session JWT' : 'open/dev'})`,
+      `[ide-proxy] listening on ${tlsOpts ? 'https' : 'http'}://0.0.0.0:${port} -> ` +
+        `http://${upstream.host}:${upstream.port} ` +
+        `(ADR-0028; tls=${tlsOpts ? 'on' : 'off'}; ` +
+        `auth=${process.env.APP_PASSWORD ? 'kdust_session JWT' : 'open/dev'})`,
     );
   });
 }

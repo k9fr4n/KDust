@@ -158,12 +158,61 @@ Manager — ADR-0027.)
 | `IDE_ENABLED` | `true` | Master switch. On by default; `false` → proxy is a no-op, `/ide` shows a disabled notice. |
 | `IDE_UPSTREAM` | `http://127.0.0.1:8080` | code-server address. In-container since ADR-0029 (loopback); leave unset. |
 | `IDE_PROXY_PORT` | `8443` | Port the proxy listens on inside the container (published as `4001`). |
-| `IDE_PUBLIC_URL` | _(empty)_ | Browser-facing base URL. Empty → client derives `<host>:4001`. |
+| `IDE_PUBLIC_URL` | _(empty)_ | Browser-facing base URL. Empty → client derives `<host>:4001`. Set to `https://<host>:4001` when TLS is on. |
+| `IDE_TLS_CERT` | _(empty)_ | PEM cert path (under `/data`). With `IDE_TLS_KEY`, the proxy serves **HTTPS**. Empty → HTTP. |
+| `IDE_TLS_KEY` | _(empty)_ | PEM private-key path. Required alongside `IDE_TLS_CERT`. |
+
+## TLS / secure context (required for webviews)
+
+_Franck 2026-06-03._
+
+code-server renders several panes as **webviews**: the **Claude Code
+chat panel**, extension READMEs (the `FEATURES`/`DETAILS` body), the
+settings UI, etc. Webviews are backed by a **service worker**, and
+browsers only register service workers in a **secure context** —
+**HTTPS** or **`localhost`/`127.0.0.1`**. Reaching the proxy over plain
+HTTP on a LAN IP (e.g. `http://192.168.0.3:4001`) leaves those webviews
+**blank** while the editor, terminal and extension list still work.
+
+Two ways to get a secure context:
+
+- **SSH tunnel** (quick, no config): `ssh -L 4001:127.0.0.1:4001 you@host`,
+  then open `http://localhost:4001` — `localhost` is a secure context.
+- **TLS on the proxy** (recommended for multi-machine LAN use): the
+  proxy terminates TLS itself when `IDE_TLS_CERT` + `IDE_TLS_KEY` are
+  set (no extra reverse-proxy needed).
+
+  ```bash
+  # one-time, on the host (writes ./data/ide-tls/{cert,key}.pem):
+  ./scripts/gen-ide-cert.sh 192.168.0.3
+  ```
+
+  Then in `.env`:
+
+  ```dotenv
+  IDE_TLS_CERT=/data/ide-tls/cert.pem
+  IDE_TLS_KEY=/data/ide-tls/key.pem
+  IDE_PUBLIC_URL=https://192.168.0.3:4001
+  ```
+
+  ```bash
+  docker compose restart kdust
+  ```
+
+  The cert is **self-signed**: accept the one-time browser warning;
+  after that the origin is secure and the webviews render. For a
+  CA-trusted cert, drop your own `cert.pem`/`key.pem` into
+  `./data/ide-tls/` and skip the helper. The cert dir lives on the
+  existing `./data` bind mount — no new volume. The upstream stays
+  plaintext loopback; TLS is purely the front edge, the proxy's
+  `kdust_session` JWT check is unchanged.
 
 ## Security notes
 
-- **Keep `:4001` behind your host TLS reverse-proxy**, like `:4000`.
-  The proxy enforces the `kdust_session` JWT, but TLS is still on you.
+- **TLS** can now be terminated **by the proxy itself** (`IDE_TLS_*`,
+  see above) — required for webviews on a non-localhost origin. You may
+  still front `:4001` with your own TLS reverse-proxy instead; in that
+  case leave `IDE_TLS_*` empty and point `IDE_PUBLIC_URL` at it.
 - The session cookie is `secure: false` today (`src/lib/session.ts`);
   flip it to `true` once TLS is in front (tracked separately — not in
   this change).
@@ -205,6 +254,7 @@ Manager — ADR-0027.)
 |---------|-------|-----|
 | `/ide` shows “IDE disabled” | `IDE_ENABLED=false` set | remove it (default is on), restart KDust |
 | Blank iframe / 302 loop | not logged into KDust, or cookie not sent to `:4001` | log into KDust first; ensure `IDE_PUBLIC_URL` is same-host |
+| **Webviews blank** (Claude Code chat panel, extension README, settings UI) while editor/terminal/extension-list work | reaching the proxy over plain **HTTP on a non-localhost origin** → browser refuses to register the webview **service worker** (no secure context) | terminate TLS on the proxy (`./scripts/gen-ide-cert.sh <host>` + `IDE_TLS_CERT`/`IDE_TLS_KEY` + `IDE_PUBLIC_URL=https://<host>:4001`, restart), or tunnel via `localhost`. See _TLS / secure context_ above. |
 | `502 IDE upstream unavailable` | code-server not running in the `kdust` container | check `docker logs kdust` for the `[entrypoint] starting in-container code-server` line; ensure `IDE_ENABLED!=false`; `docker compose restart kdust` |
 | `502 IDE upstream unavailable`, code-server logs stop right after `Using user-data-dir` with `listen EADDRINUSE … 127.0.0.1:3000` | code-server inherits the container's `PORT=3000` (Next.js), which **takes precedence over `--bind-addr`**, so it tries to bind `:3000` and dies | fixed in `docker/entrypoint.sh` by launching code-server under `env -u PORT -u HOST` (Franck 2026-06-03). On an old image, rebuild: `docker compose up -d --build` |
 | WebSocket fails (editor won’t load) | code-server host/origin check behind proxy | confirm code-server is on `127.0.0.1:8080`; if needed pass a code-server proxy flag |

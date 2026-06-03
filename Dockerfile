@@ -104,6 +104,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pinned for reproducibility, like yq/glab/ruff above.
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g @anthropic-ai/claude-code@2.1.161
+# code-server IDE (Franck 2026-06-03, ADR-0029 — supersedes the
+# ADR-0028 `kdust-ide` sidecar). code-server now runs IN this container
+# (launched by docker/entrypoint.sh, bound to 127.0.0.1:8080, fronted
+# by the in-process auth-proxy on :8443→:4001). This deliberately gives
+# the web terminal the SAME toolchain as the agent runtime — docker
+# (DooD), gh, glab, kdust-claude, rg, jq, yq, ruff — which is the whole
+# point (the sidecar without docker.sock was useless for real dev).
+# The host-root-via-DooD surface is already accepted for THIS container
+# (see the [CRITICAL] note above); putting code-server here adds no new
+# risk class.
+#
+# Standalone tarball (bundles its own Node), pinned for reproducibility
+# like yq/glab/ruff. The release asset arch names (amd64/arm64) match
+# `dpkg --print-architecture` directly.
+RUN CODE_SERVER_VERSION=4.122.0 \
+  && CS_ARCH="$(dpkg --print-architecture)" \
+  && curl -fsSL "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-${CS_ARCH}.tar.gz" -o /tmp/code-server.tar.gz \
+  && mkdir -p /usr/lib/code-server \
+  && tar -xzf /tmp/code-server.tar.gz -C /usr/lib/code-server --strip-components=1 \
+  && ln -sf /usr/lib/code-server/bin/code-server /usr/local/bin/code-server \
+  && rm /tmp/code-server.tar.gz
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \

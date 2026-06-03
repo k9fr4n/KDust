@@ -2917,7 +2917,11 @@ threat model rule #1).
 
 ### ADR-0028 — Embedded code-server IDE (`/ide`) via an authenticated proxy + sidecar (2026-06-03)
 
-**Status**: Accepted (2026-06-03, Franck).
+**Status**: **Superseded by ADR-0029** (2026-06-03). The authenticated
+in-process proxy is kept verbatim; only the *sidecar* decision below is
+reversed — code-server now runs in-container. The "Sidecar, not
+in-container" bullet and the "code-server in the main KDust container —
+Rejected" alternative no longer hold; see ADR-0029.
 
 **Context**. Franck wants a dedicated KDust page that opens
 [code-server](https://github.com/coder/code-server) (browser VS Code)
@@ -2984,3 +2988,57 @@ terminal that, in the KDust container, would otherwise reach the host
   pipe avoids a new top-level dep (which would need its own ADR).
 - *SSH tunnel to a loopback code-server*. Cheapest/safest but gives no
   integrated KDust page — which was the explicit requirement.
+
+### ADR-0029 — Move code-server in-container (drop the `kdust-ide` sidecar) (2026-06-03)
+
+**Status**: Accepted (2026-06-03, Franck). Supersedes the *sidecar*
+part of ADR-0028; keeps its auth-proxy verbatim.
+
+**Context**. ADR-0028 ran code-server as a `kdust-ide` sidecar with
+**no `docker.sock`** so the web terminal's blast radius was `/projects`.
+In use that made the IDE near-useless: no `docker`, no `gh`/`glab`, no
+`kdust-claude` (ADR-0027), no `rg`/`jq`/`yq`/`ruff` — i.e. none of the
+agent toolchain. Franck: _« je veux que code-server soit dans le
+conteneur KDust, sinon ça n'a pas trop d'intérêt »_.
+
+**Decision**. Run code-server **inside the `kdust` container**.
+
+- **Install** code-server in the runner stage of the `Dockerfile`
+  (standalone tarball, pinned `4.122.0`, multi-arch amd64/arm64 — same
+  pattern as yq/glab/ruff; it bundles its own Node).
+- **Launch** it from `docker/entrypoint.sh` as the `node` user
+  (uid 1000) on **loopback** `127.0.0.1:8080`, `--auth none`,
+  workspace `/projects`, backgrounded before the final `exec` (so it
+  reparents to `tini`). `--user-data-dir`/`--extensions-dir` live under
+  the existing `./data` bind at `/data/ide` (no extra named volume).
+  Gated by `IDE_ENABLED` (default on; kill switch `=false`).
+- **Proxy unchanged.** `src/lib/ide/proxy.ts` keeps the
+  `kdust_session`-JWT auth; its `IDE_UPSTREAM` default flips from
+  `http://kdust-ide:8080` to `http://127.0.0.1:8080`.
+- **Compose.** Remove the `kdust-ide` service and the `ide-home`
+  volume. Wire the `kdust` container to `dust-exporter`
+  (`ANTHROPIC_BASE_URL=http://dust-exporter:8787`,
+  `ANTHROPIC_API_KEY=dummy`) so a plain `claude` in the terminal works;
+  `kdust-claude` still wins from the Secret Manager (ADR-0027).
+  `dust-exporter` is kept (Franck: "on garde, claude utilise
+  dust-exporter pour fonctionner").
+
+**Consequences**.
+
+- [SECURITY] **The IDE terminal now shares `docker.sock` = host root
+  via DooD.** This is the explicit trade-off: the terminal has the
+  **same** surface as the scheduler/agent runtime, which already
+  executes agent-authored code in this container. It is **no longer**
+  the `/projects`-only sidecar. `/ide` access must be treated as
+  equivalent to handing out the KDust runtime — keep it behind the
+  `kdust_session` JWT + host TLS, expose only to trusted operators.
+  This reverses ADR-0028's "blast radius = `/projects`" property.
+- `dust-exporter`'s `--client-tools` now execute in the `kdust`
+  container (where Claude Code runs), so Claude's Bash tool can drive
+  `docker`/`gh`/`glab` — intended.
+- One fewer container (no `kdust-ide`), one fewer named volume
+  (`ide-home`); the `kdust` image grows by the code-server tarball.
+- Schema, scheduler, push pipeline, MCP, Telegram untouched. Deploy =
+  CI image rebuild + `docker compose pull` + restart (the new
+  entrypoint + Dockerfile only take effect in the rebuilt image).
+  Full guide in [`docs/ide.md`](docs/ide.md).

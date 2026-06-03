@@ -1,12 +1,22 @@
 # In-stack code-server IDE (`/ide`)
 
-_KDust ADR-0028, Franck 2026-06-03._
+_KDust ADR-0028 (sidecar) → **ADR-0029 (in-container)**, Franck 2026-06-03._
 
 Browser VS Code ([code-server](https://github.com/coder/code-server))
 embedded in KDust at **`/ide`**, scoped to the project/folder you are
-currently in. Runs as a dedicated **sidecar** (`kdust-ide`) reached
-**only** through an authenticated proxy inside the KDust container — no
-new auth system, no host Docker access from the editor.
+currently in. Since **ADR-0029** code-server runs **inside the `kdust`
+container itself** (not the old `kdust-ide` sidecar), reached **only**
+through an authenticated proxy in the KDust Node process — no new auth
+system. The terminal therefore inherits the **full agent toolchain**:
+`docker` (DooD), `gh`, `glab`, `kdust-claude`, `rg`, `jq`, `yq`, `ruff`.
+
+> **Why the change?** The ADR-0028 sidecar deliberately had **no
+> `docker.sock`** (blast radius `/projects`). In practice a web IDE
+> that cannot run `docker`/`gh`/`glab`/`kdust-claude` was useless for
+> real dev — _« sinon ça n'a pas trop d'intérêt »_. The `kdust`
+> container already mounts `docker.sock` and accepts the
+> host-root-via-DooD surface (agents already execute code there), so
+> moving code-server in-container adds **no new risk class**.
 
 ## Architecture
 
@@ -15,22 +25,29 @@ browser ──TLS──▶ kdust :4001 (auth-proxy, in the KDust Node process)
                     │  verify kdust_session JWT (jose, SESSION_SECRET)
                     │  HTTP + WebSocket
                     ▼
-                 kdust-ide :8080  (code-server, --auth none)
-                    └─ workspace = /projects   (NO docker.sock)
+                 127.0.0.1:8080  (code-server, --auth none)
+                    └─ same container as KDust  →  /projects
+                       + docker.sock, gh, glab, kdust-claude, rg …
 ```
 
 - **Single auth.** The proxy (`src/lib/ide/proxy.ts`) re-verifies the
   same `kdust_session` cookie as `src/middleware.ts`. code-server runs
-  with `--auth none` because it is unreachable except through the
-  proxy on the internal compose network.
+  with `--auth none` because it binds to **loopback only**
+  (`127.0.0.1:8080`) and is unreachable except through the proxy.
 - **No new ingress library.** The proxy is `node:http` + `node:net`
   (manual WS upgrade), reusing the already-present `jose`. No
   `http-proxy` dependency, no custom Next server — the standalone
   `server.js` is untouched.
-- **Blast radius = `/projects`.** The sidecar has **no `docker.sock`
-  mount**, so the web terminal can edit the workspace but cannot reach
-  the host Docker daemon. (Contrast: running code-server in the main
-  KDust container would expose host root via DooD — rejected.)
+- **Blast radius = the `kdust` container (incl. `docker.sock` = host
+  root via DooD).** This is the intended trade-off: the IDE terminal
+  has the **same** surface as the scheduler/agent runtime. It is **not**
+  the old `/projects`-only sidecar. Keep `:4001` behind TLS + the
+  `kdust_session` JWT, and trust only operators you would trust with
+  the agent runtime itself.
+- **Launched by `docker/entrypoint.sh`** as the `node` user (uid 1000)
+  before the final `exec`, backgrounded so it reparents to `tini`
+  (PID 1). Persistence (settings/extensions) lives on the existing
+  `./data` bind at `/data/ide` — no extra named volume.
 - **`/ide` is a reserved route segment** (added to
   `RESERVED_URL_NAMES` + middleware `RESERVED_SEGMENTS`) so it is not
   mistaken for a project scope and rewritten away.
@@ -51,7 +68,8 @@ disable it, set `IDE_ENABLED=false` and restart KDust.
    IDE_PUBLIC_URL=https://kdust.example.com:4001
    ```
 
-2. **Start the stack** (pulls the pinned code-server sidecar):
+2. **Start the stack** (code-server ships inside the `kdust` image since
+   ADR-0029 — no separate sidecar to pull):
 
    ```bash
    docker compose up -d
@@ -78,8 +96,8 @@ lets **Claude Code** (which speaks the Anthropic Messages API) in the
 IDE terminal drive your Dust agents.
 
 ```
-kdust-ide  ──ANTHROPIC_BASE_URL──▶  dust-exporter :8787  ──OAuth──▶  Dust API
- (claude)                              (proxy, /v1/messages)
+kdust  ──ANTHROPIC_BASE_URL──▶  dust-exporter :8787  ──OAuth──▶  Dust API
+(claude / kdust-claude)            (proxy, /v1/messages)
 ```
 
 - **Internal only.** `dust-exporter` is `expose`d on the compose network
@@ -87,11 +105,17 @@ kdust-ide  ──ANTHROPIC_BASE_URL──▶  dust-exporter :8787  ──OAuth�
   the rest of the stack.
 - **No `docker.sock`, no `env_file`.** The image ships sane defaults
   (`0.0.0.0:8787`, file credential store on `/data`). It is started with
-  `--client-tools`, so Claude Code's own Read/Edit/Bash execute **in the
-  `kdust-ide` sidecar** (blast radius `/projects`, not the host).
-- `kdust-ide` is wired via `ANTHROPIC_BASE_URL=http://dust-exporter:8787`
-  and a placeholder `ANTHROPIC_API_KEY=dummy` (the proxy requires no key
-  by default).
+  `--client-tools`, so Claude Code's own Read/Edit/Bash execute **on the
+  client** — which since ADR-0029 is the **`kdust` container** (where
+  the IDE terminal lives). That client **has `docker.sock`**, so the
+  Bash tool can run `docker`/`gh`/`glab`. Intended trade-off, not the
+  old `/projects`-only sidecar.
+- The `kdust` container is wired via
+  `ANTHROPIC_BASE_URL=http://dust-exporter:8787` and a placeholder
+  `ANTHROPIC_API_KEY=dummy` (the proxy requires no key by default), so a
+  plain `claude` in the terminal works. `kdust-claude` (ADR-0027) still
+  overrides these from the Secret Manager when present (Secret wins over
+  inherited env).
 
 ### One-time authentication (device flow)
 
@@ -117,8 +141,10 @@ ANTHROPIC_SMALL_FAST_MODEL=<agent-sId> \
 claude
 ```
 
-`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` are already injected by the
-sidecar, so you only set the model(s).
+`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` are already injected into the
+`kdust` container, so you only set the model(s). (Or just run
+`kdust-claude`, which also resolves `ANTHROPIC_*` from the Secret
+Manager — ADR-0027.)
 
 > **Note.** `dust-exporter`'s repo and GHCR image are private; Watchtower
 > pulls it with the host `~/.docker/config.json` credentials, like the
@@ -130,7 +156,7 @@ sidecar, so you only set the model(s).
 | Var | Default | Meaning |
 |-----|---------|---------|
 | `IDE_ENABLED` | `true` | Master switch. On by default; `false` → proxy is a no-op, `/ide` shows a disabled notice. |
-| `IDE_UPSTREAM` | `http://kdust-ide:8080` | code-server address on the compose network. |
+| `IDE_UPSTREAM` | `http://127.0.0.1:8080` | code-server address. In-container since ADR-0029 (loopback); leave unset. |
 | `IDE_PROXY_PORT` | `8443` | Port the proxy listens on inside the container (published as `4001`). |
 | `IDE_PUBLIC_URL` | _(empty)_ | Browser-facing base URL. Empty → client derives `<host>:4001`. |
 
@@ -145,11 +171,15 @@ sidecar, so you only set the model(s).
   `kdust_session` cookie is sent (cookies are port-agnostic but
   domain-scoped). A different subdomain would require widening the
   cookie domain — out of scope here; prefer `<kdust-host>:4001`.
-- The sidecar runs as `coder` (uid 1000), matching host `./projects`
-  ownership. **Do not add `docker.sock`** to `kdust-ide` — it is the
-  whole point of the sidecar split.
-- Kill switch: `IDE_ENABLED=false` + restart KDust, or
-  `docker compose stop kdust-ide`.
+- code-server runs as `node` (uid 1000) inside the `kdust` container,
+  matching host `./projects` ownership. **It shares the container's
+  `docker.sock` (= host root via DooD).** This is the deliberate
+  ADR-0029 trade-off — the IDE terminal has the same surface as the
+  agent runtime. Treat `/ide` access as equivalent to handing out the
+  KDust runtime: gate it with the `kdust_session` JWT + TLS, and only
+  expose it to operators you already trust with the stack.
+- Kill switch: `IDE_ENABLED=false` + restart KDust (code-server is not
+  launched and the proxy is a no-op).
 
 ## How auth flows (proxy internals)
 
@@ -175,6 +205,6 @@ sidecar, so you only set the model(s).
 |---------|-------|-----|
 | `/ide` shows “IDE disabled” | `IDE_ENABLED=false` set | remove it (default is on), restart KDust |
 | Blank iframe / 302 loop | not logged into KDust, or cookie not sent to `:4001` | log into KDust first; ensure `IDE_PUBLIC_URL` is same-host |
-| `502 IDE upstream unavailable` | `kdust-ide` not running | `docker compose up -d kdust-ide` |
-| WebSocket fails (editor won’t load) | code-server host/origin check behind proxy | confirm `IDE_UPSTREAM` is correct; if needed pass a code-server proxy flag |
+| `502 IDE upstream unavailable` | code-server not running in the `kdust` container | check `docker logs kdust` for the `[entrypoint] starting in-container code-server` line; ensure `IDE_ENABLED!=false`; `docker compose restart kdust` |
+| WebSocket fails (editor won’t load) | code-server host/origin check behind proxy | confirm code-server is on `127.0.0.1:8080`; if needed pass a code-server proxy flag |
 | Permission denied editing files | host `./projects` not owned by uid 1000 | `chown -R 1000:1000 ./projects` on the host |

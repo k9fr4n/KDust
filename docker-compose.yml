@@ -42,13 +42,25 @@ services:
     env_file: .env
     environment:
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
-      # code-server IDE (ADR-0028). On by default; set IDE_ENABLED=false
-      # to disable. Requires the kdust-ide sidecar (defined below) to be
-      # up. The proxy verifies the kdust_session JWT before reaching
-      # code-server.
+      # code-server IDE (ADR-0029 — supersedes the ADR-0028 sidecar).
+      # code-server now runs INSIDE this container (launched by
+      # docker/entrypoint.sh on 127.0.0.1:8080) so the web terminal
+      # inherits the full agent toolchain (docker/DooD, gh, glab,
+      # kdust-claude, rg…). The in-process proxy verifies the
+      # kdust_session JWT before reaching code-server. On by default;
+      # set IDE_ENABLED=false to disable. IDE_UPSTREAM defaults to
+      # http://127.0.0.1:8080 (no sidecar) — no need to set it.
       - IDE_ENABLED=${IDE_ENABLED:-true}
-      - IDE_UPSTREAM=http://kdust-ide:8080
       - IDE_PROXY_PORT=8443
+      # Claude Code wiring (ADR-0029). Point the Anthropic SDK at the
+      # in-stack dust-exporter proxy so a plain `claude` in the IDE
+      # terminal talks to your Dust agents. dust-exporter needs no API
+      # key by default, so ANTHROPIC_API_KEY is a non-empty placeholder
+      # the CLI insists on. `kdust-claude` (ADR-0027) still overrides
+      # these from the Secret Manager when present (Secret wins over
+      # inherited env), so both `claude` and `kdust-claude` work.
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-http://dust-exporter:8787}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-dummy}
       # Public base URL the browser uses to reach the IDE proxy. Leave
       # empty to derive <current-host>:4001 client-side. Set it when
       # KDust sits behind a TLS reverse-proxy (e.g. https://kdust.example.com:4001).
@@ -91,6 +103,11 @@ services:
       - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
     depends_on:
       - mcp-gateway
+      # dust-exporter (ADR-0029): the in-container `claude` / kdust-claude
+      # in the IDE terminal talk to Dust agents through it. Not required
+      # at KDust boot (only when claude is invoked), but ordered here so
+      # the proxy is up when the operator opens a terminal.
+      - dust-exporter
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -99,62 +116,23 @@ services:
       start_period: 20s
 
   # -------------------------------------------------------------------------- #
-  # code-server IDE sidecar (Franck 2026-06-03, ADR-0028).                     #
+  # code-server IDE — NO sidecar since ADR-0029 (Franck 2026-06-03).           #
   #                                                                            #
-  # Browser VS Code scoped to /projects, reached ONLY through the KDust        #
-  # auth-proxy (kdust :4001 -> kdust_session JWT -> kdust-ide:8080).           #
-  #                                                                            #
-  # [SECURITY] Deliberately has NO docker.sock mount: the web terminal         #
-  # can edit /projects but cannot reach the host Docker daemon, so the         #
-  # blast radius is the workspace, not the host. Do NOT add docker.sock        #
-  # here. Not published directly (expose only) and not Watchtower-scoped       #
-  # (pinned tag, manual upgrades).                                             #
+  # The ADR-0028 `kdust-ide` sidecar (codercom/code-server, no docker.sock)    #
+  # was removed: a web IDE that cannot run docker/gh/glab/kdust-claude was      #
+  # useless for real dev. code-server now runs INSIDE the `kdust` container     #
+  # (installed in the Dockerfile, launched by docker/entrypoint.sh on          #
+  # 127.0.0.1:8080) so the terminal inherits the SAME toolchain as the agent   #
+  # runtime. It stays reachable ONLY through the in-process auth-proxy          #
+  # (kdust :4001 -> kdust_session JWT -> 127.0.0.1:8080). The                   #
+  # host-root-via-DooD surface is already accepted for the `kdust` container    #
+  # (see Dockerfile [CRITICAL] note); this adds no new risk class.             #
   # -------------------------------------------------------------------------- #
-  kdust-ide:
-    image: codercom/code-server:4.122.0-bookworm
-    container_name: kdust-ide
-    restart: unless-stopped
-    # Claude Code wiring (Franck 2026-06-03). Point the Anthropic SDK
-    # at the in-stack dust-exporter proxy so `claude` in the IDE
-    # terminal talks to Dust agents. dust-exporter requires no API key
-    # by default, so ANTHROPIC_API_KEY is a non-empty placeholder the
-    # CLI insists on. Pick the agent at runtime with
-    #   ANTHROPIC_MODEL=<agent-sId> claude
-    # (see `GET /v1/models` or docs/ide.md). dust-exporter is started
-    # with --client-tools (see its `command:` below), so Claude Code's
-    # own Read/Edit/Bash run HERE (this sidecar has NO docker.sock —
-    # blast radius stays /projects).
-    environment:
-      - ANTHROPIC_BASE_URL=http://dust-exporter:8787
-      - ANTHROPIC_API_KEY=dummy
-    depends_on:
-      - dust-exporter
-    # Default image user is `coder` (uid 1000) — matches the host
-    # ./projects ownership (node, uid 1000), so edits work without chown.
-    command:
-      - --auth=none
-      - --bind-addr=0.0.0.0:8080
-      - --disable-telemetry
-      - --disable-update-check
-      - /projects
-    volumes:
-      - ./projects:/projects
-      # Persist the whole home on ONE named volume. Mounting on
-      # /home/coder (which EXISTS in the image, owned by coder uid 1000)
-      # makes Docker init the volume with coder ownership, so
-      # code-server can create ~/.config and ~/.local itself. Mounting
-      # the non-existent ~/.config / ~/.local/share subpaths instead
-      # yields root-owned volumes -> EACCES on startup (ADR-0028 fix).
-      - ide-home:/home/coder
-    expose:
-      - "8080"
-    mem_limit: 2g
-    mem_reservation: 256m
 
   # -------------------------------------------------------------------------- #
   # dust-exporter — Anthropic/OpenAI-compatible proxy in front of Dust         #
   # agents (Franck 2026-06-03). Lets Claude Code (Anthropic Messages API)      #
-  # in the kdust-ide terminal talk to your Dust agents.                        #
+  # in the in-container IDE terminal talk to your Dust agents (ADR-0029).      #
   #                                                                            #
   # [SECURITY] Internal-only: `expose` (no host `ports:`), so it is reachable  #
   # solely on the compose network — never published, honouring the            #
@@ -164,10 +142,13 @@ services:
   #   docker compose run --rm dust-exporter status   # authenticated: true     #
   # Deliberately NO docker.sock mount and NO env_file — the image ships sane   #
   # defaults (host 0.0.0.0, port 8787, file credential store on /data).        #
-  # --client-tools is set on `command:` so the CLIENT (Claude Code in          #
-  # kdust-ide) executes the tools locally; see docs/ide.md.                    #
-  # Private GHCR image, multi-arch (amd64 + arm64); Watchtower-scoped like     #
-  # the rest of the stack.                                                     #
+  # --client-tools is set on `command:` so the CLIENT (Claude Code) executes   #
+  # the tools locally. NB since ADR-0029 that client is the `kdust` container  #
+  # (code-server moved in-container), which DOES have docker.sock — so         #
+  # Claude Code's Bash tool can run docker/gh/glab. This is the intended       #
+  # trade-off (same surface as the agent runtime), NOT the old /projects-only  #
+  # sidecar blast radius. See docs/ide.md. Private GHCR image, multi-arch      #
+  # (amd64 + arm64); Watchtower-scoped like the rest of the stack.             #
   # -------------------------------------------------------------------------- #
   dust-exporter:
     image: ghcr.io/k9fr4n/dust-exporter:latest
@@ -302,12 +283,10 @@ services:
     # Watchtower ne surveille que les conteneurs qui portent ce label
     command: --label-enable --interval 300 --cleanup
 
-# Named volumes — code-server IDE persistence (ADR-0028). The whole
-# coder home (settings, extensions, VS Code user data) survives
-# container recreation. Single volume mounted on /home/coder so it
-# inherits coder(1000) ownership from the image (avoids EACCES).
+# Named volumes (ADR-0029: the ADR-0028 `ide-home` volume is gone —
+# in-container code-server persists its user-data/extensions under the
+# existing ./data bind at /data/ide, no separate volume needed).
 volumes:
-  ide-home:
   # dust-exporter OAuth session (credentials.json) + conversation-state
   # map. Survives container recreation so the one-time device-flow login
   # is not lost on `docker compose pull` / restart.

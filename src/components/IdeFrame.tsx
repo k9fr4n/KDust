@@ -16,7 +16,7 @@ interface IdeFrameProps {
   folder: string;
   /** Public base URL of the IDE proxy (runtime IDE_PUBLIC_URL), or null. */
   baseUrl: string | null;
-  /** Whether IDE_ENABLED=true on the server. */
+  /** Whether the IDE is enabled (server: IDE_ENABLED !== 'false'). */
   enabled: boolean;
 }
 

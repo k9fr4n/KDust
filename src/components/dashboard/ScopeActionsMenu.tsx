@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Code2,
   ExternalLink,
   FolderPlus,
   MessageSquarePlus,
@@ -47,7 +48,16 @@ export type ScopeActions =
       gitUrl: string | null;
     };
 
-export function ScopeActionsMenu({ scope }: { scope: ScopeActions }) {
+export function ScopeActionsMenu({
+  scope,
+  // code-server IDE (ADR-0028). On by default; the dashboard passes
+  // IDE_ENABLED !== 'false'. Hidden only when explicitly disabled so
+  // the link never lands on the "IDE disabled" notice.
+  ideEnabled = false,
+}: {
+  scope: ScopeActions;
+  ideEnabled?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -81,6 +91,10 @@ export function ScopeActionsMenu({ scope }: { scope: ScopeActions }) {
   const projectFolderQuery =
     scope.kind === 'folder' ? `&folder=${encodeURIComponent(scope.folderId)}` : '';
   const repoWebUrl = scope.kind === 'project' ? gitUrlToWebUrl(scope.gitUrl) : null;
+  // code-server IDE deep link (ADR-0028). Same scoped-URL mechanism as
+  // /chat, /task, /run: middleware rewrites `/<fsPath>/ide` to `/ide`
+  // with the scope, so the IDE opens on the current project/folder.
+  const ideHref = scope.kind === 'root' ? '/ide' : `/${scope.fsPath}/ide`;
 
   const deleteCurrent = async () => {
     if (scope.kind === 'root') return;
@@ -166,6 +180,20 @@ export function ScopeActionsMenu({ scope }: { scope: ScopeActions }) {
           role="menu"
           className="absolute right-0 z-50 mt-1 w-56 overflow-hidden rounded-md border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
         >
+          {ideEnabled && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                router.push(ideHref);
+              }}
+              className={itemBase}
+            >
+              <Code2 size={15} className="text-indigo-500" /> Open in IDE
+            </button>
+          )}
+
           {scope.kind === 'project' && (
             <>
               <button

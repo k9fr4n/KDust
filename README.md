@@ -2957,9 +2957,11 @@ terminal that, in the KDust container, would otherwise reach the host
 **Consequences**.
 
 - One extra published port (`4001`), JWT-gated, that must sit behind
-  the same host TLS reverse-proxy as `4000`. Opt-in: `IDE_ENABLED`
-  defaults to `false` (proxy is a no-op; `/ide` shows a disabled
-  notice). Kill switch = `IDE_ENABLED=false` or stop the sidecar.
+  the same host TLS reverse-proxy as `4000`. **On by default**
+  (Franck 2026-06-03 follow-up): `IDE_ENABLED` defaults to `true`;
+  the proxy boots and the dashboard menu entry shows unless
+  `IDE_ENABLED=false`. Kill switch = `IDE_ENABLED=false` (proxy
+  no-op, `/ide` shows a disabled notice) or stop the sidecar.
 - A small copy of the session-verification logic lives in the proxy,
   annotated to stay in lockstep with `session.ts`/`middleware.ts`
   (same pattern as the ADR-0027 decrypt copy).

@@ -37,10 +37,15 @@ browser ──TLS──▶ kdust :4001 (auth-proxy, in the KDust Node process)
 
 ## Enable it
 
-1. **`.env`**
+The IDE is **on by default** — you only need the stack running. To
+disable it, set `IDE_ENABLED=false` and restart KDust.
+
+1. **`.env`** (optional)
 
    ```dotenv
-   IDE_ENABLED=true
+   # IDE_ENABLED defaults to true; uncomment to turn the IDE off.
+   # IDE_ENABLED=false
+   #
    # Optional: only when behind a TLS reverse-proxy on a fixed host.
    # Leave empty to auto-derive <current-host>:4001 in the browser.
    IDE_PUBLIC_URL=https://kdust.example.com:4001
@@ -63,7 +68,7 @@ browser ──TLS──▶ kdust :4001 (auth-proxy, in the KDust Node process)
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `IDE_ENABLED` | `false` | Master switch. `false` → proxy is a no-op, `/ide` shows a disabled notice. |
+| `IDE_ENABLED` | `true` | Master switch. On by default; `false` → proxy is a no-op, `/ide` shows a disabled notice. |
 | `IDE_UPSTREAM` | `http://kdust-ide:8080` | code-server address on the compose network. |
 | `IDE_PROXY_PORT` | `8443` | Port the proxy listens on inside the container (published as `4001`). |
 | `IDE_PUBLIC_URL` | _(empty)_ | Browser-facing base URL. Empty → client derives `<host>:4001`. |
@@ -89,7 +94,7 @@ browser ──TLS──▶ kdust :4001 (auth-proxy, in the KDust Node process)
 
 `src/lib/ide/proxy.ts`:
 
-1. Booted from `src/instrumentation.ts` only when `IDE_ENABLED=true`.
+1. Booted from `src/instrumentation.ts` unless `IDE_ENABLED=false`.
 2. On every HTTP request **and** WS upgrade: reads `kdust_session`
    from the `Cookie` header and `jwtVerify`s it with `SESSION_SECRET`.
    - no `APP_PASSWORD` configured → open/dev mode (mirrors middleware);
@@ -107,7 +112,7 @@ browser ──TLS──▶ kdust :4001 (auth-proxy, in the KDust Node process)
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `/ide` shows “IDE disabled” | `IDE_ENABLED` not `true` | set it in `.env`, restart KDust |
+| `/ide` shows “IDE disabled” | `IDE_ENABLED=false` set | remove it (default is on), restart KDust |
 | Blank iframe / 302 loop | not logged into KDust, or cookie not sent to `:4001` | log into KDust first; ensure `IDE_PUBLIC_URL` is same-host |
 | `502 IDE upstream unavailable` | `kdust-ide` not running | `docker compose up -d kdust-ide` |
 | WebSocket fails (editor won’t load) | code-server host/origin check behind proxy | confirm `IDE_UPSTREAM` is correct; if needed pass a code-server proxy flag |

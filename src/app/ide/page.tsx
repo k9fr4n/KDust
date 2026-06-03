@@ -18,7 +18,9 @@ export default async function IdePage() {
   // opens the whole tree; a folder/project scope deep-links into it.
   const folder = scope.kind === 'root' ? '/projects' : `/projects/${scope.fsPath}`;
 
-  const enabled = process.env.IDE_ENABLED === 'true';
+  // Always-on by default (ADR-0028 follow-up): disabled only when
+  // IDE_ENABLED is explicitly 'false'.
+  const enabled = process.env.IDE_ENABLED !== 'false';
   // Runtime (not NEXT_PUBLIC_): the image is prebuilt, so this is read
   // server-side and passed as a prop. Empty => client derives
   // <host>:4001 from window.location.

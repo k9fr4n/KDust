@@ -34,10 +34,15 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
       - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
+    # App (Next.js) is fronted by the `caddy` TLS reverse-proxy
+    # (ADR-0030) — no longer published in clear. Caddy reaches it as
+    # kdust:3000 on the internal compose network.
+    expose:
+      - "3000"
     ports:
-      - "4000:3000"
-      # IDE auth-proxy (ADR-0028). On by default; keep this behind
-      # your host TLS reverse-proxy. Set IDE_ENABLED=false to disable.
+      # IDE auth-proxy (ADR-0028/0029). TLS is terminated in-process via
+      # IDE_TLS_* (trusted Ecritel wildcard, ADR-0030), so this stays
+      # published directly. Set IDE_ENABLED=false to disable.
       - "4001:8443"
     env_file: .env
     environment:
@@ -256,6 +261,40 @@ services:
     cpus: 2.0
 
   # -------------------------------------------------------------------------- #
+  # Caddy — TLS front for the KDust app (ADR-0030, Franck 2026-06-03).         #
+  #                                                                            #
+  # Terminates TLS for the Next.js app with the STATIC Ecritel wildcard        #
+  # cert (*.ecritel.net) and reverse-proxies to kdust:3000 on the internal     #
+  # network. No ACME (cert supplied) -> the official caddy:2 image is enough,  #
+  # no DNS plugin / custom build. The IDE (:4001) keeps its own in-process     #
+  # TLS (IDE_TLS_*) using the same cert files; Caddy fronts the app only.      #
+  # [SECURITY] Binds the LAN host port 4000 only — no public ingress. Cert is  #
+  # mounted read-only from ./data/tls/ecritel. Config: caddy/Caddyfile.        #
+  # -------------------------------------------------------------------------- #
+  caddy:
+    image: caddy:2
+    container_name: kdust-caddy
+    restart: unless-stopped
+    pull_policy: always
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
+    ports:
+      # App, now TLS-terminated: https://kdust.ecritel.net:4000
+      - "4000:4000"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Static Ecritel wildcard cert (fullchain.pem + privkey.pem).
+      - ./data/tls/ecritel:/certs:ro
+      # Caddy's own state (not used for ACME here, but it expects them).
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - kdust
+    mem_limit: 256m
+    mem_reservation: 32m
+
+  # -------------------------------------------------------------------------- #
   # Watchtower — mise à jour automatique du conteneur kdust                    #
   # Surveille ghcr.io toutes les 5 minutes (300s).                             #
   # Dès qu'une nouvelle image est détectée : pull silencieux + redémarrage.    #
@@ -301,3 +340,7 @@ volumes:
   # map. Survives container recreation so the one-time device-flow login
   # is not lost on `docker compose pull` / restart.
   dust-exporter-data:
+  # Caddy state (ADR-0030). Not used for ACME (static cert), but Caddy
+  # expects writable /data and /config.
+  caddy-data:
+  caddy-config:

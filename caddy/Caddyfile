@@ -1,0 +1,34 @@
+# Caddyfile — TLS front for the KDust app (ADR-0030, Franck 2026-06-03).
+#
+# Terminates TLS for the Next.js app using the STATIC Ecritel wildcard
+# certificate (*.ecritel.net, GlobalSign/AlphaSSL) and reverse-proxies
+# to the kdust container on the internal compose network. No ACME: the
+# cert is provided, so `auto_https off` prevents Caddy from trying to
+# issue/redirect on :80/:443.
+#
+# The IDE (:4001) is NOT fronted here — it keeps its own in-process TLS
+# termination (IDE_TLS_*, ADR-0029 proxy) using the SAME cert files.
+# Both the app and the IDE therefore live under the single hostname
+# `kdust.ecritel.net` (shared `kdust_session` cookie — cookies are
+# host-scoped, not port-scoped, so the JWT works across :4000/:4001).
+#
+# Cert files are bind-mounted read-only at /certs (host
+# ./data/tls/ecritel). Renew = drop new PEMs there + `docker compose
+# restart caddy`.
+{
+	# Cert is supplied; never attempt ACME or HTTP->HTTPS redirect sites.
+	auto_https off
+	# Don't leak the admin API.
+	admin off
+}
+
+https://kdust.ecritel.net:4000 {
+	tls /certs/fullchain.pem /certs/privkey.pem
+
+	encode zstd gzip
+
+	# Next.js standalone server on the internal network. Caddy sets
+	# X-Forwarded-For / X-Forwarded-Proto=https automatically, so the
+	# app can detect it is behind TLS (enables secure cookies later).
+	reverse_proxy kdust:3000
+}

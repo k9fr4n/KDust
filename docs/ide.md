@@ -57,12 +57,15 @@ disable it, set `IDE_ENABLED=false` and restart KDust.
    docker compose up -d
    ```
 
-3. Open **`/ide`** in KDust. It opens the workspace for your current
-   scope:
+3. Use the **“Open in IDE ↗”** item in the scope (⋮) menu. Since
+   Franck 2026-06-03 it opens the `:4001` proxy **directly in a new
+   tab** (no in-app iframe), scoped to your current location:
    - project/folder page → `/projects/<fsPath>`
    - root → `/projects` (whole tree)
 
-   Use **“Open in new tab ↗”** for a full-window editor.
+   The in-app `/ide` page (embedded `<IdeFrame>`) still exists and is
+   reachable by URL; it also offers an **“Open in new tab ↗”** link for
+   a full-window editor.
 
 ## Claude Code via `dust-exporter`
 

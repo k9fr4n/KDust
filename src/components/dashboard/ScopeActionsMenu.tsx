@@ -29,6 +29,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { gitUrlToWebUrl } from '@/lib/git-web-url';
+import { buildIdeUrl, ideFolderForFsPath } from '@/lib/ide/url';
 
 export type ScopeActions =
   | { kind: 'root' }
@@ -54,9 +55,13 @@ export function ScopeActionsMenu({
   // IDE_ENABLED !== 'false'. Hidden only when explicitly disabled so
   // the link never lands on the "IDE disabled" notice.
   ideEnabled = false,
+  // Browser-facing base URL of the IDE proxy (runtime IDE_PUBLIC_URL).
+  // Null/empty => the client derives <host>:4001 from window.location.
+  ideBaseUrl = null,
 }: {
   scope: ScopeActions;
   ideEnabled?: boolean;
+  ideBaseUrl?: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -91,10 +96,15 @@ export function ScopeActionsMenu({
   const projectFolderQuery =
     scope.kind === 'folder' ? `&folder=${encodeURIComponent(scope.folderId)}` : '';
   const repoWebUrl = scope.kind === 'project' ? gitUrlToWebUrl(scope.gitUrl) : null;
-  // code-server IDE deep link (ADR-0028). Same scoped-URL mechanism as
-  // /chat, /task, /run: middleware rewrites `/<fsPath>/ide` to `/ide`
-  // with the scope, so the IDE opens on the current project/folder.
-  const ideHref = scope.kind === 'root' ? '/ide' : `/${scope.fsPath}/ide`;
+  // code-server IDE deep link (ADR-0028). Opens the :4001 proxy in a new
+  // tab directly (Franck 2026-06-03) — the former in-app iframe page
+  // (/ide) is no longer used by this menu. Built client-side so the
+  // <host>:4001 fallback can read window.location.
+  const openIde = () => {
+    const folder = ideFolderForFsPath(scope.kind === 'root' ? null : scope.fsPath);
+    const url = buildIdeUrl(folder, ideBaseUrl);
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   const deleteCurrent = async () => {
     if (scope.kind === 'root') return;
@@ -186,11 +196,12 @@ export function ScopeActionsMenu({
               role="menuitem"
               onClick={() => {
                 setOpen(false);
-                router.push(ideHref);
+                openIde();
               }}
               className={itemBase}
             >
               <Code2 size={15} className="text-indigo-500" /> Open in IDE
+              <ExternalLink size={13} className="ml-auto text-slate-400" />
             </button>
           )}
 

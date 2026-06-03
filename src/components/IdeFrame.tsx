@@ -9,7 +9,8 @@
 // compose mapping). `folder` deep-links code-server to the current
 // project/scope via its `?folder=` query param.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { buildIdeUrl } from '@/lib/ide/url';
 
 interface IdeFrameProps {
   /** Absolute path inside the IDE sidecar, e.g. /projects/foo/bar. */
@@ -20,29 +21,14 @@ interface IdeFrameProps {
   enabled: boolean;
 }
 
-const DEFAULT_PROXY_PORT = '4001';
-
 export function IdeFrame({ folder, baseUrl, enabled }: IdeFrameProps) {
-  // Resolve the base URL on the client when the server did not provide
-  // one (window is only available after mount).
-  const [resolvedBase, setResolvedBase] = useState<string | null>(baseUrl);
+  // Resolve the deep link on the client: buildIdeUrl falls back to
+  // <host>:4001 via window.location, only available after mount.
+  const [ideUrl, setIdeUrl] = useState<string | null>(() => buildIdeUrl(folder, baseUrl));
 
   useEffect(() => {
-    if (baseUrl) {
-      setResolvedBase(baseUrl);
-      return;
-    }
-    if (typeof window !== 'undefined') {
-      const { protocol, hostname } = window.location;
-      setResolvedBase(`${protocol}//${hostname}:${DEFAULT_PROXY_PORT}`);
-    }
-  }, [baseUrl]);
-
-  const ideUrl = useMemo(() => {
-    if (!resolvedBase) return null;
-    const base = resolvedBase.replace(/\/+$/, '');
-    return `${base}/?folder=${encodeURIComponent(folder)}`;
-  }, [resolvedBase, folder]);
+    setIdeUrl(buildIdeUrl(folder, baseUrl));
+  }, [folder, baseUrl]);
 
   if (!enabled) {
     return (

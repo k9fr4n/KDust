@@ -262,7 +262,11 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
       <div className="flex items-start justify-between gap-2">
         <ScopePath fsPath={scope.fsPath} />
         {/* IDE entry on by default (ADR-0028); hidden only when IDE_ENABLED=false. */}
-        <ScopeActionsMenu scope={actionsScope} ideEnabled={process.env.IDE_ENABLED !== 'false'} />
+        <ScopeActionsMenu
+          scope={actionsScope}
+          ideEnabled={process.env.IDE_ENABLED !== 'false'}
+          ideBaseUrl={process.env.IDE_PUBLIC_URL?.trim() || null}
+        />
       </div>
 
       {reason === 'select-a-project' && (

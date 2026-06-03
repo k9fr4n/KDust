@@ -10,10 +10,15 @@
 //   1. verifies the KDust `kdust_session` JWT on EVERY request and on
 //      the WebSocket upgrade — same cookie + SESSION_SECRET as
 //      src/middleware.ts, so no second auth system is introduced;
-//   2. proxies HTTP and WS verbatim to the code-server sidecar
-//      (IDE_UPSTREAM, default http://kdust-ide:8080), which is only
-//      reachable on the internal compose network and has NO access to
-//      docker.sock (blast radius limited to /projects — ADR-0028).
+//   2. proxies HTTP and WS verbatim to code-server (IDE_UPSTREAM,
+//      default http://127.0.0.1:8080). Since ADR-0029 (Franck
+//      2026-06-03) code-server runs IN THIS container (launched by
+//      docker/entrypoint.sh on loopback) instead of the ADR-0028
+//      `kdust-ide` sidecar, so the web terminal inherits the full
+//      agent toolchain (docker/DooD, gh, glab, kdust-claude). The
+//      host-root-via-DooD surface is already accepted for this
+//      container; the loopback bind keeps code-server unreachable
+//      except through this JWT-gated proxy.
 //
 // No new npm dependency: `jose` is already used by session.ts /
 // middleware.ts, and the proxy is implemented with node:http +
@@ -80,7 +85,7 @@ async function isAuthed(cookieHeader: string | undefined): Promise<boolean> {
 export async function bootIdeProxy(): Promise<void> {
   if (process.env.IDE_ENABLED === 'false') return;
 
-  const upstream = parseUpstream(process.env.IDE_UPSTREAM ?? 'http://kdust-ide:8080');
+  const upstream = parseUpstream(process.env.IDE_UPSTREAM ?? 'http://127.0.0.1:8080');
   const port = Number(process.env.IDE_PROXY_PORT ?? '8443');
 
   const server = http.createServer((req, res) => {

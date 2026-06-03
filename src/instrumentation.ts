@@ -239,12 +239,14 @@ export async function register() {
     }
 
     // Boot the code-server IDE auth-proxy (Franck 2026-06-03,
-    // ADR-0028). Enabled by default; set IDE_ENABLED=false to
-    // disable (kill switch). Runs as an extra
-    // http.Server listener in THIS process on IDE_PROXY_PORT, verifies
-    // the kdust_session JWT, and proxies HTTP+WS to the kdust-ide
-    // sidecar (no docker.sock). Best-effort: a proxy failure must
-    // never abort the runtime — flip IDE_ENABLED=false to kill it.
+    // ADR-0028; ADR-0029 moved code-server in-container). Enabled by
+    // default; set IDE_ENABLED=false to disable (kill switch). Runs as
+    // an extra http.Server listener in THIS process on IDE_PROXY_PORT,
+    // verifies the kdust_session JWT, and proxies HTTP+WS to code-server
+    // (default http://127.0.0.1:8080, launched by docker/entrypoint.sh
+    // in this same container — full agent toolchain incl. docker.sock).
+    // Best-effort: a proxy failure must never abort the runtime — flip
+    // IDE_ENABLED=false to kill it.
     try {
       const { bootIdeProxy } = await import('./lib/ide/proxy');
       await bootIdeProxy();

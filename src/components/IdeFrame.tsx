@@ -1,10 +1,12 @@
 'use client';
 
-// IdeFrame — embeds the code-server IDE (ADR-0028, Franck 2026-06-03).
+// IdeFrame — embeds the code-server IDE (ADR-0028; ADR-0029 moved
+// code-server in-container, Franck 2026-06-03).
 //
-// The IDE is served by the `kdust-ide` sidecar behind the
-// authenticated proxy (src/lib/ide/proxy.ts). The browser reaches the
-// proxy at `baseUrl` (runtime IDE_PUBLIC_URL passed from the server)
+// The IDE is served by code-server running INSIDE the `kdust` container
+// (since ADR-0029, launched by docker/entrypoint.sh on loopback) behind
+// the authenticated proxy (src/lib/ide/proxy.ts). The browser reaches
+// the proxy at `baseUrl` (runtime IDE_PUBLIC_URL passed from the server)
 // or, when unset, at the current host on port 4001 (the default
 // compose mapping). `folder` deep-links code-server to the current
 // project/scope via its `?folder=` query param.
@@ -13,7 +15,7 @@ import { useEffect, useState } from 'react';
 import { buildIdeUrl } from '@/lib/ide/url';
 
 interface IdeFrameProps {
-  /** Absolute path inside the IDE sidecar, e.g. /projects/foo/bar. */
+  /** Absolute path inside the IDE container, e.g. /projects/foo/bar. */
   folder: string;
   /** Public base URL of the IDE proxy (runtime IDE_PUBLIC_URL), or null. */
   baseUrl: string | null;
@@ -36,8 +38,8 @@ export function IdeFrame({ folder, baseUrl, enabled }: IdeFrameProps) {
         <p className="font-medium text-zinc-700">IDE disabled</p>
         <p>
           Set <code className="rounded bg-zinc-100 px-1 py-0.5">IDE_ENABLED=true</code>{' '}
-          and start the <code className="rounded bg-zinc-100 px-1 py-0.5">kdust-ide</code>{' '}
-          service to enable the in-stack code-server.
+          and restart the <code className="rounded bg-zinc-100 px-1 py-0.5">kdust</code>{' '}
+          container to enable the in-container code-server.
         </p>
       </div>
     );

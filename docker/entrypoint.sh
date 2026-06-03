@@ -106,6 +106,49 @@ if [ -n "${DATABASE_URL:-}" ]; then
   fi
 fi
 
+# --- code-server IDE (Franck 2026-06-03, ADR-0029) ---
+# code-server now runs IN this container (supersedes the ADR-0028
+# `kdust-ide` sidecar) so the web terminal inherits the full agent
+# toolchain (docker/DooD, gh, glab, kdust-claude, rg, jq, yq, ruff).
+# It binds to loopback only (127.0.0.1:8080); the in-process auth-proxy
+# (src/lib/ide/proxy.ts, IDE_PROXY_PORT 8443 -> published 4001) is the
+# only reachable entry point and gates every request on the
+# kdust_session JWT. Backgrounded here so it survives independently of
+# Next; on `exec` it reparents to tini (PID 1), which reaps it.
+#
+# We launch it as `node` (uid 1000) so its terminals inherit node's
+# supplementary groups (incl. `docker`, granted above via usermod +
+# gosu initgroups) and match /projects ownership. Persistence lives on
+# the existing /data volume (no extra named volume needed). Kill switch:
+# IDE_ENABLED=false. Best-effort: a code-server failure must never block
+# the KDust runtime, hence the trailing `|| true`-friendly background.
+if [ "${IDE_ENABLED:-true}" != "false" ] && command -v code-server >/dev/null 2>&1; then
+  echo "[entrypoint] starting in-container code-server (127.0.0.1:8080, workspace /projects)"
+  if [ "$(id -u)" = "0" ]; then
+    install -d -o node -g node -m 700 /data/ide /data/ide/user-data /data/ide/extensions 2>/dev/null || true
+    gosu node env HOME=/home/node code-server \
+      --auth none \
+      --bind-addr 127.0.0.1:8080 \
+      --disable-telemetry \
+      --disable-update-check \
+      --user-data-dir /data/ide/user-data \
+      --extensions-dir /data/ide/extensions \
+      /projects &
+  else
+    mkdir -p /data/ide/user-data /data/ide/extensions 2>/dev/null || true
+    HOME=/home/node code-server \
+      --auth none \
+      --bind-addr 127.0.0.1:8080 \
+      --disable-telemetry \
+      --disable-update-check \
+      --user-data-dir /data/ide/user-data \
+      --extensions-dir /data/ide/extensions \
+      /projects &
+  fi
+elif [ "${IDE_ENABLED:-true}" != "false" ]; then
+  echo "[entrypoint] IDE_ENABLED!=false but code-server binary not found, skipping IDE launch"
+fi
+
 # gosu(1) gotcha (Franck 2026-04-21 00:10) \u2014 IMPORTANT:
 # `gosu node:node CMD` specifies BOTH user and primary group explicitly.
 # In that mode gosu drops **all supplementary groups** and sets groups

@@ -97,6 +97,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && touch /home/node/.ssh/known_hosts \
   && chown -R node:node /home/node/.ssh \
   && chmod 600 /home/node/.ssh/config /home/node/.ssh/known_hosts
+# Claude Code CLI (Franck 2026-06-03, ADR-0027). Installed globally so
+# the `kdust-claude` wrapper can `exec claude`. Interactive use only,
+# reached via `ssh host -t 'docker exec -it kdust kdust-claude'` — it
+# is NOT part of the scheduler/runtime and never listens on a port.
+# Pinned for reproducibility, like yq/glab/ruff above.
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g @anthropic-ai/claude-code@2.1.161
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
@@ -117,7 +124,12 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 # convention; SKILLS_DIR resolves to /app/skills via src/lib/skills/repo.ts).
 COPY --from=builder /app/skills ./skills
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh && mkdir -p /data /projects && chown -R node:node /app /data /projects
+# Claude Code launcher (ADR-0027): resolves ANTHROPIC_* from the Secret
+# Manager and execs `claude`. The .mjs lives under /app so it resolves
+# @prisma/client from /app/node_modules; the shim is on PATH.
+COPY docker/kdust-claude.mjs /app/bin/kdust-claude.mjs
+COPY docker/kdust-claude /usr/local/bin/kdust-claude
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/kdust-claude && mkdir -p /data /projects && chown -R node:node /app /data /projects
 # L'entrypoint d\u00e9marre en root pour fixer les perms des volumes bind-mount\u00e9s,
 # puis bascule sur l'utilisateur node (uid 1000) via gosu.
 EXPOSE 3000

@@ -1,0 +1,14 @@
+#!/bin/sh
+# kdust-claude — thin launcher for Claude Code inside the KDust
+# container (Franck 2026-06-03, ADR-0027).
+#
+# Resolves ANTHROPIC_* values from the Secret Manager via the Node
+# wrapper, then execs `claude` with them injected. All argv is passed
+# through verbatim, e.g.:
+#   docker exec -it kdust kdust-claude            # interactive REPL
+#   docker exec -it kdust kdust-claude --version  # passthrough
+#
+# Node resolves @prisma/client from /app/node_modules regardless of
+# cwd, so we exec the absolute script path.
+set -eu
+exec node /app/bin/kdust-claude.mjs "$@"

@@ -14,6 +14,7 @@ const RESERVED_SEGMENTS = new Set([
   'conversation',
   'logs',
   'about',
+  'ide',
   'settings',
   'login',
   'api',

@@ -70,13 +70,15 @@ async function isAuthed(cookieHeader: string | undefined): Promise<boolean> {
 }
 
 /**
- * Boot the IDE auth-proxy if IDE_ENABLED=true. Best-effort and
+ * Boot the IDE auth-proxy. Enabled by default (ADR-0028 follow-up,
+ * Franck 2026-06-03): the IDE is always active unless explicitly
+ * disabled with IDE_ENABLED=false (kill switch). Best-effort and
  * idempotent-ish: any listen/setup failure is logged, never thrown —
  * a broken IDE proxy must not abort the instrumentation hook or the
  * rest of the KDust runtime.
  */
 export async function bootIdeProxy(): Promise<void> {
-  if (process.env.IDE_ENABLED !== 'true') return;
+  if (process.env.IDE_ENABLED === 'false') return;
 
   const upstream = parseUpstream(process.env.IDE_UPSTREAM ?? 'http://kdust-ide:8080');
   const port = Number(process.env.IDE_PROXY_PORT ?? '8443');

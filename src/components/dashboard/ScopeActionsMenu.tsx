@@ -50,9 +50,9 @@ export type ScopeActions =
 
 export function ScopeActionsMenu({
   scope,
-  // code-server IDE (ADR-0028). Only render the entry when the
-  // server reports IDE_ENABLED=true; otherwise the link would land
-  // on the "IDE disabled" notice.
+  // code-server IDE (ADR-0028). On by default; the dashboard passes
+  // IDE_ENABLED !== 'false'. Hidden only when explicitly disabled so
+  // the link never lands on the "IDE disabled" notice.
   ideEnabled = false,
 }: {
   scope: ScopeActions;

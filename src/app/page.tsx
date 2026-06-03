@@ -261,8 +261,8 @@ export default async function Dashboard({ searchParams }: DashboardProps) {
           scope still gets the menu (New folder / New project). */}
       <div className="flex items-start justify-between gap-2">
         <ScopePath fsPath={scope.fsPath} />
-        {/* IDE entry shown only when code-server is enabled (ADR-0028). */}
-        <ScopeActionsMenu scope={actionsScope} ideEnabled={process.env.IDE_ENABLED === 'true'} />
+        {/* IDE entry on by default (ADR-0028); hidden only when IDE_ENABLED=false. */}
+        <ScopeActionsMenu scope={actionsScope} ideEnabled={process.env.IDE_ENABLED !== 'false'} />
       </div>
 
       {reason === 'select-a-project' && (

@@ -36,16 +36,17 @@ services:
       - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
     ports:
       - "4000:3000"
-      # IDE auth-proxy (ADR-0028). Nothing listens unless
-      # IDE_ENABLED=true; keep this behind your host TLS reverse-proxy.
+      # IDE auth-proxy (ADR-0028). On by default; keep this behind
+      # your host TLS reverse-proxy. Set IDE_ENABLED=false to disable.
       - "4001:8443"
     env_file: .env
     environment:
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}
-      # code-server IDE (ADR-0028). Opt-in: set IDE_ENABLED=true in .env
-      # AND start the kdust-ide sidecar. The proxy verifies the
-      # kdust_session JWT before reaching code-server.
-      - IDE_ENABLED=${IDE_ENABLED:-false}
+      # code-server IDE (ADR-0028). On by default; set IDE_ENABLED=false
+      # to disable. Requires the kdust-ide sidecar (defined below) to be
+      # up. The proxy verifies the kdust_session JWT before reaching
+      # code-server.
+      - IDE_ENABLED=${IDE_ENABLED:-true}
       - IDE_UPSTREAM=http://kdust-ide:8080
       - IDE_PROXY_PORT=8443
       # Public base URL the browser uses to reach the IDE proxy. Leave

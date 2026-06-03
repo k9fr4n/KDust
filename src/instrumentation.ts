@@ -239,7 +239,8 @@ export async function register() {
     }
 
     // Boot the code-server IDE auth-proxy (Franck 2026-06-03,
-    // ADR-0028). No-op unless IDE_ENABLED=true. Runs as an extra
+    // ADR-0028). Enabled by default; set IDE_ENABLED=false to
+    // disable (kill switch). Runs as an extra
     // http.Server listener in THIS process on IDE_PROXY_PORT, verifies
     // the kdust_session JWT, and proxies HTTP+WS to the kdust-ide
     // sidecar (no docker.sock). Best-effort: a proxy failure must

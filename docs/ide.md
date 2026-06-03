@@ -207,6 +207,32 @@ Two ways to get a secure context:
   plaintext loopback; TLS is purely the front edge, the proxy's
   `kdust_session` JWT check is unchanged.
 
+### App TLS via Caddy (ADR-0030)
+
+_Franck 2026-06-03._ The IDE (`:4001`) terminates TLS in-process
+(`IDE_TLS_*`). The **Next.js app (`:4000`)** can't do TLS natively, so a
+**Caddy** reverse-proxy fronts it with the **same** cert. Both then live
+under `https://kdust.ecritel.net` (`:4000` app, `:4001` IDE; the
+`kdust_session` cookie is host-scoped so it spans both ports).
+
+Deploy on the host (in the deployment dir, e.g. `/home/kfr/docker/KDust`):
+
+```bash
+# 1) cert already in ./data/tls/ecritel/{fullchain.pem,privkey.pem}
+# 2) sync the repo's caddy/Caddyfile + docker-compose.yml here
+# 3) recreate the stack (adds the `caddy` service, app -> expose)
+docker compose up -d
+# 4) verify
+docker compose ps caddy
+docker logs kdust-caddy --tail 20    # no cert/listen errors
+```
+
+`kdust.ecritel.net` must resolve to the host on every client (internal
+DNS or `/etc/hosts`). The app is **no longer served in clear on `:4000`**
+— only via Caddy/TLS. Cert renewal: drop fresh PEMs in
+`./data/tls/ecritel` and `docker compose restart caddy` (and `kdust` for
+the IDE side).
+
 ## Security notes
 
 - **TLS** can now be terminated **by the proxy itself** (`IDE_TLS_*`,

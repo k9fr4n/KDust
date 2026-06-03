@@ -3042,3 +3042,62 @@ conteneur KDust, sinon ça n'a pas trop d'intérêt »_.
   CI image rebuild + `docker compose pull` + restart (the new
   entrypoint + Dockerfile only take effect in the rebuilt image).
   Full guide in [`docs/ide.md`](docs/ide.md).
+
+### ADR-0030 — TLS front for the app via a Caddy reverse-proxy + static Ecritel wildcard cert (2026-06-03)
+
+**Status**: Accepted (2026-06-03, Franck).
+
+**Context**. After ADR-0029 the IDE proxy gained optional in-process TLS
+(`IDE_TLS_*`) so code-server **webviews** render (service workers need a
+*secure context*). Self-signed certs are rejected by the service-worker
+fetch, so Franck supplied the **Ecritel wildcard `*.ecritel.net`**
+(GlobalSign/AlphaSSL) and chose the hostname **`kdust.ecritel.net`**.
+That fixed the IDE on `:4001`, but the **Next.js app on `:4000` was
+still plain HTTP** — and the app cannot terminate TLS natively in
+standalone mode. Let's Encrypt was ruled out: the box is LAN-only
+(`192.168.0.3`, no public ingress), so HTTP-01/TLS-ALPN-01 can't
+validate; only DNS-01 would, which the wildcard makes unnecessary.
+
+**Decision**. Front the **app** with a **Caddy** reverse-proxy
+terminating TLS with the **static** wildcard cert (no ACME).
+
+- New `caddy` service (official `caddy:2` image — static certs need no
+  DNS plugin) publishes host **`4000`**, `tls /certs/fullchain.pem
+  /certs/privkey.pem`, `reverse_proxy kdust:3000`. Config in
+  [`caddy/Caddyfile`](caddy/Caddyfile); `auto_https off` (cert
+  supplied). Cert bind-mounted read-only from `./data/tls/ecritel`.
+- `kdust` **stops publishing `4000`** (app → `expose: 3000`, reachable
+  only by Caddy on the internal network). The app URL stays
+  `https://kdust.ecritel.net:4000` (same port, now TLS).
+- The **IDE (`:4001`) is left unchanged** — it keeps its own in-process
+  TLS (`IDE_TLS_*`) using the **same** cert files. Lowest churn: no risk
+  to the IDE path that just started working. Both app and IDE live under
+  the one hostname `kdust.ecritel.net`; the `kdust_session` cookie is
+  host-scoped so it spans `:4000`/`:4001`.
+
+**Rejected alternatives**.
+
+- *Let's Encrypt (DNS-01 via Caddy DNS plugin)* — needs a DNS-API token
+  (secret) and a custom xcaddy image; the existing Ecritel wildcard
+  makes it pointless.
+- *Caddy fronting the IDE too* — cleaner "one place" story, but would rip
+  out the just-working `IDE_TLS_*` path and force preserving the
+  original `Host`/WS quirks of code-server through a second hop. Deferred;
+  the IDE keeps in-process TLS.
+- *Move app to bare `:443`* — nicer URL but breaks existing `:4000`
+  bookmarks/DNS expectations. Kept `:4000`.
+
+**Consequences**.
+
+- One trusted cert for the whole app + IDE; no per-client CA import; the
+  `secure: true` flag can now be set on `kdust_session` (follow-up — the
+  app is no longer served in clear). Until then the cookie stays
+  `secure:false`.
+- New container (`caddy`), two named volumes (`caddy-data`,
+  `caddy-config`). The app is no longer reachable in clear on `:4000`.
+- Cert renewal = drop fresh PEMs in `./data/tls/ecritel` + `docker
+  compose restart caddy` (and `kdust` for the IDE side).
+- Requires `kdust.ecritel.net` to resolve to the host on every client
+  (internal DNS or `/etc/hosts`). No public ingress introduced — Caddy
+  binds the LAN host port only. Schema, scheduler, push pipeline, MCP,
+  Telegram untouched. Full guide in [`docs/ide.md`](docs/ide.md).

@@ -52,6 +52,16 @@ services:
       # http://127.0.0.1:8080 (no sidecar) — no need to set it.
       - IDE_ENABLED=${IDE_ENABLED:-true}
       - IDE_PROXY_PORT=8443
+      # TLS termination for the IDE auth-proxy (Franck 2026-06-03).
+      # REQUIRED for code-server webviews (Claude Code chat panel,
+      # extension READMEs, settings UI) to render: those use a service
+      # worker, which browsers only register in a *secure context*
+      # (HTTPS or localhost). Over plain HTTP on a LAN IP the webviews
+      # stay blank. Point these at a PEM keypair under /data (already
+      # bind-mounted). Generate one with scripts/gen-ide-cert.sh, then
+      # set IDE_PUBLIC_URL=https://<host>:4001. Leave empty = HTTP.
+      - IDE_TLS_CERT=${IDE_TLS_CERT:-}
+      - IDE_TLS_KEY=${IDE_TLS_KEY:-}
       # Claude Code wiring (ADR-0029). Point the Anthropic SDK at the
       # in-stack dust-exporter proxy so a plain `claude` in the IDE
       # terminal talks to your Dust agents. dust-exporter needs no API

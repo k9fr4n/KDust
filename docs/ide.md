@@ -206,5 +206,6 @@ Manager — ADR-0027.)
 | `/ide` shows “IDE disabled” | `IDE_ENABLED=false` set | remove it (default is on), restart KDust |
 | Blank iframe / 302 loop | not logged into KDust, or cookie not sent to `:4001` | log into KDust first; ensure `IDE_PUBLIC_URL` is same-host |
 | `502 IDE upstream unavailable` | code-server not running in the `kdust` container | check `docker logs kdust` for the `[entrypoint] starting in-container code-server` line; ensure `IDE_ENABLED!=false`; `docker compose restart kdust` |
+| `502 IDE upstream unavailable`, code-server logs stop right after `Using user-data-dir` with `listen EADDRINUSE … 127.0.0.1:3000` | code-server inherits the container's `PORT=3000` (Next.js), which **takes precedence over `--bind-addr`**, so it tries to bind `:3000` and dies | fixed in `docker/entrypoint.sh` by launching code-server under `env -u PORT -u HOST` (Franck 2026-06-03). On an old image, rebuild: `docker compose up -d --build` |
 | WebSocket fails (editor won’t load) | code-server host/origin check behind proxy | confirm code-server is on `127.0.0.1:8080`; if needed pass a code-server proxy flag |
 | Permission denied editing files | host `./projects` not owned by uid 1000 | `chown -R 1000:1000 ./projects` on the host |

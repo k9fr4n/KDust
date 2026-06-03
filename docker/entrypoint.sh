@@ -124,9 +124,17 @@ fi
 # the KDust runtime, hence the trailing `|| true`-friendly background.
 if [ "${IDE_ENABLED:-true}" != "false" ] && command -v code-server >/dev/null 2>&1; then
   echo "[entrypoint] starting in-container code-server (127.0.0.1:8080, workspace /projects)"
+  # [IMPORTANT] code-server gives the `PORT` (and `HOST`) env vars
+  # PRECEDENCE over both --bind-addr and config.yaml. The kdust
+  # container exports PORT=3000 for the Next.js standalone server, so
+  # an un-scrubbed code-server inherits PORT=3000, ignores
+  # --bind-addr 127.0.0.1:8080, tries to bind :3000 and dies with
+  # EADDRINUSE (Next is already there) -> the IDE proxy then returns
+  # "IDE upstream unavailable". We strip PORT/HOST with `env -u` so the
+  # explicit --bind-addr is honored (Franck 2026-06-03, ADR-0029 fix).
   if [ "$(id -u)" = "0" ]; then
     install -d -o node -g node -m 700 /data/ide /data/ide/user-data /data/ide/extensions 2>/dev/null || true
-    gosu node env HOME=/home/node code-server \
+    gosu node env -u PORT -u HOST HOME=/home/node code-server \
       --auth none \
       --bind-addr 127.0.0.1:8080 \
       --disable-telemetry \
@@ -136,7 +144,7 @@ if [ "${IDE_ENABLED:-true}" != "false" ] && command -v code-server >/dev/null 2>
       /projects &
   else
     mkdir -p /data/ide/user-data /data/ide/extensions 2>/dev/null || true
-    HOME=/home/node code-server \
+    env -u PORT -u HOST HOME=/home/node code-server \
       --auth none \
       --bind-addr 127.0.0.1:8080 \
       --disable-telemetry \

@@ -2851,3 +2851,66 @@ recurrence.)
 - *Normalize on write (rewrite curly→straight in the file)*. Mutates
   the user's chosen typography; rejected. We match across the
   difference and preserve the file's style instead.
+
+### ADR-0027 — Interactive Claude Code in-container, secrets via Secret Manager (2026-06-03)
+
+**Status**: Accepted (2026-06-03, Franck).
+
+**Context**. Franck wants to run the Claude Code CLI *inside* the
+KDust container and drive it from his workstation, with KDust hosted
+on a remote machine. The ANTHROPIC_* configuration
+(`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`,
+`ANTHROPIC_SMALL_FAST_MODEL`) must come from the Secret Manager
+(`model Secret`, AES-256-GCM at rest) rather than being hardcoded or
+baked into the image. Two anti-goals: (a) no new public ingress — the
+"no inbound" constraint that already governs the Telegram bridge; (b)
+no plaintext-returning path reachable by the LLM (`model Secret`
+threat model rule #1).
+
+**Decision**.
+
+- **Access path**: reuse the host's existing `sshd` + `docker exec`.
+  No `sshd` is added inside the container, no port is exposed. The
+  operator connects with
+  `ssh host -t 'docker exec -it kdust tmux new -As cc kdust-claude'`.
+  This adds zero ingress and zero `entrypoint.sh` surface.
+- **Binary**: `@anthropic-ai/claude-code@2.1.161` installed globally
+  in the `runner` stage (pinned, like yq/glab/ruff).
+- **Secret injection**: a zero-dep Node ESM launcher
+  `docker/kdust-claude.mjs` (shipped to `/app/bin/`, shimmed at
+  `/usr/local/bin/kdust-claude`) resolves the four ANTHROPIC_* names
+  from `model Secret` and `exec`s `claude` with them injected into the
+  child env **only**. Plaintext is decrypted in-process immediately
+  before spawn and is never written to argv, stdout, or any log — only
+  secret *names* are echoed to stderr. This mirrors the established
+  `src/lib/git-cli/bootstrap.ts` pattern (gh/glab `GH_TOKEN`): lookup
+  by `Secret.name`, `decrypt(valueEnc)`, silent-skip on absence,
+  Secret-Manager value wins over an inherited env var.
+
+**Consequences**.
+
+- The decrypt logic is duplicated (~10 lines) from
+  `src/lib/crypto.ts` because the standalone `.mjs` launcher cannot
+  import the TS module without a build step. It is annotated
+  `[SECURITY] MUST stay byte-compatible with src/lib/crypto.ts`. Both
+  are stdlib-only and share the `ivB64.tagB64.encB64` / aes-256-gcm /
+  `APP_ENCRYPTION_KEY` envelope, so drift risk is low but real — any
+  crypto-envelope change must update both in lockstep.
+- `claude` is **interactive-only**: not wired into the scheduler,
+  cron, push pipeline, or any MCP server. It never listens on a port.
+- Requires an image rebuild; `APP_ENCRYPTION_KEY` + `DATABASE_URL`
+  must be present in the container env (they already are, sourced from
+  compose), and `docker exec` inherits them.
+- Full operator guide in [`docs/claude-code.md`](docs/claude-code.md).
+
+**Alternatives considered**.
+
+- *`sshd` inside the container*. Rejected: anti-pattern vs PID 1 =
+  Next.js, new ingress to harden, duplicate auth/keys in the image,
+  collides with the gosu/DooD entrypoint.
+- *Loopback HTTP route returning the key*. Rejected: creates a
+  plaintext-returning path, violating `model Secret` threat-model
+  rule #1.
+- *Key injected via `docker exec -e` from the host env*. Viable and
+  more hermetic, but Franck explicitly wants centralised/audited
+  storage in the Secret Manager (`lastUsedAt`, rotation, redaction).

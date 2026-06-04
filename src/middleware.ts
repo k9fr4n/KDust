@@ -189,7 +189,20 @@ export async function middleware(req: NextRequest) {
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
     return applyScopedRewrite(req, withPathname(req, NextResponse.next()));
   }
-  if (pathname.startsWith('/_next') || pathname.startsWith('/favicon')) {
+  // Next.js metadata icon routes (app/icon.svg, app/apple-icon.tsx)
+  // are NOT in RESERVED_SEGMENTS, so without this guard the scope
+  // router would treat `/icon.svg` as a project-scope prefix: it
+  // rewrites the request to `/` (serving the dashboard HTML instead
+  // of the asset) AND clobbers the kdust_project cookie to
+  // "icon.svg" on every favicon fetch. Mirror the favicon.ico
+  // pass-through. (Franck 2026-06-04.)
+  if (
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/favicon') ||
+    pathname === '/icon.svg' ||
+    pathname === '/apple-icon' ||
+    pathname.startsWith('/apple-icon/')
+  ) {
     return NextResponse.next();
   }
 
@@ -221,5 +234,5 @@ function redirectLogin(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon).*)'],
 };

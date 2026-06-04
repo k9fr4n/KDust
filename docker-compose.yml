@@ -76,6 +76,13 @@ services:
       # inherited env), so both `claude` and `kdust-claude` work.
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-http://dust-exporter:8787}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-dummy}
+      # Claude Code state persistence (Franck 2026-06-04). Relocates the
+      # CLI config dir (~/.claude: sessions, history, project trust,
+      # settings) onto the persisted ./data bind so it survives container
+      # recreation (Watchtower pulls a new image every 5 min). The
+      # entrypoint also symlinks ~/.claude and ~/.claude.json to this path
+      # as a belt-and-braces for CLI versions that ignore the env var.
+      - CLAUDE_CONFIG_DIR=/data/claude
       # Public base URL the browser uses to reach the IDE proxy. Leave
       # empty to derive <current-host>:4001 client-side. Set it when
       # KDust sits behind a TLS reverse-proxy (e.g. https://kdust.example.com:4001).

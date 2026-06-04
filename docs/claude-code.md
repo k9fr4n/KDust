@@ -117,6 +117,48 @@ Values are **never** printed.
 > **If `crypto.ts` ever changes its envelope or KDF, update the
 > launcher in lockstep** (it carries the same warning inline).
 
+## State persistence
+
+_Franck 2026-06-04._
+
+Claude Code keeps **mutable runtime state** in two places under the
+container's home:
+
+| Path | Holds |
+|------|-------|
+| `~/.claude.json` | onboarding flags, project trust, `userID`, MCP config |
+| `~/.claude/`     | `sessions/`, `history.jsonl`, `projects/`, `settings.json`, `plugins/` |
+
+`/home/node` is **not** a persisted volume, and Watchtower pulls a new
+image every 5 min (→ container recreate), so without intervention this
+state is wiped on nearly every update (re-onboarding, lost project
+trust, lost session history).
+
+KDust relocates the whole config onto the already-persisted `./data`
+bind (same pattern as `dust-exporter-data` and `/data/ide`):
+
+- **`CLAUDE_CONFIG_DIR=/data/claude`** (set in `docker-compose.yml`)
+  moves the `~/.claude` directory.
+- **`docker/entrypoint.sh`** additionally symlinks
+  `~/.claude → /data/claude` and `~/.claude.json → /data/claude/.claude.json`
+  (belt-and-braces — some CLI versions keep the JSON in `$HOME`
+  regardless of the env var) and **seeds once** from any pre-existing
+  real file/dir before symlinking, so a first migration does not drop
+  state.
+
+Result: `/data/claude/` survives `docker compose pull` / restart /
+Watchtower recreation. It is `node`-owned, `0700`. No credentials live
+there today (auth flows through `dust-exporter`), but it is treated as
+sensitive on principle — exclude it from any world-readable backup of
+`./data`.
+
+> Applying this on an already-running container: the change is in the
+> boot path (entrypoint + compose env), so it takes effect on the next
+> `docker compose up -d kdust`. State accumulated in the current
+> container's writable layer *before* that restart is not migrated
+> (it never touched `/data`); only state present at the first boot of
+> the updated container is seeded.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

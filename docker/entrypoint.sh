@@ -74,6 +74,43 @@ if [ "$(id -u)" = "0" ]; then
     ls -la /home/node/.ssh
   fi
 
+  # --- Claude Code state persistence (Franck 2026-06-04) ---
+  # ~/.claude.json (config / onboarding / project trust / MCP config) and
+  # ~/.claude/ (sessions, history.jsonl, projects/, settings.json, plugins)
+  # are MUTABLE RUNTIME STATE. /home/node is NOT persisted, so without this
+  # block they reset on every container recreate — and Watchtower pulls a
+  # new image every 5 min, so that is the common case, not the exception.
+  #
+  # We relocate the whole Claude config onto the already-persisted /data
+  # bind (./data on the host), mirroring dust-exporter-data and /data/ide:
+  #   - CLAUDE_CONFIG_DIR=/data/claude (set in compose) moves ~/.claude
+  #   - symlink ~/.claude       -> /data/claude            (belt: any tool
+  #     ignoring the env var still lands on the persisted dir)
+  #   - symlink ~/.claude.json  -> /data/claude/.claude.json (some versions
+  #     keep the JSON in $HOME regardless of CLAUDE_CONFIG_DIR)
+  # First-boot seed: if a real (non-symlink) file/dir already exists in
+  # $HOME, migrate it once before symlinking so we don't drop state.
+  # node-owned, 0700 (no credentials today — auth goes through
+  # dust-exporter — but treated as sensitive on principle).
+  CLAUDE_PERSIST_DIR=/data/claude
+  install -d -o node -g node -m 700 "$CLAUDE_PERSIST_DIR"
+  if [ -e /home/node/.claude ] && [ ! -L /home/node/.claude ]; then
+    cp -a /home/node/.claude/. "$CLAUDE_PERSIST_DIR"/ 2>/dev/null || true
+    rm -rf /home/node/.claude
+  fi
+  ln -sfn "$CLAUDE_PERSIST_DIR" /home/node/.claude
+  if [ -e /home/node/.claude.json ] && [ ! -L /home/node/.claude.json ]; then
+    if [ ! -e "$CLAUDE_PERSIST_DIR/.claude.json" ]; then
+      mv /home/node/.claude.json "$CLAUDE_PERSIST_DIR/.claude.json"
+    else
+      rm -f /home/node/.claude.json
+    fi
+  fi
+  ln -sfn "$CLAUDE_PERSIST_DIR/.claude.json" /home/node/.claude.json
+  chown -R node:node "$CLAUDE_PERSIST_DIR"
+  chown -h node:node /home/node/.claude /home/node/.claude.json 2>/dev/null || true
+  echo "[entrypoint] Claude Code state persisted to $CLAUDE_PERSIST_DIR (CLAUDE_CONFIG_DIR + symlinks)"
+
   if [ -n "${SSH_AUTH_SOCK:-}" ]; then
     if [ -S "${SSH_AUTH_SOCK}" ]; then
       echo "[entrypoint] SSH_AUTH_SOCK=$SSH_AUTH_SOCK détecté"

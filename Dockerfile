@@ -104,6 +104,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pinned for reproducibility, like yq/glab/ruff above.
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g @anthropic-ai/claude-code@2.1.161
+# Dev Containers CLI (Franck 2026-06-04). Lets the agent runtime / web
+# terminal build & run dev containers from a devcontainer.json (`devcontainer
+# up`, `devcontainer exec`) against the host Docker daemon via the same DooD
+# socket already mounted here. Interactive/tooling use only — not wired into
+# the scheduler. Pinned for reproducibility like claude-code/yq/glab/ruff.
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g @devcontainers/cli@0.87.0
 # code-server IDE (Franck 2026-06-03, ADR-0029 — supersedes the
 # ADR-0028 `kdust-ide` sidecar). code-server now runs IN this container
 # (launched by docker/entrypoint.sh, bound to 127.0.0.1:8080, fronted

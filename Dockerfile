@@ -131,6 +131,16 @@ ENV CLAUDE_CLI_PREFIX=/data/claude-cli
 ENV PATH="/data/claude-cli/bin:${PATH}"
 RUN printf 'prefix=/data/claude-cli\n' > /home/node/.npmrc \
   && chown node:node /home/node/.npmrc
+# Login shells (bash -l, e.g. the code-server / IDE terminal) source
+# /etc/profile which RESETS PATH to the Debian default, dropping the
+# image-level `ENV PATH` above -> `claude` becomes "command not found"
+# in interactive terminals (while kdust-claude and non-login shells are
+# fine). Re-inject the runtime bin via a profile.d snippet so login
+# shells also resolve claude. Non-login interactive shells already
+# inherit the ENV PATH, so this only matters for login shells.
+RUN printf '%s\n' 'export PATH="/data/claude-cli/bin:$PATH"' \
+      > /etc/profile.d/10-claude-cli.sh \
+  && chmod 644 /etc/profile.d/10-claude-cli.sh
 # Dev Containers CLI (Franck 2026-06-04). Lets the agent runtime / web
 # terminal build & run dev containers from a devcontainer.json (`devcontainer
 # up`, `devcontainer exec`) against the host Docker daemon via the same DooD

@@ -86,7 +86,10 @@ Flow:
    (only when `bin/claude` is missing there).
 2. `PATH=/data/claude-cli/bin:…` and `npm config prefix=/data/claude-cli`
    make that the single resolved install — `kdust-claude` (`spawn('claude')`),
-   the IDE terminal, and `docker exec … claude` all hit it.
+   the IDE terminal, and `docker exec … claude` all hit it. (Login shells
+   reset `PATH` via `/etc/profile`, so the image also drops
+   `/etc/profile.d/10-claude-cli.sh` to re-inject the bin for `bash -l` /
+   code-server terminals.)
 3. Because the prefix is `node`-owned and writable, Claude Code's
    **built-in auto-updater** (`npm i -g`) keeps it current with no
    operator action, and the update **survives** Watchtower container

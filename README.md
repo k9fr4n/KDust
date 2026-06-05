@@ -2915,6 +2915,43 @@ threat model rule #1).
   more hermetic, but Franck explicitly wants centralised/audited
   storage in the Secret Manager (`lastUsedAt`, rotation, redaction).
 
+**Addendum (2026-06-05) — self-updating install, prefix on `./data`.**
+
+The original Decision pinned `@anthropic-ai/claude-code@2.1.161`
+globally in `/usr/local` (root-owned). Two problems surfaced in use:
+(a) Claude Code ships several releases per week, making the hard pin a
+recurring maintenance chore; (b) `claude /doctor` reports *"npm global
+folder isn't writable — can't auto-update"* because the process runs as
+`node` (uid 1000), and a stray `claude install` (native) under
+`~/.local` produced a *"multiple installations"* warning.
+
+**Decision (revised).** Make the install **self-updating** by moving the
+runtime install to a `node`-writable, `./data`-persisted npm prefix:
+
+- The `Dockerfile` no longer installs claude on the default `PATH`. It
+  bakes an **offline seed** at `/opt/claude-seed`
+  (`npm i -g --prefix /opt/claude-seed @anthropic-ai/claude-code@latest`
+  — `@latest`, no pin, *"il faut toujours mettre la dernière"*), kept
+  **off** `PATH`.
+- `ENV PATH=/data/claude-cli/bin:…` and `/home/node/.npmrc`
+  (`prefix=/data/claude-cli`) make `/data/claude-cli` the single
+  resolved install and the npm-global target.
+- `docker/entrypoint.sh` seeds `/data/claude-cli` from `/opt/claude-seed`
+  **once** (when `bin/claude` is absent), `node`-owned.
+
+**Consequences.** The CLI auto-updates with zero operator action and the
+update **survives** Watchtower recreation (`./data` is persisted, like
+`CLAUDE_CONFIG_DIR=/data/claude`). `claude /doctor` shows a single,
+writable install — no warnings. The `@latest` seed is now only a
+cold-start baseline (fresh/empty `./data/claude-cli`); rebuild to refresh
+the baseline, or `rm -rf ./data/claude-cli` to force a re-seed. This maps
+exactly to `/doctor`'s own npm-prefix recommendation. The `kdust-claude`
+launcher is unchanged (`spawn('claude')` resolves via `PATH`).
+`docker-compose.yml` is untouched (`/data` already bind-mounted).
+Trade-off accepted: the live version now drifts from any `Dockerfile`
+baseline — fine for an interactive-only tool outside the
+scheduler/runtime.
+
 ### ADR-0028 — Embedded code-server IDE (`/ide`) via an authenticated proxy + sidecar (2026-06-03)
 
 **Status**: **Superseded by ADR-0029** (2026-06-03). The authenticated

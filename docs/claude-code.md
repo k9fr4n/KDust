@@ -67,6 +67,52 @@ The CLI and launcher are baked into the `runner` stage of the
 docker compose build kdust && docker compose up -d kdust
 ```
 
+## CLI install & auto-update
+
+_Franck 2026-06-05, ADR-0027 addendum._
+
+Claude Code ships several releases per week, so KDust does **not** pin a
+hard npm-global version on the runtime `PATH`. Instead the CLI is
+**self-updating**:
+
+| Location | Role | Writable by `node` | Persisted |
+|----------|------|--------------------|-----------|
+| `/opt/claude-seed` | offline **seed** (`@latest` at build time), kept **off** the default `PATH` | n/a | baked in image |
+| `/data/claude-cli` | **runtime** install — first on `PATH`, npm prefix (`/home/node/.npmrc`) | ✅ | ✅ (on `./data`) |
+
+Flow:
+
+1. `docker/entrypoint.sh` copies the seed into `/data/claude-cli` **once**
+   (only when `bin/claude` is missing there).
+2. `PATH=/data/claude-cli/bin:…` and `npm config prefix=/data/claude-cli`
+   make that the single resolved install — `kdust-claude` (`spawn('claude')`),
+   the IDE terminal, and `docker exec … claude` all hit it.
+3. Because the prefix is `node`-owned and writable, Claude Code's
+   **built-in auto-updater** (`npm i -g`) keeps it current with no
+   operator action, and the update **survives** Watchtower container
+   recreation (`./data` is persisted).
+
+This is exactly the npm-prefix route recommended by `claude /doctor`
+(*"`npm config set prefix …`, add `…/bin` to PATH, then reinstall"*), so
+`/doctor` reports a single, writable install with **no** "multiple
+installations" / "npm global folder isn't writable" warning.
+
+Operator notes:
+
+- **Cold-start baseline**: the `Dockerfile` installs
+  `@anthropic-ai/claude-code@latest` (no pinned version — *"il faut
+  toujours mettre la dernière"*), so each image build seeds the newest
+  release. The seed only applies on a fresh/empty `./data/claude-cli`;
+  existing hosts keep their auto-updated install. (Docker layer cache may
+  reuse a previous seed across rebuilds unless busted with `--no-cache`;
+  the runtime auto-updater makes that a non-issue.)
+- **Force a re-seed to the image baseline**: `rm -rf ./data/claude-cli`
+  on the host, then `docker compose up -d kdust`.
+- **Do not run `claude install`** (the *native* installer): it would
+  create a second install under `~/.local` and bring back the
+  "multiple installations" warning. The supported model is the
+  npm-prefix one above.
+
 ## Daily use
 
 From your workstation:
@@ -166,7 +212,8 @@ sensitive on principle — exclude it from any world-readable backup of
 | `APP_ENCRYPTION_KEY is required` | env var missing in `docker exec` context | confirm it's set on the container (compose `environment` / `env_file`) |
 | `failed to decrypt secret "X"` | `APP_ENCRYPTION_KEY` rotated without re-encrypting | re-save the secret value in `/settings/secrets` |
 | `injected ... (none)` | no matching `Secret` rows | create `ANTHROPIC_API_KEY` (and friends) in the UI |
-| `failed to launch claude` | CLI not on PATH | rebuild the image (the global npm install is in the `runner` stage) |
+| `failed to launch claude` | `/data/claude-cli` not seeded / `PATH` missing it | check entrypoint logs for the seed line; `rm -rf ./data/claude-cli` + `docker compose up -d kdust` to re-seed from the baked `/opt/claude-seed` |
+| `claude /doctor`: "multiple installations" | a `claude install` (native) was run, adding `~/.local/bin/claude` | remove the native one (`rm -rf ~/.local/bin/claude ~/.local/share/claude`) or recreate the container (ephemeral `~/.local` is wiped); use only the npm-prefix install |
 | Cannot connect / `docker exec` fails | not on the host or wrong container name | `ssh` to the host first; check `docker ps` for the `kdust` container name |
 
 ## Security notes

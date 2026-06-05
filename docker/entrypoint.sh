@@ -111,6 +111,29 @@ if [ "$(id -u)" = "0" ]; then
   chown -h node:node /home/node/.claude /home/node/.claude.json 2>/dev/null || true
   echo "[entrypoint] Claude Code state persisted to $CLAUDE_PERSIST_DIR (CLAUDE_CONFIG_DIR + symlinks)"
 
+  # --- Claude Code CLI: writable, persisted, self-updating install ---
+  # (Franck 2026-06-05, ADR-0027 addendum). The image bakes a seed at
+  # /opt/claude-seed but keeps it OFF the default PATH. The supported
+  # RUNTIME install lives in /data/claude-cli (node-owned, on the
+  # persisted ./data bind), which:
+  #   * is first on PATH (Dockerfile ENV) -> the only `claude` resolved,
+  #   * is writable by `node` -> Claude Code's built-in auto-updater
+  #     (`npm i -g`, prefix pinned via /home/node/.npmrc) works,
+  #   * survives Watchtower container recreation (./data is persisted).
+  # We seed it ONCE by copying the baked version; later boots keep
+  # whatever the auto-updater landed. To force a re-seed to the image's
+  # baseline, `rm -rf ./data/claude-cli` on the host and restart.
+  # cp -a preserves npm's relative bin symlink (bin/claude -> ../lib/...).
+  CLAUDE_CLI_DIR="${CLAUDE_CLI_PREFIX:-/data/claude-cli}"
+  install -d -o node -g node -m 755 "$CLAUDE_CLI_DIR"
+  if [ ! -x "$CLAUDE_CLI_DIR/bin/claude" ] && [ -x /opt/claude-seed/bin/claude ]; then
+    echo "[entrypoint] seeding Claude Code CLI into $CLAUDE_CLI_DIR from /opt/claude-seed"
+    cp -a /opt/claude-seed/. "$CLAUDE_CLI_DIR"/ 2>/dev/null || true
+    chown -R node:node "$CLAUDE_CLI_DIR"
+  else
+    echo "[entrypoint] Claude Code CLI present in $CLAUDE_CLI_DIR (or no seed), skipping seed"
+  fi
+
   if [ -n "${SSH_AUTH_SOCK:-}" ]; then
     if [ -S "${SSH_AUTH_SOCK}" ]; then
       echo "[entrypoint] SSH_AUTH_SOCK=$SSH_AUTH_SOCK détecté"

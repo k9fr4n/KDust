@@ -97,13 +97,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && touch /home/node/.ssh/known_hosts \
   && chown -R node:node /home/node/.ssh \
   && chmod 600 /home/node/.ssh/config /home/node/.ssh/known_hosts
-# Claude Code CLI (Franck 2026-06-03, ADR-0027). Installed globally so
-# the `kdust-claude` wrapper can `exec claude`. Interactive use only,
-# reached via `ssh host -t 'docker exec -it kdust kdust-claude'` — it
-# is NOT part of the scheduler/runtime and never listens on a port.
-# Pinned for reproducibility, like yq/glab/ruff above.
+# Claude Code CLI (Franck 2026-06-03, ADR-0027; self-update model added
+# 2026-06-05). Interactive use only — reached via
+# `ssh host -t 'docker exec -it kdust kdust-claude'`, NOT part of the
+# scheduler/runtime, never listens on a port.
+#
+# Self-updating install (ADR-0027 addendum): Claude Code ships several
+# releases per week, so a hard npm-global pin in /usr/local (root-owned,
+# not writable by `node`) means `claude /doctor` reports "npm global
+# folder isn't writable / can't auto-update". Instead the RUNTIME install
+# lives in /data/claude-cli — a node-owned, ./data-persisted npm prefix
+# (PATH + /home/node/.npmrc point there) so the CLI's built-in updater
+# (`npm i -g`) works AND survives Watchtower container recreation.
+#
+# The seed is baked at /opt/claude-seed and kept OFF the default PATH
+# (single writable install at runtime -> no "multiple installations"
+# warning). docker/entrypoint.sh copies it into /data/claude-cli on first
+# boot; afterwards the runtime auto-updater owns it. We install @latest
+# (NOT a pinned version) so each image build seeds the newest release —
+# Franck: "il faut toujours mettre la dernière". Reproducibility is
+# intentionally waived here: this is an interactive-only tool outside the
+# scheduler/runtime, and the runtime auto-updater is the real freshness
+# guarantee (the seed only matters for a cold start on empty ./data).
+# NB: the Docker layer cache will reuse a previous seed across rebuilds
+# unless busted (--no-cache); runtime auto-update makes that a non-issue.
 RUN --mount=type=cache,target=/root/.npm \
-    npm install -g @anthropic-ai/claude-code@2.1.161
+    npm install -g --prefix /opt/claude-seed @anthropic-ai/claude-code@latest
+# Runtime install dir on the persisted ./data bind (node-writable ->
+# auto-update OK). The .npmrc scopes ONLY claude's self-update `npm i -g`
+# to this prefix; it does not affect /app's local node_modules nor the
+# prisma `db push` one-shot (which runs `node .../prisma/build/index.js`).
+ENV CLAUDE_CLI_PREFIX=/data/claude-cli
+ENV PATH="/data/claude-cli/bin:${PATH}"
+RUN printf 'prefix=/data/claude-cli\n' > /home/node/.npmrc \
+  && chown node:node /home/node/.npmrc
 # Dev Containers CLI (Franck 2026-06-04). Lets the agent runtime / web
 # terminal build & run dev containers from a devcontainer.json (`devcontainer
 # up`, `devcontainer exec`) against the host Docker daemon via the same DooD

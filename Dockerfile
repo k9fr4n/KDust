@@ -141,6 +141,31 @@ RUN printf 'prefix=/data/claude-cli\n' > /home/node/.npmrc \
 RUN printf '%s\n' 'export PATH="/data/claude-cli/bin:$PATH"' \
       > /etc/profile.d/10-claude-cli.sh \
   && chmod 644 /etc/profile.d/10-claude-cli.sh
+# Shell-inject secrets (Franck 2026-06-06, ADR-0031). Login shells —
+# notably the code-server / IDE web terminal (bash -l) — source
+# /etc/profile.d/*.sh. This snippet eval's `kdust-env` so every
+# Secret flagged `shellInject` lands in the terminal env (visible via
+# `env`), exactly like the container's own .env variables.
+#
+# Guards:
+#   * interactive shells only (case "$-" in *i*) so non-interactive
+#     login shells / scripts don't pay the DB hit or get surprise env;
+#   * KDUST_SHELL_SECRETS=off is a runtime kill switch (no rebuild);
+#   * `|| true` + stderr to /dev/null so a DB hiccup never breaks the
+#     terminal. Injected NAMES are visible in the /settings/secrets UI,
+#     so suppressing the launcher's stderr here keeps prompts clean.
+# POSIX sh (dash) — /etc/profile sources these with sh, not bash.
+RUN printf '%s\n' \
+      '# ADR-0031: expose shellInject secrets in interactive (IDE) terminals.' \
+      'case "$-" in' \
+      '  *i*)' \
+      '    if [ "${KDUST_SHELL_SECRETS:-on}" != "off" ] && [ -x /usr/local/bin/kdust-env ]; then' \
+      '      eval "$(/usr/local/bin/kdust-env 2>/dev/null)" || true' \
+      '    fi' \
+      '    ;;' \
+      'esac' \
+      > /etc/profile.d/30-kdust-secrets.sh \
+  && chmod 644 /etc/profile.d/30-kdust-secrets.sh
 # Dev Containers CLI (Franck 2026-06-04). Lets the agent runtime / web
 # terminal build & run dev containers from a devcontainer.json (`devcontainer
 # up`, `devcontainer exec`) against the host Docker daemon via the same DooD
@@ -194,7 +219,14 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 # @prisma/client from /app/node_modules; the shim is on PATH.
 COPY docker/kdust-claude.mjs /app/bin/kdust-claude.mjs
 COPY docker/kdust-claude /usr/local/bin/kdust-claude
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/kdust-claude && mkdir -p /data /projects && chown -R node:node /app /data /projects
+# Shell-inject launcher (ADR-0031): resolves Secret rows flagged
+# `shellInject` and emits `export NAME='value'` lines. Sourced by the
+# profile.d snippet below so the code-server IDE terminal gets them in
+# its env. Same /app placement as kdust-claude so @prisma/client
+# resolves from /app/node_modules.
+COPY docker/kdust-env.mjs /app/bin/kdust-env.mjs
+COPY docker/kdust-env /usr/local/bin/kdust-env
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/kdust-claude /usr/local/bin/kdust-env && mkdir -p /data /projects && chown -R node:node /app /data /projects
 # L'entrypoint d\u00e9marre en root pour fixer les perms des volumes bind-mount\u00e9s,
 # puis bascule sur l'utilisateur node (uid 1000) via gosu.
 EXPOSE 3000

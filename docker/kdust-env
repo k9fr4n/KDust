@@ -1,0 +1,14 @@
+#!/bin/sh
+# kdust-env — expose Secret-Manager secrets flagged `shellInject` as
+# environment variables inside the KDust container (Franck 2026-06-06,
+# ADR-0031).
+#
+# Two modes (see docker/kdust-env.mjs header):
+#   kdust-env                 # prints `export NAME='value'` lines
+#   eval "$(kdust-env)"       # load them into the current shell
+#   kdust-env -- mytool ...   # run mytool with the secrets overlaid
+#
+# Node resolves @prisma/client from /app/node_modules regardless of
+# cwd, so we exec the absolute script path.
+set -eu
+exec node /app/bin/kdust-env.mjs "$@"

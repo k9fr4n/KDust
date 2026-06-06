@@ -790,6 +790,23 @@ model Secret {
   // secrets at audit time.
   lastUsedAt  DateTime?
 
+  // ADR-0031 (Franck 2026-06-06): opt-in switch to expose this secret
+  // as an environment variable in the interactive code-server IDE
+  // terminal (docker/kdust-env.mjs, sourced from a profile.d snippet).
+  // The env var name equals `name`, so a secret whose name is not a
+  // valid POSIX identifier (e.g. contains '-') is SKIPPED with a
+  // warning by the launcher — rename it to use this.
+  //
+  // [SECURITY] This deliberately widens the exposure surface beyond
+  // the per-task TaskSecret model: a shellInject secret becomes
+  // ambient in EVERY IDE terminal env and is inherited by every child
+  // process started there (incl. an interactive `claude`). It is
+  // false by default and gated end-to-end by the kdust_session JWT on
+  // the IDE proxy; the per-secret toggle is the blast-radius control.
+  // Never consumed by any LLM-orchestrated TaskRun path. See
+  // docs/secrets.md.
+  shellInject Boolean  @default(false)
+
   bindings    TaskSecret[]
   // ADR-0012: Secrets can also be bound as env vars on Docker MCP
   // gateway servers. Same Restrict semantics as TaskSecret: you

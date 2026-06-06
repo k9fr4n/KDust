@@ -3138,3 +3138,63 @@ terminating TLS with the **static** wildcard cert (no ACME).
   (internal DNS or `/etc/hosts`). No public ingress introduced — Caddy
   binds the LAN host port only. Schema, scheduler, push pipeline, MCP,
   Telegram untouched. Full guide in [`docs/ide.md`](docs/ide.md).
+
+### ADR-0031 — Per-secret `shellInject` switch: expose secrets in the IDE terminal (2026-06-06)
+
+**Status**: Accepted (2026-06-06, Franck).
+
+**Context**. The Secret Manager (`model Secret`, ADR-0014) injects
+plaintext only into a task's `command-runner` child process, via an
+explicit per-task `TaskSecret` binding (`envName -> secretName`). The
+in-container code-server IDE terminal (ADR-0029) inherits the
+container's own env (the compose `.env`) but **not** Secret-Manager
+secrets — so an operator opening a web terminal has the project `.env`
+vars in `env` but none of their stored credentials. Franck wanted a
+switch on `/settings/secrets` to make chosen secrets available in that
+interactive shell, "like the `.env` ones".
+
+**Decision**. Add a boolean **`Secret.shellInject`** (default `false`)
+— the per-secret switch — and a launcher **`docker/kdust-env.mjs`**
+(clone of the ADR-0027 `kdust-claude` pattern: stdlib AES-256-GCM,
+`@prisma/client`, names-only to stderr). It selects `shellInject=true`
+rows, decrypts in-process, and emits `export NAME='value'` lines (the
+env var name **equals** `Secret.name`). A `/etc/profile.d/30-kdust-secrets.sh`
+snippet `eval`'s it in **interactive login shells** (the code-server
+terminal is `bash -l`), so the secrets show up in `env`. The same UI
+toggle lives in `SecretsEditor`; `PUT /api/secrets/:name` accepts
+`shellInject`.
+
+- Env var name = `Secret.name`. Names that are not valid POSIX
+  identifiers (e.g. contain `-`) are **skipped with a warning** by the
+  launcher and flagged in the UI — rename to use them.
+- Secret-Manager value **wins** over an inherited env var of the same
+  name (explicit operator intent), consistent with `kdust-claude`.
+- Kill switch **`KDUST_SHELL_SECRETS=off`** (runtime, no rebuild) plus
+  the existing `IDE_ENABLED=false`.
+
+**Rejected alternatives**.
+
+- *Global "inject all secrets"* — no per-secret control; the opt-in
+  switch is the blast-radius limiter.
+- *Project-scoped injection* — code-server is one container-level
+  process; per-folder scoping would be `$PWD` magic in bashrc. Deferred
+  until a real need.
+- *A separate `shellEnvName` column* — Franck prefers reusing `name`
+  and renaming the few non-POSIX secrets. Can be added later without a
+  breaking change.
+
+**Consequences**.
+
+- [SECURITY] This **widens the exposure surface** beyond the per-task
+  model: a `shellInject` secret is **ambient in every IDE terminal env**
+  and inherited by every child process started there (incl. an
+  interactive `claude`). It is `false` by default, gated end-to-end by
+  the `kdust_session` JWT on the IDE proxy, and **never** consumed by
+  any LLM-orchestrated TaskRun path. The threat-model deviation is
+  documented in [`docs/secrets.md`](docs/secrets.md).
+- Plaintext appears in the operator's terminal scrollback (via `env`) —
+  by design; no redactor on this human-interactive path.
+- Additive migration (`db push`). Touches `Dockerfile` (two COPYs + the
+  profile.d snippet) and ships `docker/kdust-env{,.mjs}` → **requires an
+  image rebuild + container restart**. Scheduler, push pipeline, MCP,
+  Telegram, auth, crypto envelope untouched.

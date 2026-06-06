@@ -16,7 +16,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { KeyRound, Pencil, Plus, RefreshCcw, Trash2, X } from 'lucide-react';
+import { KeyRound, Pencil, Plus, RefreshCcw, Terminal, Trash2, X } from 'lucide-react';
 
 export interface SecretDtoSerialized {
   id: number;
@@ -26,7 +26,12 @@ export interface SecretDtoSerialized {
   updatedAt: string;
   lastUsedAt: string | null;
   boundTaskCount: number;
+  shellInject: boolean;
 }
+
+// Mirrors ENV_NAME_RE in src/lib/secrets/repo.ts — a secret whose
+// name is not a valid POSIX identifier is SKIPPED by kdust-env.mjs.
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
   const router = useRouter();
@@ -107,6 +112,28 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
       if (ok) await onDelete(name, true);
       return;
     }
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setError(j.error ?? `HTTP ${res.status}`);
+      return;
+    }
+    startTransition(() => router.refresh());
+  }
+
+  async function onToggleShellInject(name: string, next: boolean) {
+    setError(null);
+    if (next && !ENV_NAME_RE.test(name)) {
+      setError(
+        `"${name}" is not a valid env var name (POSIX identifier). ` +
+          'Rename it (no dashes) before exposing it in the IDE shell.',
+      );
+      return;
+    }
+    const res = await fetch(`/api/secrets/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ shellInject: next }),
+    });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       setError(j.error ?? `HTTP ${res.status}`);
@@ -233,6 +260,19 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
                   ) : (
                     <span className="text-xs text-amber-600">· never used</span>
                   )}
+                  {s.shellInject && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 text-[11px] font-medium"
+                      title="Exposed as an env var in the IDE terminal (ADR-0031)"
+                    >
+                      <Terminal size={11} /> IDE shell
+                    </span>
+                  )}
+                  {s.shellInject && !ENV_NAME_RE.test(s.name) && (
+                    <span className="text-[11px] text-red-600" title="Name is not a valid env var identifier — kdust-env will skip it">
+                      · invalid env name, will be skipped
+                    </span>
+                  )}
                 </div>
                 {s.description && (
                   <p className="text-sm text-slate-600 dark:text-slate-400 mt-0.5">
@@ -333,6 +373,22 @@ export function SecretsEditor({ initial }: { initial: SecretDtoSerialized[] }) {
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => void onToggleShellInject(s.name, !s.shellInject)}
+                  className={
+                    'inline-flex items-center gap-1 rounded px-2 py-1 text-xs ' +
+                    (s.shellInject
+                      ? 'text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800')
+                  }
+                  title={
+                    s.shellInject
+                      ? 'Exposed in IDE terminal — click to disable'
+                      : 'Expose as env var in the IDE terminal (ADR-0031)'
+                  }
+                >
+                  <Terminal size={12} /> {s.shellInject ? 'Shell: on' : 'Shell: off'}
+                </button>
                 <button
                   onClick={() => {
                     setRotating(null);

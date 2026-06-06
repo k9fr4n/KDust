@@ -62,6 +62,19 @@ export interface SecretDto {
   updatedAt: Date;
   lastUsedAt: Date | null;
   boundTaskCount: number;
+  /** ADR-0031: exposed as an env var in the IDE terminal when true. */
+  shellInject: boolean;
+}
+
+/**
+ * True when `name` is a valid POSIX env var identifier and can
+ * therefore be exported verbatim as `name=value` by kdust-env.mjs.
+ * Used by the UI to warn that a dash-containing secret name will be
+ * SKIPPED by the shell-inject launcher. Kept consistent with
+ * ENV_NAME_RE above.
+ */
+export function isValidShellEnvName(name: string): boolean {
+  return ENV_NAME_RE.test(name);
 }
 
 export interface TaskSecretDto {
@@ -86,6 +99,7 @@ export async function listSecrets(): Promise<SecretDto[]> {
     updatedAt: r.updatedAt,
     lastUsedAt: r.lastUsedAt,
     boundTaskCount: r._count.bindings,
+    shellInject: r.shellInject,
   }));
 }
 
@@ -107,7 +121,21 @@ export async function createSecret(
     updatedAt: row.updatedAt,
     lastUsedAt: row.lastUsedAt,
     boundTaskCount: 0,
+    shellInject: row.shellInject,
   };
+}
+
+/**
+ * Flip the ADR-0031 shell-inject switch. When true the secret is
+ * exported as an env var in IDE terminals by docker/kdust-env.mjs.
+ * Pure metadata flag — does not touch the encrypted value.
+ */
+export async function updateSecretShellInject(
+  name: string,
+  shellInject: boolean,
+): Promise<void> {
+  validateSecretName(name);
+  await db.secret.update({ where: { name }, data: { shellInject } });
 }
 
 export async function updateSecretValue(name: string, newValue: string): Promise<void> {

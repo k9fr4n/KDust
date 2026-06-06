@@ -14,6 +14,7 @@ import {
   deleteSecret,
   renameSecret,
   updateSecretDescription,
+  updateSecretShellInject,
   updateSecretValue,
 } from '@/lib/secrets/repo';
 import { badRequest, conflict, notFound } from "@/lib/api/responses";
@@ -31,11 +32,17 @@ const UpdateSchema = z
     name: z.string().min(2).max(64).optional(),
     value: z.string().min(1).optional(),
     description: z.string().max(256).nullable().optional(),
+    // ADR-0031: toggle IDE-terminal exposure. Metadata-only flag.
+    shellInject: z.boolean().optional(),
   })
   .refine(
-    (d) => d.name !== undefined || d.value !== undefined || d.description !== undefined,
+    (d) =>
+      d.name !== undefined ||
+      d.value !== undefined ||
+      d.description !== undefined ||
+      d.shellInject !== undefined,
     {
-      message: 'At least one of name/value/description must be provided',
+      message: 'At least one of name/value/description/shellInject must be provided',
     },
   );
 
@@ -66,6 +73,9 @@ export async function PUT(
     }
     if (parsed.data.description !== undefined) {
       await updateSecretDescription(name, parsed.data.description);
+    }
+    if (parsed.data.shellInject !== undefined) {
+      await updateSecretShellInject(name, parsed.data.shellInject);
     }
     if (parsed.data.name !== undefined && parsed.data.name !== name) {
       await renameSecret(name, parsed.data.name);

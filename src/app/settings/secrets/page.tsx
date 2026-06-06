@@ -36,7 +36,10 @@ export default async function SecretsPage() {
           <code className="mx-1 rounded bg-slate-100 dark:bg-slate-800 px-1">APP_ENCRYPTION_KEY</code>)
           and injected server-side as environment variables into
           command-runner tasks. Values are never returned by any
-          API and never reach the agent’s prompt.
+          API and never reach the agent’s prompt. Toggling
+          <span className="mx-1 font-medium">Shell</span> (ADR-0031)
+          also exposes a secret as an env var in the IDE terminal —
+          opt-in per secret; the env var name equals the secret name.
         </p>
       </header>
       <GitCliStatus />

@@ -64,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin gh \
   # yq (Mike Farah's Go version) — YAML parser used by .kdust generic tasks/drivers.
   # Installed via static binary (no apt repo needed). Pinned version for reproducibility.
-  && YQ_VERSION=v4.44.3 \
+  && YQ_VERSION=v4.53.3 \
   && curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq \
   && chmod 0755 /usr/local/bin/yq \
   # glab — GitLab CLI officiel (gitlab-org/cli). Pas de repo apt Debian,
@@ -78,7 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   # ruff (Astral) — Python linter/formatter ultra-rapide. Installé via
   # tarball statique officiel (github.com/astral-sh/ruff). Aucune dépendance
   # Python : binaire self-contained. Pinned pour reproductibilité.
-  && RUFF_VERSION=0.15.14 \
+  && RUFF_VERSION=0.15.16 \
   && RUFF_ARCH="$(dpkg --print-architecture)" \
   && case "$RUFF_ARCH" in \
        amd64) RUFF_TRIPLE=x86_64-unknown-linux-gnu ;; \
@@ -89,6 +89,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && tar -xzf /tmp/ruff.tar.gz -C /tmp \
   && install -m 0755 "/tmp/ruff-${RUFF_TRIPLE}/ruff" /usr/local/bin/ruff \
   && rm -rf /tmp/ruff.tar.gz "/tmp/ruff-${RUFF_TRIPLE}" \
+  # uv / uvx (Astral) — gestionnaire de paquets/projets Python ultra-rapide.
+  # Fournit `uv` ET `uvx` (runner d'outils à la volée, ex. `uvx mcp-server-xxx`).
+  # Même pattern que ruff : tarball statique officiel, self-contained, zéro
+  # dépendance Python. Pinned pour reproductibilité.
+  && UV_VERSION=0.11.19 \
+  && UV_ARCH="$(dpkg --print-architecture)" \
+  && case "$UV_ARCH" in \
+       amd64) UV_TRIPLE=x86_64-unknown-linux-gnu ;; \
+       arm64) UV_TRIPLE=aarch64-unknown-linux-gnu ;; \
+       *) echo "unsupported arch for uv: $UV_ARCH" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${UV_TRIPLE}.tar.gz" -o /tmp/uv.tar.gz \
+  && tar -xzf /tmp/uv.tar.gz -C /tmp \
+  && install -m 0755 "/tmp/uv-${UV_TRIPLE}/uv"  /usr/local/bin/uv \
+  && install -m 0755 "/tmp/uv-${UV_TRIPLE}/uvx" /usr/local/bin/uvx \
+  && rm -rf /tmp/uv.tar.gz "/tmp/uv-${UV_TRIPLE}" \
   && apt-get purge -y gnupg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \
@@ -187,7 +203,7 @@ RUN --mount=type=cache,target=/root/.npm \
 # Standalone tarball (bundles its own Node), pinned for reproducibility
 # like yq/glab/ruff. The release asset arch names (amd64/arm64) match
 # `dpkg --print-architecture` directly.
-RUN CODE_SERVER_VERSION=4.122.0 \
+RUN CODE_SERVER_VERSION=4.123.0 \
   && CS_ARCH="$(dpkg --print-architecture)" \
   && curl -fsSL "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-${CS_ARCH}.tar.gz" -o /tmp/code-server.tar.gz \
   && mkdir -p /usr/lib/code-server \
@@ -232,3 +248,4 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/kdust-claude /usr/local
 EXPOSE 3000
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["node", "server.js"]
+

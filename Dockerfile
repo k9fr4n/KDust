@@ -62,49 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
   && apt-get update \
   && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin docker-compose-plugin gh \
-  # yq (Mike Farah's Go version) — YAML parser used by .kdust generic tasks/drivers.
-  # Installed via static binary (no apt repo needed). Pinned version for reproducibility.
-  && YQ_VERSION=v4.53.3 \
-  && curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_$(dpkg --print-architecture)" -o /usr/local/bin/yq \
-  && chmod 0755 /usr/local/bin/yq \
-  # glab — GitLab CLI officiel (gitlab-org/cli). Pas de repo apt Debian,
-  # on prend le .deb release pinné par version. Respecte $GITLAB_TOKEN
-  # (+ optionnellement $GITLAB_HOST) injecté par Secret Manager → TaskSecret,
-  # même contrat que `gh` avec $GITHUB_TOKEN.
-  && GLAB_VERSION=1.94.0 \
-  && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_$(dpkg --print-architecture).deb" -o /tmp/glab.deb \
-  && dpkg -i /tmp/glab.deb \
-  && rm /tmp/glab.deb \
-  # ruff (Astral) — Python linter/formatter ultra-rapide. Installé via
-  # tarball statique officiel (github.com/astral-sh/ruff). Aucune dépendance
-  # Python : binaire self-contained. Pinned pour reproductibilité.
-  && RUFF_VERSION=0.15.16 \
-  && RUFF_ARCH="$(dpkg --print-architecture)" \
-  && case "$RUFF_ARCH" in \
-       amd64) RUFF_TRIPLE=x86_64-unknown-linux-gnu ;; \
-       arm64) RUFF_TRIPLE=aarch64-unknown-linux-gnu ;; \
-       *) echo "unsupported arch for ruff: $RUFF_ARCH" >&2; exit 1 ;; \
-     esac \
-  && curl -fsSL "https://github.com/astral-sh/ruff/releases/download/${RUFF_VERSION}/ruff-${RUFF_TRIPLE}.tar.gz" -o /tmp/ruff.tar.gz \
-  && tar -xzf /tmp/ruff.tar.gz -C /tmp \
-  && install -m 0755 "/tmp/ruff-${RUFF_TRIPLE}/ruff" /usr/local/bin/ruff \
-  && rm -rf /tmp/ruff.tar.gz "/tmp/ruff-${RUFF_TRIPLE}" \
-  # uv / uvx (Astral) — gestionnaire de paquets/projets Python ultra-rapide.
-  # Fournit `uv` ET `uvx` (runner d'outils à la volée, ex. `uvx mcp-server-xxx`).
-  # Même pattern que ruff : tarball statique officiel, self-contained, zéro
-  # dépendance Python. Pinned pour reproductibilité.
-  && UV_VERSION=0.11.19 \
-  && UV_ARCH="$(dpkg --print-architecture)" \
-  && case "$UV_ARCH" in \
-       amd64) UV_TRIPLE=x86_64-unknown-linux-gnu ;; \
-       arm64) UV_TRIPLE=aarch64-unknown-linux-gnu ;; \
-       *) echo "unsupported arch for uv: $UV_ARCH" >&2; exit 1 ;; \
-     esac \
-  && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${UV_TRIPLE}.tar.gz" -o /tmp/uv.tar.gz \
-  && tar -xzf /tmp/uv.tar.gz -C /tmp \
-  && install -m 0755 "/tmp/uv-${UV_TRIPLE}/uv"  /usr/local/bin/uv \
-  && install -m 0755 "/tmp/uv-${UV_TRIPLE}/uvx" /usr/local/bin/uvx \
-  && rm -rf /tmp/uv.tar.gz "/tmp/uv-${UV_TRIPLE}" \
+  # Static-binary CLI tools (yq, glab, ruff, uv/uvx, code-server) are no longer
+  # installed inline here: their pinned versions live in docker/tool-versions.env
+  # and docker/install-tools.sh performs the curl/tarball/deb installs (ADR-0032).
   && apt-get purge -y gnupg \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \
@@ -113,6 +73,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && touch /home/node/.ssh/known_hosts \
   && chown -R node:node /home/node/.ssh \
   && chmod 600 /home/node/.ssh/config /home/node/.ssh/known_hosts
+# Pinned static-binary CLI tools (ADR-0032). Versions are the single source of
+# truth in docker/tool-versions.env; install-tools.sh does the curl/tarball/deb
+# installs with per-arch handling. Bumping a tool = edit tool-versions.env only.
+# This COPY layer is intentionally early so a version bump rebuilds just this
+# step and what follows, not the whole apt layer above.
+COPY docker/tool-versions.env docker/install-tools.sh ./docker/
+RUN bash ./docker/install-tools.sh
 # Claude Code CLI (Franck 2026-06-03, ADR-0027; self-update model added
 # 2026-06-05). Interactive use only — reached via
 # `ssh host -t 'docker exec -it kdust kdust-claude'`, NOT part of the
@@ -187,8 +154,11 @@ RUN printf '%s\n' \
 # up`, `devcontainer exec`) against the host Docker daemon via the same DooD
 # socket already mounted here. Interactive/tooling use only — not wired into
 # the scheduler. Pinned for reproducibility like claude-code/yq/glab/ruff.
+# Version pinned in docker/tool-versions.env (ADR-0032), sourced here so the
+# npm cache mount on this RUN is preserved.
 RUN --mount=type=cache,target=/root/.npm \
-    npm install -g @devcontainers/cli@0.87.0
+    . ./docker/tool-versions.env \
+    && npm install -g "@devcontainers/cli@${DEVCONTAINERS_CLI_VERSION}"
 # code-server IDE (Franck 2026-06-03, ADR-0029 — supersedes the
 # ADR-0028 `kdust-ide` sidecar). code-server now runs IN this container
 # (launched by docker/entrypoint.sh, bound to 127.0.0.1:8080, fronted
@@ -201,15 +171,8 @@ RUN --mount=type=cache,target=/root/.npm \
 # risk class.
 #
 # Standalone tarball (bundles its own Node), pinned for reproducibility
-# like yq/glab/ruff. The release asset arch names (amd64/arm64) match
-# `dpkg --print-architecture` directly.
-RUN CODE_SERVER_VERSION=4.123.0 \
-  && CS_ARCH="$(dpkg --print-architecture)" \
-  && curl -fsSL "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-${CS_ARCH}.tar.gz" -o /tmp/code-server.tar.gz \
-  && mkdir -p /usr/lib/code-server \
-  && tar -xzf /tmp/code-server.tar.gz -C /usr/lib/code-server --strip-components=1 \
-  && ln -sf /usr/lib/code-server/bin/code-server /usr/local/bin/code-server \
-  && rm /tmp/code-server.tar.gz
+# like yq/glab/ruff. Install is now performed by docker/install-tools.sh
+# above (version in docker/tool-versions.env, ADR-0032).
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \

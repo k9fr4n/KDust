@@ -3198,3 +3198,62 @@ toggle lives in `SecretsEditor`; `PUT /api/secrets/:name` accepts
   profile.d snippet) and ships `docker/kdust-env{,.mjs}` → **requires an
   image rebuild + container restart**. Scheduler, push pipeline, MCP,
   Telegram, auth, crypto envelope untouched.
+
+### ADR-0032 — Externalised tool version pins (`docker/tool-versions.env`) (2026-06-07)
+
+**Status**: Accepted (2026-06-07, Franck).
+
+**Context**. The runner stage of the `Dockerfile` had accumulated several
+manually-pinned static-binary CLI tools — `yq`, `glab`, `ruff`, `uv`/`uvx`,
+`code-server` — plus the npm-global `@devcontainers/cli`. Each version lived
+as a `XXX_VERSION=` literal buried inside a large multi-line `RUN`, scattered
+across the file. Bumping a tool meant hunting for its line in a wall of
+`&&`-chained shell. Franck: *"je trouve ça un peu lourd… pas pratique pour
+gérer les mises à jour"*.
+
+`apt`-installed tools (`docker-ce-cli`, `gh`, `git`, `python3`, …) are not
+affected — `apt` tracks their upstream repos and they refresh on rebuild.
+`claude-code` is also out of scope: it installs `@latest` and self-updates at
+runtime (ADR-0027).
+
+**Decision**. Introduce a single source of truth for the manually-pinned
+versions and a dedicated installer:
+
+- `docker/tool-versions.env` — POSIX-sourceable `NAME=value` list, numeric
+  versions only (the per-tool `v` prefix is re-added by the installer where
+  the upstream tag needs it).
+- `docker/install-tools.sh` — `set -euo pipefail`, sources the env file, keeps
+  the per-arch (`amd64`/`arm64`) handling, performs the curl/tarball/deb
+  installs into the same paths as before (`/usr/local/bin/*`,
+  `/usr/lib/code-server`).
+- `Dockerfile`: the inline `yq/glab/ruff/uv` blocks and the standalone
+  `code-server` `RUN` are removed; replaced by
+  `COPY docker/tool-versions.env docker/install-tools.sh ./docker/` +
+  `RUN bash ./docker/install-tools.sh`. The `@devcontainers/cli` `RUN` keeps
+  its npm cache mount but sources its version from the same env file.
+
+This is **pure rearrangement**: same tools, same versions, same install layout
+— the produced image is byte-for-byte equivalent in tool content. Bumping a
+tool is now a one-line edit in `tool-versions.env`.
+
+**Alternatives rejected**.
+
+- *A version manager (`mise`/`asdf`)* — covers only ~half the set (`uv`, `ruff`,
+  `yq`, `gh`, `glab`); `code-server`, `claude-code`, `docker-cli`,
+  `@devcontainers/cli` would still need other mechanisms. Net benefit diluted.
+- *Runtime install into `/data`* — breaks offline/reproducibility (network at
+  boot) and adds startup latency.
+
+**Consequences**.
+
+- One-line version bumps; the version pins are no longer reproducibility-only
+  noise in the `Dockerfile`.
+- Sets the stage for an optional **step 2** (not in this ADR): auto-bump via
+  Renovate `customManagers` *or* a dogfooded KDust task opening a PR through
+  the push pipeline. The env-file format was chosen to be regex-friendly for
+  exactly this.
+- `.dockerignore` ignores `.env` (exact) and `.env.local`, **not**
+  `docker/tool-versions.env` — verified the file reaches the build context.
+- Touches `Dockerfile` + adds `docker/tool-versions.env` and
+  `docker/install-tools.sh` → **requires an image rebuild**. No runtime code,
+  scheduler, push pipeline, MCP, Telegram, auth or crypto path is touched.

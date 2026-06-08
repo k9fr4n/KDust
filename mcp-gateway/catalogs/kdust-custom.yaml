@@ -339,11 +339,13 @@ registry:
       - name: pwpush-mcp.api_token
         env: PWPUSH_API_TOKEN
         description: "Bearer token from /api_tokens. Required for listing/audit; optional for create/preview/expire depending on instance."
+      - name: pwpush-mcp.api_email
+        env: PWPUSH_API_EMAIL
+        description: "Account email paired with the API token (v1 legacy auth: X-User-Email + X-User-Token). Bind a Secret in /settings/mcp or it injects `<UNKNOWN>`."
       # Optional secrets intentionally NOT declared: declaring a catalog
       # secret without binding a Secret in /settings/mcp injects
       # `<UNKNOWN>` as its value (same trap that crashed thruk-mcp).
       # Re-add a line below + bind a Secret to override upstream defaults:
-      #   pwpush-mcp.api_email     -> PWPUSH_API_EMAIL     (v1 legacy instances only)
       #   pwpush-mcp.api_version   -> PWPUSH_API_VERSION   (auto | v1 | v2; default auto)
       #   pwpush-mcp.verify_ssl    -> PWPUSH_VERIFY_SSL    (false for self-signed)
       #   pwpush-mcp.ca_bundle     -> PWPUSH_CA_BUNDLE     (path to CA bundle)

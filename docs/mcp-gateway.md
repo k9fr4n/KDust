@@ -449,7 +449,11 @@ Compensating controls:
   - `pwpush-mcp.api_token` → `PWPUSH_API_TOKEN` (bearer token minted at
     `/api_tokens`). **Always required for `list_*` / `get_push_audit`**;
     optional for create / preview / expire depending on the instance.
-  - Optional secrets (`api_email` for legacy v1 instances, `api_version`,
+  - `pwpush-mcp.api_email` → `PWPUSH_API_EMAIL` (account email paired with
+    the token for v1 legacy `X-User-Email` + `X-User-Token` auth). Now
+    declared by default — **bind a Secret in `/settings/mcp` or it injects
+    `<UNKNOWN>`**.
+  - Optional secrets (`api_version`,
     `verify_ssl`, `ca_bundle`, `read_only`, `enabled_tools`, `file_root`)
     are **not** declared by default — declaring a catalog secret without
     binding a Secret injects `<UNKNOWN>` as its value (same trap that

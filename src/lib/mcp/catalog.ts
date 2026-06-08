@@ -95,8 +95,10 @@ export const MCP_CATALOG: McpKindDescriptor[] = [
       { name: 'run_command', description: 'Spawn a shell command in the run cwd, with run-scoped env injection.' },
     ],
   },
-  // passwordpusher MCP entry removed 2026-05-28. Replaced by the
-  // `pwpush` skill (skills/kdust/pwpush/), see ADR in README.md.
+  // passwordpusher MCP entry removed 2026-05-28 (replaced by the
+  // `pwpush` skill, see ADR in README.md). The `pwpush` skill itself
+  // was removed 2026-06-08; secret pushing now uses the mcp-gateway
+  // `create_push` tool.
   {
     // ADR-0016 (2026-05-12): KDust skills library. Filesystem-first
     // capabilities under /app/skills/<name>/SKILL.md, exposed via

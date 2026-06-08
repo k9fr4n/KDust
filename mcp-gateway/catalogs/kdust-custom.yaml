@@ -297,3 +297,56 @@ registry:
       # so writes (acknowledge, downtime, recheck) are stripped by
       # thruk-mcp itself as a defense-in-depth layer behind the
       # per-project filter (ProjectMcpToolFilter, default-deny).
+
+  pwpush-mcp:
+    title: Password Pusher MCP
+    description: |
+      MCP server for Password Pusher (pwpush.com) — create and manage
+      self-destructing secret links. "Preview but never retrieve" design:
+      the server NEVER reads back a push payload (retrieval consumes a
+      view irreversibly); it returns the shareable URL, previews it
+      without burning a view, and manages the lifecycle (expire, audit,
+      list). First-party gateway-ready image (ghcr.io/k9fr4n/pwpush-mcp,
+      MIT — stdio default, non-root, no stdout banner; no wrapper
+      required). Source: https://github.com/k9fr4n/pwpush-mcp.
+      Hardening: pin a sha256 digest in production. `expire_push` is the
+      one DESTRUCTIVE tool (destructiveHint) and `create_push` writes —
+      gate them via pwpush-mcp.read_only / pwpush-mcp.enabled_tools (see
+      commented secrets below) if a project should stay read-only.
+    # Track the floating :latest tag (parity with thruk-mcp). The MCP
+    # gateway does NOT auto-pull child images — to pick up a new push:
+    #   docker pull ghcr.io/k9fr4n/pwpush-mcp:latest \
+    #     && docker restart kdust-mcp-gateway
+    image: ghcr.io/k9fr4n/pwpush-mcp:latest
+    type: server
+    # Tools enumerated because --servers= disables dynamic discovery.
+    # Captured 2026-06-08 from pwpush-mcp v0.3.0 README (7 tools).
+    # Refresh after a version bump.
+    tools:
+      # read (4)
+      - name: get_version          # instance version + feature flags (no auth)
+      - name: preview_push         # share URL without consuming a view
+      - name: list_active_pushes   # account-scoped (token)
+      - name: list_expired_pushes  # account-scoped (token)
+      - name: get_push_audit       # access log: IPs, UAs, events (token)
+      # write (2)
+      - name: create_push          # create a secret link; returns URL, never the secret
+      - name: expire_push          # DESTRUCTIVE — permanently expire a push (irreversible)
+    secrets:
+      - name: pwpush-mcp.base_url
+        env: PWPUSH_BASE_URL
+        description: "pwpush instance URL (https://pwpush.com, https://eu.pwpush.com, or self-hosted)"
+      - name: pwpush-mcp.api_token
+        env: PWPUSH_API_TOKEN
+        description: "Bearer token from /api_tokens. Required for listing/audit; optional for create/preview/expire depending on instance."
+      # Optional secrets intentionally NOT declared: declaring a catalog
+      # secret without binding a Secret in /settings/mcp injects
+      # `<UNKNOWN>` as its value (same trap that crashed thruk-mcp).
+      # Re-add a line below + bind a Secret to override upstream defaults:
+      #   pwpush-mcp.api_email     -> PWPUSH_API_EMAIL     (v1 legacy instances only)
+      #   pwpush-mcp.api_version   -> PWPUSH_API_VERSION   (auto | v1 | v2; default auto)
+      #   pwpush-mcp.verify_ssl    -> PWPUSH_VERIFY_SSL    (false for self-signed)
+      #   pwpush-mcp.ca_bundle     -> PWPUSH_CA_BUNDLE     (path to CA bundle)
+      #   pwpush-mcp.read_only     -> PWPUSH_READ_ONLY     (true strips create_push + expire_push)
+      #   pwpush-mcp.enabled_tools -> PWPUSH_ENABLED_TOOLS (fnmatch CSV, e.g. list_*,get_version)
+      #   pwpush-mcp.file_root     -> PWPUSH_FILE_ROOT     (allowlist root; unset = file pushes disabled)

@@ -248,7 +248,7 @@ services:
       - --additional-catalog=/catalogs/kdust-custom.yaml
       # playwright retiré 2026-05-18 (Franck): non utilisé dans le flux KDust,
       # encombrait /settings/mcp avec 23 tools parasites.
-      - --servers=ews-mcp,thruk-mcp
+      - --servers=ews-mcp,thruk-mcp,pwpush-mcp
       - --secrets=/secrets/kdust-mcp.env
       - --block-secrets
       # --verify-signatures removed (2026-05-17): ews-mcp is a third-party

@@ -418,6 +418,60 @@ Compensating controls:
   project via `enabled_tools` and per-project filters
   (`ProjectMcpToolFilter`).
 
+### Custom server: `pwpush-mcp` (Password Pusher)
+
+- Slug: `pwpush-mcp` (in `kdust-custom.yaml`)
+- Image: `ghcr.io/k9fr4n/pwpush-mcp:latest` (currently `v0.3.0`) —
+  first-party, MIT
+  ([k9fr4n/pwpush-mcp](https://github.com/k9fr4n/pwpush-mcp)). Like
+  `thruk-mcp` the image is gateway-ready out of the box (stdio default,
+  non-root `USER`, no stdout banner) so **no wrapper image is
+  required**. Pin a `sha256` digest once validated to neutralise
+  Watchtower auto-update.
+- Design note — **"preview but never retrieve"**: retrieving a push
+  *consumes a view* and is irreversible, so the server intentionally has
+  **no retrieve tool**. It creates pushes and hands back the shareable
+  URL, previews that URL without burning a view, and manages the
+  lifecycle. The secret is only ever read by the human who opens the
+  link.
+- 7 tools across:
+  - **Read** (5): `get_version` (instance version + feature flags, no
+    auth), `preview_push` (share URL without consuming a view),
+    `list_active_pushes`, `list_expired_pushes` (account-scoped, token),
+    `get_push_audit` (access log — IPs, user agents, events; token).
+  - **Write** (2): `create_push` (create a secret link of kind
+    text / url / qr / file; returns the URL, never the secret),
+    `expire_push` (**DESTRUCTIVE**, `destructiveHint` — permanently
+    expire a push, irreversible).
+- Catalog keys to bind in `/settings/mcp`:
+  - `pwpush-mcp.base_url` → `PWPUSH_BASE_URL` (e.g. `https://pwpush.com`,
+    `https://eu.pwpush.com`, or a self-hosted domain).
+  - `pwpush-mcp.api_token` → `PWPUSH_API_TOKEN` (bearer token minted at
+    `/api_tokens`). **Always required for `list_*` / `get_push_audit`**;
+    optional for create / preview / expire depending on the instance.
+  - Optional secrets (`api_email` for legacy v1 instances, `api_version`,
+    `verify_ssl`, `ca_bundle`, `read_only`, `enabled_tools`, `file_root`)
+    are **not** declared by default — declaring a catalog secret without
+    binding a Secret injects `<UNKNOWN>` as its value (same trap that
+    crashed `thruk-mcp`). Re-add the line in `kdust-custom.yaml` + bind a
+    Secret to override an upstream default.
+- Security notes:
+  - `expire_push` is irreversible and `create_push` writes. To keep a
+    project read-only, bind `pwpush-mcp.read_only` → `PWPUSH_READ_ONLY`
+    = `true` (strips both write tools at boot) and/or narrow
+    `PWPUSH_ENABLED_TOOLS` (fnmatch CSV, e.g. `list_*,get_version`). The
+    per-project `ProjectMcpToolFilter` (default-deny) is the first gate
+    regardless.
+  - **File pushes are disabled by default** server-side: `create_push`
+    can only attach files when `PWPUSH_FILE_ROOT` is set, and only from
+    that subtree (traversal/symlink escapes rejected). Leave it unset
+    unless you explicitly need file uploads — pushed bytes become
+    retrievable via the share URL.
+- Refresh the catalog after a version bump:
+  `docker pull ghcr.io/k9fr4n/pwpush-mcp:latest && docker restart
+  kdust-mcp-gateway`, then re-probe `tools/list` if the gateway reports a
+  different tool count.
+
 ## V1 server: `github-official`
 
 - Slug: `github-official`

@@ -444,8 +444,8 @@ export async function releaseChatSkillsServer(projectName: string): Promise<void
 
 /* -------------------------------------------------------------------------- */
 /*  passwordpusher MCP server: REMOVED 2026-05-28.                            */
-/*  Replaced by the `pwpush` skill (skills/kdust/pwpush/) — see the ADR in    */
-/*  README.md ("skill par défaut, MCP sur dérogation"). The Secret            */
-/*  PASSWORDPUSHER_TOKEN is now consumed via TaskSecret bindings on the      */
-/*  task that runs the skill.                                                 */
+/*  Was replaced by the `pwpush` skill — see the ADR in README.md             */
+/*  ("skill par défaut, MCP sur dérogation"). That skill was in turn          */
+/*  removed 2026-06-08; secret pushing now uses the mcp-gateway               */
+/*  `create_push` tool. The Secret PASSWORDPUSHER_TOKEN remains in the DB.    */
 /* -------------------------------------------------------------------------- */

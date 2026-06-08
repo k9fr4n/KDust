@@ -2584,6 +2584,8 @@ La surface MCP — serveur Node, ensure-route, 4 sites
   `catalog.ts`, `setup-mcp.ts`, `_ChatClient.tsx`).
 - Un skill `pwpush` le remplace sous
   `skills/kdust/pwpush/` (SKILL.md + `scripts/{create,preview,expire}.sh`).
+  > **Mise à jour 2026-06-08** : ce skill `pwpush` a été supprimé.
+  > Le push de secret repasse par l'outil mcp-gateway `create_push`.
 - Le Secret `PASSWORDPUSHER_TOKEN` reste inchangé dans la base.
   Pour que le skill y accède, chaque task qui pousse un secret
   doit déclarer un `TaskSecret` binding

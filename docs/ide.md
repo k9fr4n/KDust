@@ -85,33 +85,38 @@ disable it, set `IDE_ENABLED=false` and restart KDust.
    reachable by URL; it also offers an **“Open in new tab ↗”** link for
    a full-window editor.
 
-## Claude Code via `dust-exporter`
+## Claude Code via a shared `dust-exporter`
 
-_Franck 2026-06-03._
+_Franck 2026-06-03, updated 2026-06-10 (ADR-0033: exporter externalised)._
 
-The stack ships a **`dust-exporter`** sidecar — an
-Anthropic/OpenAI-compatible HTTP proxy in front of your Dust agents
-([k9fr4n/dust-exporter](https://github.com/k9fr4n/dust-exporter)). It
-lets **Claude Code** (which speaks the Anthropic Messages API) in the
-IDE terminal drive your Dust agents.
+**Claude Code** speaks the Anthropic Messages API; to drive your Dust
+agents from the IDE terminal it talks to a **`dust-exporter`** — an
+Anthropic/OpenAI-compatible HTTP proxy in front of Dust
+([k9fr4n/dust-exporter](https://github.com/k9fr4n/dust-exporter)).
+
+Since **ADR-0033** the exporter is **no longer an in-stack sidecar**: it
+runs as a **shared (mutualised)** instance on the LAN, reachable by
+default at `http://192.168.0.3:8787`. One exporter can serve several
+KDust hosts.
 
 ```
 kdust  ──ANTHROPIC_BASE_URL──▶  dust-exporter :8787  ──OAuth──▶  Dust API
-(claude / kdust-claude)            (proxy, /v1/messages)
+(claude / kdust-claude)      (shared, http://192.168.0.3:8787)
 ```
 
-- **Internal only.** `dust-exporter` is `expose`d on the compose network
-  (no host `ports:`), so it is never published — same no-ingress rule as
-  the rest of the stack.
-- **No `docker.sock`, no `env_file`.** The image ships sane defaults
-  (`0.0.0.0:8787`, file credential store on `/data`). It is started with
-  `--client-tools`, so Claude Code's own Read/Edit/Bash execute **on the
-  client** — which since ADR-0029 is the **`kdust` container** (where
-  the IDE terminal lives). That client **has `docker.sock`**, so the
-  Bash tool can run `docker`/`gh`/`glab`. Intended trade-off, not the
-  old `/projects`-only sidecar.
+- **Shared / external.** The proxy is not defined in this
+  `docker-compose.yml` any more. Point at it with
+  `ANTHROPIC_BASE_URL` (default `http://192.168.0.3:8787`; override in
+  `.env`). Run/operate it wherever it is hosted — see the
+  `dust-exporter` repo for its own compose/login.
+- **`--client-tools`.** When the shared exporter is started with
+  `--client-tools`, Claude Code's own Read/Edit/Bash execute **on the
+  client** — the **`kdust` container** (where the IDE terminal lives).
+  That client **has `docker.sock`**, so the Bash tool can run
+  `docker`/`gh`/`glab`. Intended trade-off, not a `/projects`-only
+  sandbox.
 - The `kdust` container is wired via
-  `ANTHROPIC_BASE_URL=http://dust-exporter:8787` and a placeholder
+  `ANTHROPIC_BASE_URL=http://192.168.0.3:8787` and a placeholder
   `ANTHROPIC_API_KEY=dummy` (the proxy requires no key by default), so a
   plain `claude` in the terminal works. `kdust-claude` (ADR-0027) still
   overrides these from the Secret Manager when present (Secret wins over
@@ -119,11 +124,13 @@ kdust  ──ANTHROPIC_BASE_URL──▶  dust-exporter :8787  ──OAuth──
 
 ### One-time authentication (device flow)
 
-`dust-exporter` reuses the `dust-cli` OAuth session, persisted on the
-`dust-exporter-data` volume. Log in **once** — the device-flow URL opens
-on *your* machine, no browser needed inside the container:
+The shared `dust-exporter` reuses a `dust-cli` OAuth session, persisted
+on **its own** host (not in this stack). Authenticate **once** on the
+host that runs the exporter — the device-flow URL opens on *your*
+machine, no browser needed inside the container:
 
 ```bash
+# on the host running the shared dust-exporter
 docker compose run --rm dust-exporter login
 docker compose run --rm dust-exporter status   # authenticated: true
 docker compose up -d                            # (re)start the proxy
@@ -146,10 +153,11 @@ claude
 `kdust-claude`, which also resolves `ANTHROPIC_*` from the Secret
 Manager — ADR-0027.)
 
-> **Note.** `dust-exporter`'s repo and GHCR image are private; Watchtower
-> pulls it with the host `~/.docker/config.json` credentials, like the
-> `kdust` image. The image is multi-arch (amd64 + arm64), so it runs on
-> the Pi.
+> **Note.** Since ADR-0033 the `dust-exporter` is **not** part of this
+> stack, so this `docker-compose.yml`'s Watchtower no longer pulls it.
+> The shared exporter is operated (and updated) on its own host. Its
+> repo and GHCR image are private and multi-arch (amd64 + arm64), so it
+> can run on the Pi or any LAN host.
 
 ## Configuration reference
 

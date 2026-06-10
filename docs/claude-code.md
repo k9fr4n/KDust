@@ -184,7 +184,7 @@ state is wiped on nearly every update (re-onboarding, lost project
 trust, lost session history).
 
 KDust relocates the whole config onto the already-persisted `./data`
-bind (same pattern as `dust-exporter-data` and `/data/ide`):
+bind (same pattern as `/data/ide`):
 
 - **`CLAUDE_CONFIG_DIR=/data/claude`** (set in `docker-compose.yml`)
   moves the `~/.claude` directory.
@@ -197,7 +197,7 @@ bind (same pattern as `dust-exporter-data` and `/data/ide`):
 
 Result: `/data/claude/` survives `docker compose pull` / restart /
 Watchtower recreation. It is `node`-owned, `0700`. No credentials live
-there today (auth flows through `dust-exporter`), but it is treated as
+there today (auth flows through the shared `dust-exporter`), but it is treated as
 sensitive on principle — exclude it from any world-readable backup of
 `./data`.
 

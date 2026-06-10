@@ -67,14 +67,18 @@ services:
       # set IDE_PUBLIC_URL=https://<host>:4001. Leave empty = HTTP.
       - IDE_TLS_CERT=${IDE_TLS_CERT:-}
       - IDE_TLS_KEY=${IDE_TLS_KEY:-}
-      # Claude Code wiring (ADR-0029). Point the Anthropic SDK at the
-      # in-stack dust-exporter proxy so a plain `claude` in the IDE
-      # terminal talks to your Dust agents. dust-exporter needs no API
-      # key by default, so ANTHROPIC_API_KEY is a non-empty placeholder
-      # the CLI insists on. `kdust-claude` (ADR-0027) still overrides
-      # these from the Secret Manager when present (Secret wins over
-      # inherited env), so both `claude` and `kdust-claude` work.
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-http://dust-exporter:8787}
+      # Claude Code wiring (ADR-0033, supersedes the in-stack proxy of
+      # ADR-0029). Point the Anthropic SDK at a SHARED, external
+      # dust-exporter proxy (default http://192.168.0.3:8787) so a plain
+      # `claude` in the IDE terminal talks to your Dust agents. The
+      # proxy is no longer part of this stack — it is mutualised across
+      # hosts and reachable on the LAN. Override ANTHROPIC_BASE_URL in
+      # .env to point elsewhere. dust-exporter needs no API key by
+      # default, so ANTHROPIC_API_KEY is a non-empty placeholder the CLI
+      # insists on. `kdust-claude` (ADR-0027) still overrides these from
+      # the Secret Manager when present (Secret wins over inherited
+      # env), so both `claude` and `kdust-claude` work.
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-http://192.168.0.3:8787}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-dummy}
       # Claude Code state persistence (Franck 2026-06-04). Relocates the
       # CLI config dir (~/.claude: sessions, history, project trust,
@@ -125,11 +129,6 @@ services:
       - /run/kdust/ssh:size=1m,mode=0700,uid=1000,gid=1000
     depends_on:
       - mcp-gateway
-      # dust-exporter (ADR-0029): the in-container `claude` / kdust-claude
-      # in the IDE terminal talk to Dust agents through it. Not required
-      # at KDust boot (only when claude is invoked), but ordered here so
-      # the proxy is up when the operator opens a terminal.
-      - dust-exporter
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -152,46 +151,16 @@ services:
   # -------------------------------------------------------------------------- #
 
   # -------------------------------------------------------------------------- #
-  # dust-exporter — Anthropic/OpenAI-compatible proxy in front of Dust         #
-  # agents (Franck 2026-06-03). Lets Claude Code (Anthropic Messages API)      #
-  # in the in-container IDE terminal talk to your Dust agents (ADR-0029).      #
+  # dust-exporter — REMOVED from this stack (ADR-0033, Franck 2026-06-10).      #
   #                                                                            #
-  # [SECURITY] Internal-only: `expose` (no host `ports:`), so it is reachable  #
-  # solely on the compose network — never published, honouring the            #
-  # no-public-ingress rule. Holds the dust-cli OAuth session on its own        #
-  # private volume; authenticate ONCE with the device flow:                    #
-  #   docker compose run --rm dust-exporter login                             #
-  #   docker compose run --rm dust-exporter status   # authenticated: true     #
-  # Deliberately NO docker.sock mount and NO env_file — the image ships sane   #
-  # defaults (host 0.0.0.0, port 8787, file credential store on /data).        #
-  # --client-tools is set on `command:` so the CLIENT (Claude Code) executes   #
-  # the tools locally. NB since ADR-0029 that client is the `kdust` container  #
-  # (code-server moved in-container), which DOES have docker.sock — so         #
-  # Claude Code's Bash tool can run docker/gh/glab. This is the intended       #
-  # trade-off (same surface as the agent runtime), NOT the old /projects-only  #
-  # sidecar blast radius. See docs/ide.md. Private GHCR image, multi-arch      #
-  # (amd64 + arm64); Watchtower-scoped like the rest of the stack.             #
+  # The Anthropic/OpenAI-compatible proxy in front of Dust agents is no        #
+  # longer an in-stack sidecar. It now runs as a SHARED (mutualised)           #
+  # instance reachable on the LAN at http://192.168.0.3:8787 (override via     #
+  # ANTHROPIC_BASE_URL in .env). The `kdust` service points its                #
+  # ANTHROPIC_BASE_URL there; `claude` / `kdust-claude` in the IDE terminal    #
+  # are unchanged otherwise. One-time device-flow login + the OAuth session    #
+  # volume now live with the shared exporter, not here. See docs/ide.md.       #
   # -------------------------------------------------------------------------- #
-  dust-exporter:
-    image: ghcr.io/k9fr4n/dust-exporter:latest
-    container_name: kdust-dust-exporter
-    restart: unless-stopped
-    pull_policy: always
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
-      - "com.centurylinklabs.watchtower.scope=kdust-autoupdate"
-    # ENTRYPOINT is `npx tsx src/index.ts`; override CMD to enable
-    # client-tools passthrough (Claude Code drives, executes locally).
-    command:
-      - serve
-      - --client-tools
-    volumes:
-      # OAuth session (credentials.json) + conversation-state map.
-      - dust-exporter-data:/data
-    expose:
-      - "8787"
-    mem_limit: 512m
-    mem_reservation: 64m
 
   # -------------------------------------------------------------------------- #
   # Docker MCP Gateway (Franck 2026-05-10, ADR-0012).                          #
@@ -343,10 +312,9 @@ services:
 # in-container code-server persists its user-data/extensions under the
 # existing ./data bind at /data/ide, no separate volume needed).
 volumes:
-  # dust-exporter OAuth session (credentials.json) + conversation-state
-  # map. Survives container recreation so the one-time device-flow login
-  # is not lost on `docker compose pull` / restart.
-  dust-exporter-data:
+  # (ADR-0033) dust-exporter-data removed: the exporter is now a shared
+  # external instance (http://192.168.0.3:8787), so its OAuth session
+  # volume no longer lives in this stack.
   # Caddy state (ADR-0030). Not used for ACME (static cert), but Caddy
   # expects writable /data and /config.
   caddy-data:

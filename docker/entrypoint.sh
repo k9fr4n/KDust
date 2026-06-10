@@ -82,7 +82,7 @@ if [ "$(id -u)" = "0" ]; then
   # new image every 5 min, so that is the common case, not the exception.
   #
   # We relocate the whole Claude config onto the already-persisted /data
-  # bind (./data on the host), mirroring dust-exporter-data and /data/ide:
+  # bind (./data on the host), mirroring /data/ide:
   #   - CLAUDE_CONFIG_DIR=/data/claude (set in compose) moves ~/.claude
   #   - symlink ~/.claude       -> /data/claude            (belt: any tool
   #     ignoring the env var still lands on the persisted dir)
@@ -90,8 +90,8 @@ if [ "$(id -u)" = "0" ]; then
   #     keep the JSON in $HOME regardless of CLAUDE_CONFIG_DIR)
   # First-boot seed: if a real (non-symlink) file/dir already exists in
   # $HOME, migrate it once before symlinking so we don't drop state.
-  # node-owned, 0700 (no credentials today — auth goes through
-  # dust-exporter — but treated as sensitive on principle).
+  # node-owned, 0700 (no credentials today — auth goes through the
+  # shared dust-exporter — but treated as sensitive on principle).
   CLAUDE_PERSIST_DIR=/data/claude
   install -d -o node -g node -m 700 "$CLAUDE_PERSIST_DIR"
   if [ -e /home/node/.claude ] && [ ! -L /home/node/.claude ]; then

@@ -3031,7 +3031,9 @@ terminal that, in the KDust container, would otherwise reach the host
 ### ADR-0029 — Move code-server in-container (drop the `kdust-ide` sidecar) (2026-06-03)
 
 **Status**: Accepted (2026-06-03, Franck). Supersedes the *sidecar*
-part of ADR-0028; keeps its auth-proxy verbatim.
+part of ADR-0028; keeps its auth-proxy verbatim. **The `dust-exporter`
+wiring below is itself superseded by ADR-0033** (exporter externalised
+to a shared LAN instance; the in-stack service is removed).
 
 **Context**. ADR-0028 ran code-server as a `kdust-ide` sidecar with
 **no `docker.sock`** so the web terminal's blast radius was `/projects`.
@@ -3259,3 +3261,52 @@ tool is now a one-line edit in `tool-versions.env`.
 - Touches `Dockerfile` + adds `docker/tool-versions.env` and
   `docker/install-tools.sh` → **requires an image rebuild**. No runtime code,
   scheduler, push pipeline, MCP, Telegram, auth or crypto path is touched.
+
+### ADR-0033 — Externalise `dust-exporter` to a shared LAN instance (drop the in-stack sidecar) (2026-06-10)
+
+**Status**: Accepted (2026-06-10, Franck). Supersedes the *exporter
+wiring* of ADR-0029 (the code-server move itself is unchanged).
+
+**Context**. ADR-0029 shipped a `dust-exporter` **sidecar** in this
+compose stack so Claude Code (Anthropic Messages API) in the IDE
+terminal could drive Dust agents. Running one exporter **per KDust host**
+means N OAuth device-flow logins, N `dust-exporter-data` volumes and N
+Watchtower-pulled private images to maintain. Franck now operates a
+**single shared (mutualised)** exporter on the LAN at
+`http://192.168.0.3:8787`. Franck: *« supprime le dust exporter, il faut
+utiliser `ANTHROPIC_BASE_URL=http://192.168.0.3:8787` maintenant, c'est
+un dust-exporter mutualisé »*.
+
+**Decision**. **Remove** the `dust-exporter` service from this stack and
+point `kdust` at the shared instance.
+
+- Drop the `dust-exporter` service, its `dust-exporter-data` named
+  volume, and the `kdust` → `dust-exporter` `depends_on` edge.
+- `kdust` `ANTHROPIC_BASE_URL` default flips from
+  `http://dust-exporter:8787` to **`http://192.168.0.3:8787`**
+  (overridable via `.env`). `ANTHROPIC_API_KEY=dummy` placeholder and
+  the `kdust-claude` Secret-Manager override (ADR-0027) are unchanged.
+- The one-time device-flow login and OAuth session now live on the
+  **exporter's own host**, not in this stack — so this stack's
+  Watchtower no longer pulls the (private) exporter image.
+
+**Consequences**.
+
+- One fewer container + one fewer named volume in the stack; no more
+  per-host exporter login/maintenance.
+- [SECURITY] The exporter is reached over the LAN (`192.168.0.3:8787`),
+  not the compose-internal network. No public ingress is introduced —
+  it stays a LAN-only endpoint. The `--client-tools` blast-radius note
+  from ADR-0029 still holds: when the shared exporter runs with
+  `--client-tools`, Claude Code's Bash/Read/Edit execute in the `kdust`
+  container (which has `docker.sock`) — same surface as the agent
+  runtime.
+- If the shared exporter is **down/unreachable**, `claude` /
+  `kdust-claude` in the IDE terminal fail to reach Dust — the rest of
+  KDust (scheduler, push pipeline, MCP, Telegram, app) is unaffected
+  (the exporter was never on the KDust boot path).
+- No schema, runtime code, auth or crypto change. Deploy = pull the
+  latest `kdust` image (no exporter rebuild) + `docker compose up -d`
+  (recreates `kdust` with the new env, removes the old
+  `kdust-dust-exporter` container; prune its orphaned volume manually if
+  desired). Full guide in [`docs/ide.md`](docs/ide.md).
